@@ -1,6 +1,7 @@
 <script>
     import { createEventDispatcher } from 'svelte';
     import { goto } from '$app/navigation'; // ייבוא פונקציית ניווט
+    import { editorSettings } from '$lib/stores.js'; // ✅ הוספנו ייבוא של ההגדרות
 
     // נתונים שהרכיב מקבל:
     export let id; // ID ייחודי
@@ -39,6 +40,12 @@
     class="magnet-preview"
     class:draggable={!isSplitPart}
     class:split-part={isSplitPart}
+    
+    class:effect-silver={$editorSettings.currentEffect === 'silver'}
+    class:effect-noir={$editorSettings.currentEffect === 'noir'}
+    class:effect-vivid={$editorSettings.currentEffect === 'vivid'}
+    class:effect-dramatic={$editorSettings.currentEffect === 'dramatic'}
+
     style="
         left: {position.x}px; 
         top: {position.y}px; 
@@ -62,10 +69,16 @@
             src={src} 
             alt="magnet preview" 
             style="transform: scale({transform.zoom}) translate({transform.x}px, {transform.y}px);" 
+            
+            class:effect-silver={$editorSettings.currentEffect === 'silver'}
+            class:effect-noir={$editorSettings.currentEffect === 'noir'}
+            class:effect-vivid={$editorSettings.currentEffect === 'vivid'}
+            class:effect-dramatic={$editorSettings.currentEffect === 'dramatic'}
         />
     {/if}
     
-    {#if !isSplitPart} <span class="edit-btn" on:click={handleEdit} on:mousedown|stopPropagation>&#9998;</span>
+    {#if !isSplitPart}
+        <span class="edit-btn" on:click={handleEdit} on:mousedown|stopPropagation>&#9998;</span>
     {/if}
     <span class="delete-btn" on:click={handleDelete} on:mousedown|stopPropagation>&times;</span>
 </div>
@@ -74,5 +87,16 @@
     .split-image {
         width: 100%;
         height: 100%;
+        /* ✅ הוספנו אנימציה למעבר בין פילטרים */
+        transition: filter 0.3s;
     }
+
+    /* ה-CSS שהגדרנו ב-app.css לא חל על ה-div הפנימי,
+        אז נוסיף לו את הפילטרים ישירות כאן.
+    */
+    :global(.split-part.effect-silver) .split-image { filter: grayscale(100%); }
+    :global(.split-part.effect-noir) .split-image { filter: grayscale(100%) contrast(1.3) brightness(0.9); }
+    :global(.split-part.effect-vivid) .split-image { filter: saturate(180%) contrast(110%); }
+    :global(.split-part.effect-dramatic) .split-image { filter: contrast(140%) sepia(20%); }
+
 </style>

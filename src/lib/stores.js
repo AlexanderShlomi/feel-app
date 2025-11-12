@@ -29,8 +29,9 @@ export const editorSettings = writable({
     surfaceMinHeight: '100%',
     isSurfaceDark: false,
     splitImageSrc: null,
-    splitImageRatio: 1, // --- הוספנו ---
+    splitImageRatio: 1, 
     gridBaseSize: 3,
+    currentEffect: 'original', // ✅ הוספנו את האפקט הפעיל
 });
 
 // --- פונקציות עזר לניהול המצב ---
