@@ -7,8 +7,7 @@
 
     function setMode(mode) {
         // איפוס המגנטים הקיימים
-        magnets.set([]); 
-        
+        magnets.set([]);
         // איפוס ההגדרות
         editorSettings.set({
             currentMode: mode,
@@ -18,8 +17,8 @@
             splitImageSrc: null,
             splitImageRatio: 1,
             gridBaseSize: 3,
+            currentEffect: 'original' // ✅ <-- התיקון: הוספת השורה החסרה
         });
-        
         // הניווט יקרה אוטומטית דרך תג ה-<a>
     }
 </script>

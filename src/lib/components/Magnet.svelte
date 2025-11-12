@@ -1,7 +1,7 @@
 <script>
     import { createEventDispatcher } from 'svelte';
-    import { goto } from '$app/navigation'; // ייבוא פונקציית ניווט
-    import { editorSettings } from '$lib/stores.js'; // ✅ הוספנו ייבוא של ההגדרות
+    import { goto } from '$app/navigation';
+    import { editorSettings } from '$lib/stores.js';
 
     // נתונים שהרכיב מקבל:
     export let id; // ID ייחודי
@@ -69,7 +69,6 @@
             src={src} 
             alt="magnet preview" 
             style="transform: scale({transform.zoom}) translate({transform.x}px, {transform.y}px);" 
-            
             class:effect-silver={$editorSettings.currentEffect === 'silver'}
             class:effect-noir={$editorSettings.currentEffect === 'noir'}
             class:effect-vivid={$editorSettings.currentEffect === 'vivid'}
@@ -79,9 +78,9 @@
     
     {#if !isSplitPart}
         <span class="edit-btn" on:click={handleEdit} on:mousedown|stopPropagation>&#9998;</span>
+        <span class="delete-btn" on:click={handleDelete} on:mousedown|stopPropagation>&times;</span>
     {/if}
-    <span class="delete-btn" on:click={handleDelete} on:mousedown|stopPropagation>&times;</span>
-</div>
+    </div>
 
 <style>
     .split-image {
@@ -91,12 +90,13 @@
         transition: filter 0.3s;
     }
 
-    /* ה-CSS שהגדרנו ב-app.css לא חל על ה-div הפנימי,
-        אז נוסיף לו את הפילטרים ישירות כאן.
+    /* ✅ עדכון לשימוש בפילטרי SVG
+      הקלאסים מוחלים על ה-div החיצוני (.split-part)
+      וה-CSS הזה מחיל את הפילטר על ה-div הפנימי (.split-image)
     */
-    :global(.split-part.effect-silver) .split-image { filter: grayscale(100%); }
-    :global(.split-part.effect-noir) .split-image { filter: grayscale(100%) contrast(1.3) brightness(0.9); }
-    :global(.split-part.effect-vivid) .split-image { filter: saturate(180%) contrast(110%); }
-    :global(.split-part.effect-dramatic) .split-image { filter: contrast(140%) sepia(20%); }
+    :global(.split-part.effect-silver) .split-image { filter: url(#filter-silver); }
+    :global(.split-part.effect-noir) .split-image { filter: url(#filter-noir); }
+    :global(.split-part.effect-vivid) .split-image { filter: url(#filter-vivid); }
+    :global(.split-part.effect-dramatic) .split-image { filter: url(#filter-dramatic); }
 
 </style>

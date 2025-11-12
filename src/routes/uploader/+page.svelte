@@ -19,12 +19,13 @@
     } from '$lib/stores.js';
 
     // --- רשימת אפקטים ---
+    // ✅ מתכוני SVG לאיכות גבוהה
     const effectsList = [
         { id: 'original', name: 'מקורי', filter: 'none' },
-        { id: 'silver', name: 'כסף', filter: 'grayscale(100%)' },
-        { id: 'noir', name: 'נואר', filter: 'grayscale(100%) contrast(1.3) brightness(0.9)' },
-        { id: 'vivid', name: 'עז', filter: 'saturate(180%) contrast(110%)' },
-        { id: 'dramatic', name: 'דרמטי', filter: 'contrast(140%) sepia(20%)' }
+        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
+        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
+        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
+        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
     ];
 
     // --- משתני פאנלים ---
@@ -229,6 +230,9 @@
         activePanel = null; 
     }
 
+    /**
+     * פונקציית סליידר הגודל (קוראת לסידור הרספונסיבי)
+     */
     function handleSizeChange(event) {
         const newScale = parseFloat(event.target.value);
         editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
