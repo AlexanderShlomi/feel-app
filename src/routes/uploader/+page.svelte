@@ -11,6 +11,7 @@
         magnets, 
         editorSettings, 
         addUploadedMagnets,
+        updateMagnetProcessedSrc, 
         getFullMagnetSize, 
         getMargin,
         BASE_MAGNET_SIZE, 
@@ -19,7 +20,6 @@
     } from '$lib/stores.js';
 
     // --- רשימת אפקטים ---
-    // ✅ מתכוני SVG לאיכות גבוהה
     const effectsList = [
         { id: 'original', name: 'מקורי', filter: 'none' },
         { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
@@ -27,6 +27,66 @@
         { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
         { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
     ];
+
+    // --- ניהול ה-Worker ---
+    let effectsWorker;
+
+    onMount(() => {
+        effectsWorker = new Worker('/effects.worker.js');
+        effectsWorker.onmessage = (event) => {
+            const { status, magnetId, effectId, newSrc } = event.data;
+            if (status === 'success') {
+                updateMagnetProcessedSrc(magnetId, effectId, newSrc);
+            }
+        };
+
+        resizeObserver = new ResizeObserver(() => {
+            if ($editorSettings.currentMode === 'multi') {
+                layoutResponsive(); 
+            }
+        });
+
+        if (surfaceEl && surfaceEl.parentElement) {
+            resizeObserver.observe(surfaceEl.parentElement);
+        }
+
+        setTimeout(() => {
+            if ($editorSettings.currentMode === 'multi') {
+                arrangeInGrid();
+            } else if ($editorSettings.splitImageSrc) { 
+                calculateAndRenderGrid();
+            }
+        }, 0); 
+    });
+
+    onDestroy(() => {
+        if (effectsWorker) {
+            effectsWorker.terminate();
+        }
+        if (resizeObserver && surfaceEl && surfaceEl.parentElement) {
+            resizeObserver.unobserve(surfaceEl.parentElement);
+        }
+    });
+
+
+    function applyEffectToAllMagnets(effectId) {
+        editorSettings.update(s => ({ ...s, currentEffect: effectId }));
+
+        if (effectId === 'original') return; 
+        if (!$magnets) return; 
+
+        for (const magnet of $magnets) {
+            if (!magnet.isSplitPart && magnet.processed && !magnet.processed[effectId]) {
+                updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
+                effectsWorker.postMessage({
+                    magnetId: magnet.id,
+                    effectId: effectId,
+                    originalSrc: magnet.originalSrc
+                });
+            }
+        }
+    }
+
 
     // --- משתני פאנלים ---
     let activePanel = null; 
@@ -55,18 +115,34 @@
 
     // --- פונקציות לוגיות ---
     
-    function handleMultiUpload(event) {
+    /**
+     * ✅ תיקון: הוספנו לוגים ו-try...catch
+     */
+    async function handleMultiUpload(event) {
         const files = event.target.files;
         if (files.length === 0) return;
         
+        console.log('🏁 [Uploader] Starting handleMultiUpload...'); // <-- הוספנו לוג
         loaderEl.style.display = 'flex';
         
-        addUploadedMagnets(files);
-        
-        setTimeout(() => {
+        try {
+            // חכה שכל התמונות ייטענו ל-store
+            console.log('⏳ [Uploader] Calling addUploadedMagnets...'); // <-- הוספנו לוג
+            await addUploadedMagnets(files);
+            console.log('✅ [Uploader] addUploadedMagnets FINISHED.'); // <-- הוספנו לוג
+            
+            // הסתר את הלואדר
             loaderEl.style.display = 'none';
-            arrangeInGrid(); // קורא לסידור "מרכז מסה" הראשוני
-        }, 500);
+            console.log('✅ [Uploader] Loader hidden.'); // <-- הוספנו לוג
+            
+            // רק עכשיו, כשהתמונות באמת קיימות, סדר אותן
+            arrangeInGrid();
+            console.log('✅ [Uploader] arrangeInGrid called.'); // <-- הוספנו לוג
+
+        } catch (error) {
+            console.error('❌ [Uploader] CRITICAL ERROR in handleMultiUpload:', error); // <-- הוספנו לוג
+            loaderEl.style.display = 'none'; // הסתר את הלואדר גם אם יש שגיאה
+        }
     }
     
     function handleSplitUpload(event) {
@@ -86,7 +162,8 @@
                 editorSettings.update(s => ({ 
                     ...s, 
                     splitImageRatio: ratio,
-                    gridBaseSize: MIN_GRID_BASE // איפוס לגודל האופטימלי
+                    gridBaseSize: MIN_GRID_BASE,
+                    currentEffect: 'original' 
                 }));
 
                 calculateAndRenderGrid(); 
@@ -123,10 +200,6 @@
         editorSettings.update(s => ({ ...s, surfaceMinHeight: `${Math.max(totalHeight, containerHeight)}px` }));
     }
 
-    /**
-     * פונקציית סידור רספונסיבית.
-     * פועלת אוטומטית בשינוי גודל מסך או סליידר.
-     */
     function layoutResponsive() {
         const count = $magnets.length;
         if (count === 0 || $editorSettings.currentMode !== 'multi' || !surfaceEl) { 
@@ -159,10 +232,6 @@
         setTimeout(updateSurfaceHeight, 0);
     }
 
-    /**
-     * פונקציית "סידור אוט'" (מרכז מסה).
-     * נקראת רק מהכפתור. יוצרת גריד ריבועי וממרכזת אותו.
-     */
     function arrangeInGrid() {
         const count = $magnets.length;
         if (count === 0 || $editorSettings.currentMode !== 'multi' || !surfaceEl) { 
@@ -197,7 +266,7 @@
         );
         
         setTimeout(updateSurfaceHeight, 0);
-        activePanel = null; // סוגר פאנלים פתוחים
+        activePanel = null; 
     }
     
     function arrangeInRow() {
@@ -230,9 +299,6 @@
         activePanel = null; 
     }
 
-    /**
-     * פונקציית סליידר הגודל (קוראת לסידור הרספונסיבי)
-     */
     function handleSizeChange(event) {
         const newScale = parseFloat(event.target.value);
         editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
@@ -299,6 +365,7 @@
             newMagnets.push({
                 id: `split-tile-${row}-${col}`, 
                 src: $settings.splitImageSrc,
+                originalSrc: $settings.splitImageSrc, 
                 isSplitPart: true,
                 transform: { 
                     bgWidth: bgWidth, 
@@ -328,8 +395,6 @@
             activePanel = null; 
         }
     }
-
-    // --- לוגיקת גרירה (מהירה) ---
     
     function getEventPosition(e) {
          return e.touches ? e.touches[0] : e;
@@ -430,32 +495,6 @@
         setTimeout(updateSurfaceHeight, 0);
     }
 
-    onMount(() => {
-        resizeObserver = new ResizeObserver(() => {
-            if ($editorSettings.currentMode === 'multi') {
-                layoutResponsive(); 
-            }
-        });
-
-        if (surfaceEl && surfaceEl.parentElement) {
-            resizeObserver.observe(surfaceEl.parentElement);
-        }
-
-        setTimeout(() => {
-            if ($editorSettings.currentMode === 'multi') {
-                arrangeInGrid(); // סידור "מרכז מסה" ראשוני
-            } else if ($editorSettings.splitImageSrc) { 
-                calculateAndRenderGrid();
-            }
-        }, 0); 
-    });
-
-    onDestroy(() => {
-        if (resizeObserver && surfaceEl && surfaceEl.parentElement) {
-            resizeObserver.unobserve(surfaceEl.parentElement);
-        }
-    });
-
 </script>
 
 <div class="canvas-container" class:container-dark={$editorSettings.isSurfaceDark}>
@@ -468,12 +507,7 @@
         {#if $editorSettings.currentMode === 'multi'}
             {#each $magnets as magnet (magnet.id)}
                 <Magnet 
-                    id={magnet.id}
-                    src={magnet.src}
-                    originalSrc={magnet.originalSrc}
-                    transform={magnet.transform}
-                    position={magnet.position}
-                    size={magnet.size}
+                    {...magnet} 
                     isSplitPart={false}
                     on:delete={deleteMagnetFromStore}
                     on:dragstart={onDragStart}
@@ -482,11 +516,7 @@
         {:else}
             {#each $magnets as magnet (magnet.id)}
                 <Magnet 
-                    id={magnet.id}
-                    src={magnet.src}
-                    transform={magnet.transform}
-                    position={magnet.position}
-                    size={magnet.size}
+                    {...magnet}
                     isSplitPart={true}
                 />
             {/each}
@@ -589,7 +619,7 @@
             <button 
                 class="effect-select-btn"
                 class:active={effect.id === $editorSettings.currentEffect}
-                on:click={() => editorSettings.update(s => ({ ...s, currentEffect: effect.id }))}
+                on:click={() => applyEffectToAllMagnets(effect.id)}
             >
                 <div class="thumbnail-wrapper">
                     <img 

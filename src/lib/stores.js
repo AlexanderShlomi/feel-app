@@ -31,31 +31,86 @@ export const editorSettings = writable({
     splitImageSrc: null,
     splitImageRatio: 1, 
     gridBaseSize: 3,
-    currentEffect: 'original', // ✅ הוספנו את האפקט הפעיל
+    currentEffect: 'original',
 });
 
 // --- פונקציות עזר לניהול המצב ---
 
-// פונקציה שמוסיפה מגנטים חדשים לרשימה
-export function addUploadedMagnets(files) {
+/**
+ * ✅ ארכיטקטורה חדשה: הפונקציה הזו הופרדה כדי להחזיר Promise
+ * היא קוראת קובץ בודד ומחזירה מגנט מוכן עם מטמון
+ */
+function createMagnetFromFile(file) {
     const size = getFullMagnetSize();
-    Array.from(files).forEach(file => {
+    
+    return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
+            const originalSrc = e.target.result;
             const newMagnet = {
                 id: crypto.randomUUID(), // ID ייחודי
-                src: e.target.result,
-                originalSrc: e.target.result,
                 transform: { zoom: 1, x: 0, y: 0 },
-                position: { x: -9999, y: -9999 },
-                size: size
+                position: { x: -9999, y: -9999 }, // מיקום התחלתי מחוץ למסך
+                size: size,
+                
+                // --- ליבת הארכיטקטורה החדשה ---
+                originalSrc: originalSrc, // המקור, תמיד נשמר
+                
+                // מטמון (Cache) של גרסאות מעובדות
+                processed: {
+                    original: originalSrc, // הגרסה המוצגת הראשונית
+                    silver: null,
+                    noir: null,
+                    vivid: null,
+                    dramatic: null
+                }
             };
-            // 'update' היא הדרך הנכונה לעדכן "מחסן"
-            magnets.update(currentList => [...currentList, newMagnet]);
+            resolve(newMagnet);
         };
+        reader.onerror = reject;
         reader.readAsDataURL(file);
     });
 }
+
+/**
+ * ✅ ארכיטקטורה חדשה: הפונקציה הראשית היא עכשיו async
+ * היא מחכה שכל הקבצים ייקראו לפני שהיא מוסיפה אותם ל-store
+ */
+export async function addUploadedMagnets(files) {
+    // המר את כל הקבצים למגנטים (באופן א-סינכרוני)
+    const newMagnetsPromises = Array.from(files).map(createMagnetFromFile);
+    
+    // חכה שכל ה-FileReaders יסיימו
+    const newMagnets = await Promise.all(newMagnetsPromises);
+
+    // עדכן את ה-store פעם אחת בלבד עם כל המגנטים החדשים
+    magnets.update(currentList => [...currentList, ...newMagnets]);
+    
+    // הפונקציה מסיימת רק עכשיו, וה-await בעורך ישתחרר
+}
+
+/**
+ * ✅ ארכיטקטורה חדשה: פונקציה שמעדכנת גרסה מעובדת ספציפית במטמון
+ */
+export function updateMagnetProcessedSrc(magnetId, effectId, newSrc) {
+    magnets.update(currentList => 
+        currentList.map(m => {
+            if (m.id === magnetId) {
+                // ודא שאובייקט 'processed' קיים
+                const processed = m.processed || { original: m.originalSrc };
+                return {
+                    ...m,
+                    processed: {
+                        ...processed,
+                        [effectId]: newSrc // עדכון הגרסה המעובדת
+                    }
+                };
+            }
+            return m;
+        })
+    );
+}
+
 
 // פונקציה שמוצאת מגנט ספציפי לעריכה
 export function getMagnetById(id) {
