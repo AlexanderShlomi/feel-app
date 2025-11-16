@@ -65,6 +65,7 @@ body {
     align-items: center; 
     padding: 0; 
     overflow-y: auto; 
+    box-sizing: border-box; 
 }
 
 #home-shop-btn {
@@ -159,11 +160,12 @@ a.product-select-btn:hover h3 {
     display: grid; 
     grid-template-columns: 1fr 1fr 1fr; 
     align-items: center;
-    padding: 15px 30px;
+    padding: 10px 30px;
     background: var(--color-dark-blue); /* Ink */
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     z-index: 100;
     box-sizing: border-box;
+    height: 70px;
 }
 
 .header-right { justify-self: start; } 
@@ -171,21 +173,17 @@ a.product-select-btn:hover h3 {
 .header-left { justify-self: end; } 
 
 .app-header .logo {
-    font-family: 'Signature Fountain', sans-serif; 
-    font-size: 40px; 
-    font-weight: normal; 
-    color: var(--color-gold); /* Tan */
     display: flex;
-    align-items: baseline; 
+    align-items: center; 
     cursor: pointer; 
     text-decoration: none; 
+    height: 50px; 
 }
-.app-header .logo .heart-icon {
-    font-size: 20px; 
-    color: var(--color-gold); /* Tan */
-    margin-right: 5px; 
-    vertical-align: sub; 
+.app-header .logo .logo-img {
+    height: 50px; 
+    width: auto;
 }
+
 
 .header-icon-btn {
     border: none;
@@ -209,14 +207,63 @@ a.product-select-btn:hover h3 {
 }
 
 /* --- 5. עיצוב עורך --- */
-.hero-video {
-    width: 80%;
-    height: auto;
-    aspect-ratio: 9 / 5;
-    object-fit: cover; 
-    object-position: top; 
-    display: block;
+
+/* --- 🔥🔥 עדכון עיצוב הווידאו + הוספת סגנונות לטקסט 🔥🔥 --- */
+.hero-container {
+    position: relative;
+    width: 100%;
+    height: 75vh; /* גובה זהה לווידאו */
+    display: flex; /* כדי שהווידאו ימלא אותו */
+    justify-content: center;
+    align-items: center;
+    overflow: hidden; /* מוודא שהווידאו לא גולש */
 }
+
+.hero-video {
+    width: 100%; 
+    height: 100%; /* ממלא את ההורה */
+    object-fit: cover; 
+    object-position: center center; 
+    
+    /* 🔥 הופך את הווידאו לרקע */
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1; 
+}
+
+.hero-text-overlay {
+    position: relative; /* z-index עובד על position */
+    z-index: 2; /* מעל הווידאו */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: white; /* צבע בהיר כמו שביקשת */
+    padding: 0 20px; /* ריווח מהצדדים */
+    /* אפקט צל קל לקריאות טובה יותר */
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); 
+}
+
+.hero-headline {
+    font-family: 'Assistant', sans-serif; /* פונט נקי ואלגנטי */
+    font-size: 3.5rem; /* גודל מרשים */
+    font-weight: 700; /* מודגש */
+    margin: 0;
+    line-height: 1.2;
+}
+
+.hero-subheadline {
+    font-family: 'Assistant', sans-serif;
+    font-size: 1.5rem; /* גודל קריא */
+    font-weight: 400; /* רגיל */
+    margin-top: 20px;
+    max-width: 600px; /* מגביל את רוחב הטקסט */
+    line-height: 1.5;
+}
+/* --- 🔥🔥 סוף התיקון 🔥🔥 --- */
+
 
 .canvas-container {
     flex-grow: 1; 

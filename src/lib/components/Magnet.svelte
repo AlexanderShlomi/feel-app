@@ -5,26 +5,35 @@
 
     // נתונים שהרכיב מקבל:
     export let id;
-    export let position; 
+    export let position;
     export let size;
     export let isSplitPart = false;
 
-    // ✅ ארכיטקטורה חדשה: 
-    // הרכיב מקבל את כל נתוני המקור והמטמון
     export let originalSrc;
-    export let processed; // אובייקט המטמון: { original, silver, ... }
+    export let processed; 
     export let transform;
-    export let src; // עדיין רלוונטי עבור פסיפס
+    export let src; 
     
+    export let activeEffectId = 'original'; 
+
     let magnetElement; 
     const dispatch = createEventDispatcher();
+    
+    // חישוב למגנט בודד (משתמש עכשיו ב-prop)
+    $: individualSrc = (processed && processed[activeEffectId]) 
+                    ? processed[activeEffectId]
+                    : originalSrc; 
 
-    // ✅ ארכיטקטורה חדשה: 
-    // משתנה שמחשב איזו גרסת תמונה להציג
-    $: currentEffectId = $editorSettings.currentEffect;
-    $: currentSrc = (processed && processed[currentEffectId]) 
-                    ? processed[currentEffectId] // 'data:image...' (מעובד) או 'processing'
-                    : originalSrc; // או המקור אם אין כלום
+    // חישוב למצב פסיפס (עדיין גלובלי)
+    $: currentGlobalEffectId = $editorSettings.currentEffect;
+    $: splitCache = $editorSettings.splitImageCache;
+    $: splitSrc = (splitCache && splitCache[currentGlobalEffectId])
+                    ? splitCache[currentGlobalEffectId]
+                    : src; 
+    
+    // --- 🔥 התיקון: ממיר את היחס לפיקסלים ---
+    $: displayX = (transform.x || 0) * size;
+    $: displayY = (transform.y || 0) * size;
 
     // --- פונקציות אירועים ---
     function handleDelete(e) {
@@ -34,7 +43,6 @@
 
     function handleEdit(e) {
         e.stopPropagation();
-        // שלח את ה-originalSrc לעמוד העריכה
         goto(`/uploader/edit/${id}`);
     }
 
@@ -48,7 +56,6 @@
     bind:this={magnetElement}
     data-id={id}
     class="magnet-preview"
-    class:draggable={!isSplitPart}
     class:split-part={isSplitPart}
     
     style="
@@ -61,52 +68,49 @@
     on:touchstart|preventDefault={handleDragStart}
 >
     {#if isSplitPart}
-        <div 
-            class="split-image"
-            class:effect-silver={$editorSettings.currentEffect === 'silver'}
-            class:effect-noir={$editorSettings.currentEffect === 'noir'}
-            class:effect-vivid={$editorSettings.currentEffect === 'vivid'}
-            class:effect-dramatic={$editorSettings.currentEffect === 'dramatic'}
-            style="
-                background-image: url({src});
-                background-size: {transform.bgWidth}% {transform.bgHeight}%;
-                background-position: {transform.bgPosX}% {transform.bgPosY}%;
-            "
-        ></div>
-    {:else}
-        {#if currentSrc === 'processing'}
+        
+        {#if splitSrc === 'processing'}
             <div class="magnet-loader">
                 <div class="loader-spinner"></div>
             </div>
-        {:else if currentSrc}
+        {:else}
+            <div 
+                class="split-image"
+                style="
+                    background-image: url({splitSrc || src});
+                    background-size: {transform.bgWidth}% {transform.bgHeight}%;
+                    background-position: {transform.bgPosX}% {transform.bgPosY}%;
+                "
+            ></div>
+        {/if}
+
+    {:else}
+        {#if individualSrc === 'processing'}
+            <div class="magnet-loader">
+                <div class="loader-spinner"></div>
+            </div>
+        {:else if individualSrc}
             <img 
-                src={currentSrc} 
+                src={individualSrc} 
                 alt="magnet preview" 
-                style="transform: scale({transform.zoom}) translate({transform.x}px, {transform.y}px);" 
+                style="transform: scale({transform.zoom}) translate({displayX}px, {displayY}px);"
             />
         {/if}
     {/if}
     
     {#if !isSplitPart}
         <span class="edit-btn" on:click={handleEdit} on:mousedown|stopPropagation>&#9998;</span>
-        <span class="delete-btn" on:click={handleDelete} on:mousedown|stopPropagation>&times;</span>
     {/if}
+    
+    <span class="delete-btn" on:click={handleDelete} on:mousedown|stopPropagation>&times;</span>
 </div>
 
 <style>
     .split-image {
         width: 100%;
         height: 100%;
-        transition: filter 0.3s;
     }
 
-    /* פילטרי SVG עדיין רלוונטיים רק עבור הפסיפס */
-    :global(.split-part.effect-silver) .split-image { filter: url(#filter-silver); }
-    :global(.split-part.effect-noir) .split-image { filter: url(#filter-noir); }
-    :global(.split-part.effect-vivid) .split-image { filter: url(#filter-vivid); }
-    :global(.split-part.effect-dramatic) .split-image { filter: url(#filter-dramatic); }
-
-    /* ✅ עיצוב חדש לספינר טעינה (ספציפי למגנט) */
     .magnet-loader {
         width: 100%;
         height: 100%;
@@ -127,7 +131,6 @@
         animation: spin 1s linear infinite;
     }
     
-    /* אותה אנימציה מה-loader הראשי */
     @keyframes spin {
         to { transform: rotate(360deg); }
     }

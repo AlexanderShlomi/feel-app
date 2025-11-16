@@ -25,13 +25,21 @@ export const magnets = writable([]);
 // 2. מחזיק את ההגדרות הכלליות של העורך
 export const editorSettings = writable({
     currentMode: 'multi', // 'multi' או 'split'
-    currentDisplayScale: 1.0,
+    currentDisplayScale: 1.0, 
     surfaceMinHeight: '100%',
     isSurfaceDark: false,
     splitImageSrc: null,
     splitImageRatio: 1, 
     gridBaseSize: 3,
-    currentEffect: 'original',
+    currentEffect: 'original', 
+    
+    splitImageCache: {
+        original: null,
+        silver: null,
+        noir: null,
+        vivid: null,
+        dramatic: null
+    }
 });
 
 // --- פונקציות עזר לניהול המצב ---
@@ -48,17 +56,17 @@ function createMagnetFromFile(file) {
         reader.onload = (e) => {
             const originalSrc = e.target.result;
             const newMagnet = {
-                id: crypto.randomUUID(), // ID ייחודי
+                id: crypto.randomUUID(), 
                 transform: { zoom: 1, x: 0, y: 0 },
-                position: { x: -9999, y: -9999 }, // מיקום התחלתי מחוץ למסך
+                position: { x: -9999, y: -9999 }, 
                 size: size,
+                originalSrc: originalSrc, 
                 
-                // --- ליבת הארכיטקטורה החדשה ---
-                originalSrc: originalSrc, // המקור, תמיד נשמר
-                
-                // מטמון (Cache) של גרסאות מעובדות
+                // --- 🔥 הוספנו "זיכרון" אפקט אישי ---
+                activeEffectId: 'original', 
+
                 processed: {
-                    original: originalSrc, // הגרסה המוצגת הראשונית
+                    original: originalSrc, 
                     silver: null,
                     noir: null,
                     vivid: null,
@@ -77,16 +85,9 @@ function createMagnetFromFile(file) {
  * היא מחכה שכל הקבצים ייקראו לפני שהיא מוסיפה אותם ל-store
  */
 export async function addUploadedMagnets(files) {
-    // המר את כל הקבצים למגנטים (באופן א-סינכרוני)
     const newMagnetsPromises = Array.from(files).map(createMagnetFromFile);
-    
-    // חכה שכל ה-FileReaders יסיימו
     const newMagnets = await Promise.all(newMagnetsPromises);
-
-    // עדכן את ה-store פעם אחת בלבד עם כל המגנטים החדשים
     magnets.update(currentList => [...currentList, ...newMagnets]);
-    
-    // הפונקציה מסיימת רק עכשיו, וה-await בעורך ישתחרר
 }
 
 /**
@@ -96,13 +97,12 @@ export function updateMagnetProcessedSrc(magnetId, effectId, newSrc) {
     magnets.update(currentList => 
         currentList.map(m => {
             if (m.id === magnetId) {
-                // ודא שאובייקט 'processed' קיים
                 const processed = m.processed || { original: m.originalSrc };
                 return {
                     ...m,
                     processed: {
                         ...processed,
-                        [effectId]: newSrc // עדכון הגרסה המעובדת
+                        [effectId]: newSrc 
                     }
                 };
             }
@@ -111,19 +111,48 @@ export function updateMagnetProcessedSrc(magnetId, effectId, newSrc) {
     );
 }
 
+/**
+ * ✅ ארכיטקט
+ * ורה חדשה: פונקציה לעדכון מטמון הפסיפס
+ */
+export function updateSplitImageCache(effectId, newSrc) {
+    editorSettings.update(s => {
+        const newCache = { ...s.splitImageCache, [effectId]: newSrc };
+        return { ...s, splitImageCache: newCache };
+    });
+}
 
-// פונקציה שמוצאת מגנט ספציפי לעריכה
 export function getMagnetById(id) {
     const currentMagnets = get(magnets);
-    // ודא שהרשימה קיימת לפני החיפוש
     return currentMagnets ? currentMagnets.find(m => m.id === id) : null;
 }
 
-// פונקציה ששומרת נתוני עריכה בחזרה למגנט
 export function updateMagnetTransform(id, newTransform) {
     magnets.update(currentList => 
         currentList.map(m => 
             m.id === id ? { ...m, transform: newTransform } : m
         )
+    );
+}
+
+// --- 🔥 פונקציות חדשות לניהול אפקטים ---
+
+/**
+ * מעדכן את האפקט הפעיל של מגנט בודד
+ */
+export function updateMagnetActiveEffect(magnetId, effectId) {
+     magnets.update(currentList => 
+        currentList.map(m => 
+            m.id === magnetId ? { ...m, activeEffectId: effectId } : m
+        )
+    );
+}
+
+/**
+ * "משדר" אפקט גלובלי לכל המגנטים (דורס בחירות אישיות)
+ */
+export function updateAllMagnetsActiveEffect(effectId) {
+    magnets.update(currentList => 
+        currentList.map(m => ({ ...m, activeEffectId: effectId }))
     );
 }

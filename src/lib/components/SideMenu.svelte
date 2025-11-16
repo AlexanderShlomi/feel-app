@@ -11,6 +11,19 @@
 {/if}
 
 <div id="side-menu" class:active={isOpen}>
+    <div class="menu-header">
+        <div class="header-right"></div>
+        <div class="header-center">
+            <a href="/" class="logo">
+                <img src="/Logo.svg" alt="FEEL Logo" class="logo-img">
+            </a>
+        </div>
+        <div class="header-left">
+            <button class="close-menu-btn header-icon-btn" on:click={closeMenu}>
+                &times; </button>
+        </div>
+    </div>
+    
     <ul>
         <li><a href="/"><span>א</span> אודות</a></li>
         <li><a href="/"><span>מ</span> מדיניות פרטיות</a></li>
@@ -19,27 +32,63 @@
 </div>
 
 <style>
-    /* ה-CSS כאן הוא "מקומי" (scoped) 
-      הוא משפיע *רק* על הרכיב הזה
-    */
     #side-menu {
         position: fixed;
         top: 0;
-        right: -250px; /* מתחיל מוסתר מחוץ למסך */
-        width: 250px;
+        right: -300px; 
+        width: 300px; 
         height: 100vh;
         background: var(--color-light-gray); /* White */
         z-index: 2000;
         transition: right 0.3s ease-in-out;
-        padding: 20px;
         box-shadow: -5px 0 15px rgba(0,0,0,0.1);
         box-sizing: border-box; 
     }
     #side-menu.active {
-        right: 0; /* מחליק פנימה */
+        right: 0;
+    }
+
+    /* --- 🔥 עיצוב חדש לכותרת התפריט --- */
+    .menu-header {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        align-items: center;
+        padding: 10px 30px; /* התאמה לכותרת הראשית */
+        border-bottom: 1px solid var(--color-canvas-bg); 
+        background-color: var(--color-dark-blue); 
+        height: 70px; /* גובה זהה לכותרת הראשית */
+        box-sizing: border-box;
+    }
+
+    .menu-header .logo {
+        display: flex;
+        align-items: center; 
+        text-decoration: none; 
+        height: 50px; /* 🔥 גובה לוגו 50px */
     }
     
-    #menu-backdrop {
+    .menu-header .logo .logo-img {
+        height: 50px; /* 🔥 גובה לוגו 50px */
+        width: auto;
+    }
+
+    /* 🔥 שימוש חוזר בעיצוב הכפתור מהקובץ הראשי */
+    .close-menu-btn {
+        background: none;
+        border: none;
+        color: var(--color-gold);
+        cursor: pointer;
+        padding: 5px;
+        line-height: 1;
+        font-size: 30px; /* גופן גדול יותר ל-X */
+    }
+    .close-menu-btn:hover {
+        color: white;
+    }
+    /* --- סוף עיצוב חדש --- */
+
+    
+    .menu-backdrop { 
         position: fixed;
         top: 0;
         left: 0;
@@ -49,14 +98,19 @@
         z-index: 1999;
         animation: fadeIn 0.3s;
     }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
     
     #side-menu ul { 
-        list-style: none; 
+        list-style: none;
         padding: 0; 
-        margin: 60px 0 0 0; 
+        margin: 20px; 
     }
     #side-menu li a {
-        display: flex; 
+        display: flex;
         align-items: center;
         padding: 15px 10px;
         text-decoration: none;
@@ -69,7 +123,7 @@
         background-color: var(--color-canvas-bg); /* Sand */
     }
     #side-menu li a span { 
-        margin-left: 10px; 
+        margin-left: 10px;
         font-style: italic;
         color: var(--color-pink);
     }

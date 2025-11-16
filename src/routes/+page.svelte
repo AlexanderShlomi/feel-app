@@ -10,10 +10,23 @@
 
 <div class="home-content">
     
-    <video class="hero-video" autoplay loop muted playsinline>
-        <source src="/heroImag.mp4" type="video/mp4">
-        הדפדפן שלך לא תומך בווידאו.
-    </video>
+    <div class="hero-container">
+        
+        <video class="hero-video" autoplay loop muted playsinline>
+            <source src="/heroImag.mp4" type="video/mp4">
+            הדפדפן שלך לא תומך בווידאו.
+        </video>
+        
+        <div class="hero-text-overlay">
+            <h1 class="hero-headline">לעצור את הזמן. להרגיש את הרגע.</h1>
+            <p class="hero-subheadline">
+                הפכו את הזיכרונות שלכם למתנות מרגשות.
+                <br>
+                חוויה שנוגעת בלב.
+            </p>
+        </div>
+    </div>
     
-    <a href="/select" id="home-shop-btn">Shop</a>
+    <a href="/select" id="home-shop-btn">בואו ניצור זיכרון</a>
+
 </div>
