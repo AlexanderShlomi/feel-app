@@ -103,18 +103,7 @@ body {
     
     /* 🔥 הוספנו גובה מינימלי כדי למלא מסך גם אם אין תוכן */
     min-height: calc(100vh - 70px); 
-    
-    /* 🔥 הכללים הבאים הוסרו/בוטלו 
-       overflow-y: scroll;
-       -ms-overflow-style: none;
-       scrollbar-width: none; 
-    */
 }
-/* 🔥 הכלל הבא הוסר/בוטל
-    .home-content::-webkit-scrollbar {
-        display: none;
-    } 
-*/
 
 
 #home-shop-btn {
@@ -143,9 +132,6 @@ body {
     padding: 40px 20px; 
     text-align: center;
 }
-
-/* ... שאר הקובץ app.css נשאר זהה ... */
-/* (הדבק את כל הקובץ הזה במקום הקובץ הישן שלך) */
 
 .selection-content h2 {
     font-size: 28px;
@@ -780,7 +766,8 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
 /* (השינויים מיושמים כאן) */
 .info-section {
     width: 100%;
-    max-width: 1100px;
+    /* 🔥 שינוי: הגדלת הרוחב המרבי */
+    max-width: 1300px;
     /* ריווח זהה לכפתור שמעליו */
     margin: 40px auto; 
     padding: 0 40px;
@@ -806,14 +793,23 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
     margin: 0;
 }
 .info-cards-grid {
+    /* 🔥 שונה ל-3 עמודות */
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 30px;
     width: 100%;
     margin-top: 30px;
 }
 
-/* --- 🔥 כאן הוספתי את השינויים --- */
+/* --- 🔥 עיצוב חדש לאייקונים של הכרטיסיות --- */
+.card-icon {
+    width: 28px;
+    height: 28px;
+    /* 🔥 שינוי צבע לזהב */
+    fill: var(--color-gold); 
+    flex-shrink: 0; /* מונע מהאייקון להתכווץ */
+}
+
 .info-card {
     background: var(--color-light-gray); /* White */
     border-radius: 20px; /* פינות מעוגלות כמו בדוגמה */
@@ -824,23 +820,41 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
     
     /* הוספת התנהגות קישור */
     text-decoration: none;
-    cursor: pointer;
+    
+    /* 🔥 תיקון: ברירת המחדל היא סמן רגיל */
+    cursor: default;
     
     /* הוספת האנימציה שביקשת */
     transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
 }
+
+/* 🔥 תיקון: אפקט הריחוף חל על כל כרטיסייה */
 .info-card:hover {
     transform: translateY(-5px); /* הרמה קלה */
     box-shadow: 0 6px 20px rgba(0,0,0,0.08); /* צל מודגש */
-    border-color: var(--color-pink); /* גבול בצבע המותג (Teal) */
+    /* 🔥 שינוי צבע לזהב */
+    border-color: var(--color-gold); 
+}
+
+/* 🔥 תיקון: רק קישורים מקבלים סמן "יד" */
+a.info-card {
+    cursor: pointer;
 }
 /* --- סוף השינויים --- */
+
 
 .info-card h4 {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--color-pink); /* Teal */
+    /* 🔥 שינוי צבע לזהב */
+    color: var(--color-gold); 
     margin: 0;
+
+    /* 🔥 עיצוב חדש ליישור האייקון */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
 }
 
 /* --- 🔥 הוספתי עיצוב לפסקה החדשה --- */
@@ -873,6 +887,7 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
 @media (max-width: 900px) {
     .products-grid,
     .info-cards-grid {
+        /* 🔥 מחזיר לעמודה 1 במובייל */
         grid-template-columns: 1fr;
     }
 }
@@ -887,4 +902,148 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
         margin: 40px auto;
         padding: 0 20px;
     }
+}
+
+/* --- 9. 🔥 עיצוב מקטע קהילה (חדש) --- */
+
+.community-section {
+    width: 100%;
+    /* 🔥 שינוי רקע לבהיר */
+    background-color: var(--color-canvas-bg); /* Sand */
+    padding: 60px 0; /* ריווח נקי */
+    box-sizing: border-box;
+    overflow: hidden; /* מונע גלישה */
+    position: relative;
+    border-top: 1px solid #e0e0e0; /* קו הפרדה עדין */
+}
+
+/* העטיפה שמכילה את הכותרת, הכפתורים והקרוסלה */
+.community-wrapper {
+    position: relative;
+    width: 100%;
+    /* (280*4) + (20*3) = 1180px. בתוספת 60px ריווח צד = 1300px */
+    max-width: 1300px; 
+    margin: 0 auto;
+    padding: 0 60px; /* ריווח צד לכפתורים */
+    box-sizing: border-box;
+}
+
+.community-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    /* 🔥 שינוי צבע לכהה */
+    color: var(--color-medium-blue-gray); 
+    margin: 0 0 30px 0;
+    text-align: center;
+}
+
+/* כפתורי הניווט */
+.scroll-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    /* 🔥 שינוי צבעים לגרסה הבהירה */
+    background-color: var(--color-light-gray); 
+    color: var(--color-dark-gray); 
+    border: 1px solid #eee;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    opacity: 0.9;
+}
+.scroll-btn:hover {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.scroll-btn.left { 
+    left: 0px; 
+}
+.scroll-btn.right { 
+    right: 0px; 
+}
+.scroll-btn svg { 
+    width: 24px; 
+    height: 24px;
+    stroke-width: 3px;
+}
+
+
+/* הקונטיינר שגולל */
+.community-scroll-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* 🔥 תיקון: הוסר display: flex; */
+    scroll-snap-type: x mandatory; 
+    scroll-behavior: smooth; 
+    
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.community-scroll-container::-webkit-scrollbar {
+    display: none;
+}
+
+/* הרצועה שמחזיקה את כל הכרטיסיות */
+.community-scroll-track {
+    display: flex;
+    gap: 20px;
+}
+
+/* כרטיסייה בודדת */
+.community-card {
+    /* 🔥 רוחב הכרטיסייה נקבע ל-4 בשורה */
+    width: 280px; 
+    flex-shrink: 0;
+    scroll-snap-align: center;
+}
+
+.community-video-placeholder {
+    width: 100%;
+    aspect-ratio: 9 / 16;
+    /* 🔥 רקע לבן לכרטיסייה */
+    background-color: var(--color-light-gray); 
+    border-radius: 12px;
+    border: 1px solid #eee;
+    overflow: hidden;
+    position: relative;
+}
+
+/* 🔥 עיצוב חדש לוידאו */
+.community-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; 
+    /* 🔥 הוספנו כדי לכסות את כל המסגרת גם אם היחס לא מושלם */
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+
+.community-text-placeholder {
+    padding: 15px 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.placeholder-line {
+    height: 14px;
+    border-radius: 4px;
+    /* 🔥 צבע הרקע של הפסים (חלק מהרקע הראשי) */
+    background-color: var(--color-canvas-bg); 
+}
+.placeholder-line.short {
+    width: 40%;
+}
+.placeholder-line.long {
+    width: 60%;
 }
