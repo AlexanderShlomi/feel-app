@@ -3,48 +3,112 @@
 </svelte:head>
 
 <script>
+    import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, editorSettings, getMagnetById, updateMagnetTransform } from '$lib/stores.js';
+    import { magnets, editorSettings, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect } from '$lib/stores.js';
+    import FloatingPanel from '$lib/components/FloatingPanel.svelte'; 
 
-    // קריאת ה-ID מה-URL
+    // --- רשימת אפקטים ---
+    const effectsList = [
+        { id: 'original', name: 'מקורי', filter: 'none' },
+        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
+        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
+        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
+        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
+    ];
+
+    // --- קריאת נתונים ---
     const magnetId = $page.params.magnetId;
-    
-    // שליפת המגנט מה-"מוח" שלנו
     let magnet;
-    magnets.subscribe(list => {
-        magnet = list.find(m => m.id === magnetId);
-    })();
+    $: magnet = $magnets.find(m => m.id === magnetId); // הפכנו לריאקטיבי
     
-    // אם המגנט לא נמצא (למשל, אחרי ריענון עמוד), החזר לעורך
-    if (!magnet) {
-        goto('/uploader');
-    }
+    // --- משתני עריכה מקומיים (זום ומיקום) ---
+    let currentEditZoom = magnet?.transform.zoom || 1;
+    let currentEditX = magnet?.transform.x || 0;
+    let currentEditY = magnet?.transform.y || 0;
     
-    // משתני עריכה מקומיים
-    let currentEditZoom = magnet.transform.zoom;
-    let currentEditX = magnet.transform.x;
-    let currentEditY = magnet.transform.y;
+    // 🔥 שינוי: נגדיר את נתוני האיפוס כקבועים
+    const originalEditData = { 
+        zoom: 1, 
+        x: 0, // זהו יחס (ratio)
+        y: 0  // זהו יחס (ratio)
+    };
     
-    // שמירת המצב המקורי לאיפוס
-    const originalEditData = { ...magnet.transform };
-
-    // משתני גרירה
+    // --- משתני גרירה (זום ומיקום) ---
     let isEditingDrag = false;
     let editStartPosX = 0;
     let editStartPosY = 0;
+    let editImageEl;
+
+    // --- לוגיקה חדשה: אפקטים ---
+    let effectsWorker;
+    let activePanel = null; 
     
-    let editImageEl; // קישור לתג התמונה
+    $: currentEffectId = magnet?.activeEffectId || 'original'; 
+    $: processedSrc = magnet?.processed[currentEffectId];
+    $: isLoadingEffect = processedSrc === 'processing';
+    
+    $: displaySrc = (processedSrc && processedSrc !== 'processing') 
+                    ? processedSrc 
+                    : magnet?.originalSrc;
+
+    onMount(() => {
+        if (!magnet) {
+            goto('/uploader');
+            return; 
+        }
+
+        // 🔥 התיקון: המרת היחסים (מה-store) לפיקסלים (של עמוד העריכה) ---
+        const frameSize = editImageEl.clientWidth; // גודל מסגרת העריכה
+        
+        currentEditZoom = magnet.transform.zoom;
+        // המר מיחס (0.1) לפיקסלים (0.1 * 400 = 40px)
+        currentEditX = magnet.transform.x * frameSize; 
+        currentEditY = magnet.transform.y * frameSize;
+        
+        // החל את הטרנספורם בפעם הראשונה
+        applyEditTransform(); 
+
+        effectsWorker = new Worker('/effects.worker.js');
+        effectsWorker.onmessage = (event) => {
+            const { status, magnetId: processedMagnetId, effectId, newSrc } = event.data;
+            if (status === 'success' && processedMagnetId === magnetId) {
+                updateMagnetProcessedSrc(magnetId, effectId, newSrc);
+            }
+        };
+    });
+
+    onDestroy(() => {
+        if (effectsWorker) {
+            effectsWorker.terminate();
+        }
+    });
+
+    /**
+     * פונקציה חדשה: החלת אפקט
+     */
+    function applyEffect(effectId) {
+        updateMagnetActiveEffect(magnetId, effectId);
+        activePanel = null;
+
+        if (effectId !== 'original' && !magnet.processed[effectId]) {
+            updateMagnetProcessedSrc(magnetId, effectId, 'processing');
+            effectsWorker.postMessage({
+                magnetId: magnetId,
+                effectId: effectId,
+                originalSrc: magnet.originalSrc
+            });
+        }
+    }
 
     function applyEditTransform() {
         if (!editImageEl) return;
-
-        // הגבלת התזוזה (panning) כך שהתמונה לא "תברח" מהמסגרת
         const frameWidth = editImageEl.clientWidth;
         const frameHeight = editImageEl.clientHeight;
         const scaledWidth = frameWidth * currentEditZoom;
         const scaledHeight = frameHeight * currentEditZoom;
-
+        
         const maxMoveX = Math.max(0, (scaledWidth - frameWidth) / 2 / currentEditZoom);
         const maxMoveY = Math.max(0, (scaledHeight - frameHeight) / 2 / currentEditZoom);
 
@@ -59,28 +123,39 @@
         applyEditTransform();
     }
 
+    /**
+     * 🔥 פונקציית איפוס מתוקנת 🔥
+     */
     function resetEditTransform() {
-        currentEditZoom = originalEditData.zoom;
-        currentEditX = originalEditData.x;
-        currentEditY = originalEditData.y;
+        // 1. אפס זום ומיקום לערכי "מפעל"
+        currentEditZoom = originalEditData.zoom; // 1
+        currentEditX = originalEditData.x; // 0
+        currentEditY = originalEditData.y; // 0
         applyEditTransform();
+        
+        // 2. אפס את האפקט ל"מקורי"
+        applyEffect('original');
     }
 
     function saveAndClose() {
-        // שמירת הנתונים המעודכנים בחזרה ל-"מוח"
+        // --- 🔥 התיקון: המר מפיקסלים בחזרה ליחסים ---
+        const frameSize = editImageEl.clientWidth;
+        // המר מפיקסלים (40px) ליחס (40 / 400 = 0.1)
+        const savedX_ratio = currentEditX / frameSize;
+        const savedY_ratio = currentEditY / frameSize;
+
         updateMagnetTransform(magnetId, {
             zoom: currentEditZoom,
-            x: currentEditX,
-            y: currentEditY
+            x: savedX_ratio, // שמור יחס
+            y: savedY_ratio  // שמור יחס
         });
-        goto('/uploader'); // חזרה לעורך
+        goto('/uploader'); 
     }
     
     function cancelAndClose() {
-        goto('/uploader'); // חזרה לעורך בלי לשמור
+        goto('/uploader');
     }
 
-    // --- לוגיקת גרירה ---
     function getEventPosition(e) {
         return e.touches ? e.touches[0] : e;
     }
@@ -92,10 +167,6 @@
         editStartPosX = pos.clientX;
         editStartPosY = pos.clientY;
         
-        // קריאת המיקום הנוכחי מחדש
-        currentEditX = magnet.transform.x;
-        currentEditY = magnet.transform.y;
-        
         editImageEl.style.transition = 'none';
     }
 
@@ -106,8 +177,7 @@
         
         const deltaX = (pos.clientX - editStartPosX);
         const deltaY = (pos.clientY - editStartPosY);
-        
-        // עדכון המיקום הנוכחי מחולק בזום
+
         currentEditX += (deltaX / currentEditZoom);
         currentEditY += (deltaY / currentEditZoom);
         
@@ -121,17 +191,22 @@
         if (!isEditingDrag) return;
         isEditingDrag = false;
         editImageEl.style.transition = 'transform 0.1s ease-out';
-        
-        // עדכון הטרנספורם במשתנה המגנט באופן זמני
-        magnet.transform = { zoom: currentEditZoom, x: currentEditX, y: currentEditY };
     }
 
 </script>
 
+<svelte:window 
+    on:mousemove={editDrag} 
+    on:mouseup={endEditDrag}
+    on:touchmove|preventDefault={editDrag}
+    on:touchend={endEditDrag}
+/>
+
+{#if magnet}
 <div class="edit-canvas-container">
     <div class="edit-frame">
         <img 
-            src={magnet.originalSrc} 
+            src={displaySrc} 
             id="edit-image" 
             alt="עריכת תמונה"
             bind:this={editImageEl}
@@ -139,6 +214,11 @@
             on:mousedown={startEditDrag}
             on:touchstart|preventDefault={startEditDrag}
         />
+        {#if isLoadingEffect}
+            <div class="magnet-loader">
+                <div class="loader-spinner"></div>
+            </div>
+        {/if}
     </div>
 </div>
 
@@ -157,12 +237,61 @@
         <span>+</span>
     </div>
     <button class="toolbar-btn" on:click={resetEditTransform}>אפס</button>
+    
+    <button class="toolbar-btn" on:click={() => activePanel = 'effects'}>אפקטים</button>
+    
     <button class="toolbar-btn" id="edit-save-btn" on:click={saveAndClose}>שמור שינויים</button>
 </footer>
 
-<svelte:window 
-    on:mousemove={editDrag} 
-    on:mouseup={endEditDrag}
-    on:touchmove|preventDefault={editDrag}
-    on:touchend={endEditDrag}
-/>
+<FloatingPanel 
+    title="בחר אפקט" 
+    isOpen={activePanel === 'effects'} 
+    on:close={() => activePanel = null}
+>
+    <div class="effects-list">
+        {#each effectsList as effect (effect.id)}
+            <button 
+                class="effect-select-btn"
+                class:active={effect.id === currentEffectId}
+                on:click={() => applyEffect(effect.id)}
+            >
+                <div class="thumbnail-wrapper">
+                    <img 
+                        src="/effects.png" 
+                        alt={effect.name}
+                        style="filter: {effect.filter};"
+                    >
+                </div>
+                <span>{effect.name}</span>
+            </button>
+        {/each}
+    </div>
+</FloatingPanel>
+
+<style>
+    .magnet-loader {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: rgba(255,255,255,0.5);
+        box-sizing: border-box;
+        border-radius: 12px;
+    }
+    .loader-spinner {
+        width: 30px;
+        height: 30px;
+        border: 4px solid var(--color-pink);
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+{/if}

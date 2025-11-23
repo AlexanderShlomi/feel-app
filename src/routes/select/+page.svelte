@@ -8,6 +8,7 @@
     function setMode(mode) {
         // איפוס המגנטים הקיימים
         magnets.set([]);
+        
         // איפוס ההגדרות
         editorSettings.set({
             currentMode: mode,
@@ -17,9 +18,20 @@
             splitImageSrc: null,
             splitImageRatio: 1,
             gridBaseSize: 3,
-            currentEffect: 'original' // ✅ <-- התיקון: הוספת השורה החסרה
+            
+            // --- 🔥 התיקון כאן ---
+            // מאפסים את האפקט חזרה ל"מקורי"
+            currentEffect: 'original', 
+            
+            currentLayoutMode: 'centered', 
+            splitImageCache: { 
+                original: null,
+                silver: null,
+                noir: null,
+                vivid: null,
+                dramatic: null
+            }
         });
-        // הניווט יקרה אוטומטית דרך תג ה-<a>
     }
 </script>
 
@@ -34,7 +46,7 @@
             id="select-multi-btn"
             on:click={() => setMode('multi')}
         >
-            <div class="product-info">
+             <div class="product-info">
                 <h3>מגנטים בודדים</h3>
             </div>
             <img src="/mag.png" alt="מגנטים בודדים">
@@ -43,7 +55,7 @@
         <a 
             href="/uploader" 
             class="product-select-btn" 
-            id="select-split-btn"
+             id="select-split-btn"
             on:click={() => setMode('split')}
         >
             <div class="product-info">

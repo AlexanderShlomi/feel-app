@@ -27,14 +27,49 @@
 
     /* רקע אזור העלאת תמונות (בהיר) */
     --color-canvas-bg: #F2F0EC; /* Sand */
+
+    /* צבע רקע כרטיסייה (כהה יותר מ-Ink) */
+    --color-card-dark: #2D2D2D; /* Slate */
 }
+
+/* --- 🔥 עיצוב פס גלילה מינימלי --- */
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  /* צבע הגליל, צבע הרקע של המסילה */
+  scrollbar-color: var(--color-dark-gray) var(--color-canvas-bg);
+}
+
+/* Chrome, Edge, and Safari */
+::-webkit-scrollbar {
+  width: 8px; /* רוחב הפס */
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-canvas-bg); /* רקע הפס (צבע רקע בהיר) */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-dark-gray); /* צבע הגלילה (Navy) */
+  border-radius: 10px;
+  /* יוצר רווח קטן בצבע הרקע */
+  border: 2px solid var(--color-canvas-bg);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-pink); /* צבע בעת ריחוף (Teal) */
+}
+/* --- סוף עיצוב פס גלילה --- */
+
 
 body {
     font-family: 'Assistant', sans-serif; 
     background-color: var(--color-dark-blue); /* רקע כהה (Ink) */
     margin: 0;
     padding: 0;
-    overflow: hidden; 
+    overflow: hidden; /* <-- זה נשאר 'hidden' כברירת מחדל עבור דפי האפליקציה */
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -58,14 +93,18 @@ body {
 /* --- 2. עיצוב דף הבית --- */
 .home-content {
     background-color: var(--color-canvas-bg); /* Sand */
-    flex-grow: 1;
+    /* flex-grow: 1;  <-- 🔥 הוסר! מאפשר לדף לגדול */
     display: flex;
     flex-direction: column; 
     justify-content: flex-start; 
     align-items: center; 
     padding: 0; 
-    overflow-y: auto; 
+    box-sizing: border-box; 
+    
+    /* 🔥 הוספנו גובה מינימלי כדי למלא מסך גם אם אין תוכן */
+    min-height: calc(100vh - 70px); 
 }
+
 
 #home-shop-btn {
     font-family: 'Assistant', sans-serif;
@@ -89,7 +128,7 @@ body {
 .selection-content {
     background-color: var(--color-canvas-bg); /* Sand */
     flex-grow: 1; 
-    overflow-y: auto; 
+    overflow-y: auto; /* <-- כאן הגלילה נשארת פנימית */
     padding: 40px 20px; 
     text-align: center;
 }
@@ -159,11 +198,12 @@ a.product-select-btn:hover h3 {
     display: grid; 
     grid-template-columns: 1fr 1fr 1fr; 
     align-items: center;
-    padding: 15px 30px;
+    padding: 10px 30px;
     background: var(--color-dark-blue); /* Ink */
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     z-index: 100;
     box-sizing: border-box;
+    height: 70px;
 }
 
 .header-right { justify-self: start; } 
@@ -171,21 +211,17 @@ a.product-select-btn:hover h3 {
 .header-left { justify-self: end; } 
 
 .app-header .logo {
-    font-family: 'Signature Fountain', sans-serif; 
-    font-size: 40px; 
-    font-weight: normal; 
-    color: var(--color-gold); /* Tan */
     display: flex;
-    align-items: baseline; 
+    align-items: center; 
     cursor: pointer; 
     text-decoration: none; 
+    height: 50px; 
 }
-.app-header .logo .heart-icon {
-    font-size: 20px; 
-    color: var(--color-gold); /* Tan */
-    margin-right: 5px; 
-    vertical-align: sub; 
+.app-header .logo .logo-img {
+    height: 50px; 
+    width: auto;
 }
+
 
 .header-icon-btn {
     border: none;
@@ -209,19 +245,63 @@ a.product-select-btn:hover h3 {
 }
 
 /* --- 5. עיצוב עורך --- */
-.hero-video {
-    width: 80%;
-    height: auto;
-    aspect-ratio: 9 / 5;
-    object-fit: cover; 
-    object-position: top; 
-    display: block;
+
+.hero-container {
+    position: relative;
+    width: 100%;
+    height: 75vh; 
+    display: flex; 
+    justify-content: center;
+    align-items: center;
+    overflow: hidden; 
 }
+
+.hero-video {
+    width: 100%; 
+    height: 100%; 
+    object-fit: cover; 
+    object-position: center center; 
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1; 
+}
+
+.hero-text-overlay {
+    position: relative; 
+    z-index: 2; 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: white; 
+    padding: 0 20px; 
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); 
+}
+
+.hero-headline {
+    font-family: 'Assistant', sans-serif; 
+    font-size: 3.5rem; 
+    font-weight: 700; 
+    margin: 0;
+    line-height: 1.2;
+}
+
+.hero-subheadline {
+    font-family: 'Assistant', sans-serif;
+    font-size: 1.5rem; 
+    font-weight: 400; 
+    margin-top: 20px;
+    max-width: 600px; 
+    line-height: 1.5;
+}
+
 
 .canvas-container {
     flex-grow: 1; 
     position: relative;
-    overflow: auto; 
+    overflow: auto; /* <-- הגלילה הפנימית של העורך נשמרת */
     background: var(--color-canvas-bg); /* Sand */
     transition: background-color 0.3s; 
     display: flex; 
@@ -297,7 +377,7 @@ a.product-select-btn:hover h3 {
 
 /* סרגל תחתון */
 .bottom-toolbar {
-    display: none; /* --- תיקון: מתחיל מוסתר --- */
+    display: none; 
     padding: 15px 30px;
     background: var(--color-light-gray); /* White */
     box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
@@ -308,14 +388,13 @@ a.product-select-btn:hover h3 {
     flex-wrap: wrap; 
 }
 
-/* --- תיקון: כלל להצגת סרגל פעיל --- */
 .bottom-toolbar.controls-active {
     display: flex;
 }
 
 
 .toolbar-btn {
-    display: none; /* --- תיקון: כפתורים מוסתרים כברירת מחדל --- */
+    display: none; 
     background: none;
     border: none;
     cursor: pointer;
@@ -327,7 +406,6 @@ a.product-select-btn:hover h3 {
     transition: color 0.2s;
 }
 
-/* --- תיקון: הצגת כפתורים בסרגל פעיל --- */
 .bottom-toolbar.controls-active .toolbar-btn {
     display: block;
 }
@@ -346,7 +424,7 @@ a.product-select-btn:hover h3 {
 }
 
 .toolbar-add-btn {
-    display: none; /* --- תיקון: מוסתר כברירת מחדל --- */
+    display: none; 
     background-color: var(--color-light-pink); /* Teal */
     color: #ffffff; /* White */
     width: 50px;
@@ -361,7 +439,6 @@ a.product-select-btn:hover h3 {
     transition: transform 0.2s;
 }
 
-/* --- תיקון: הצגת כפתור + בסרגל פעיל --- */
 .bottom-toolbar.controls-active .toolbar-add-btn {
     display: block;
 }
@@ -683,4 +760,290 @@ img.effect-dramatic { filter: url(#filter-dramatic); }
 }
 .effect-select-btn.active .thumbnail-wrapper {
     border-color: var(--color-pink); 
+}
+
+/* --- 7. 🔥 עיצוב חדש: מקטע תהליך (דף הבית) - עיצוב בהיר --- */
+/* (השינויים מיושמים כאן) */
+.info-section {
+    width: 100%;
+    /* 🔥 שינוי: הגדלת הרוחב המרבי */
+    max-width: 1300px;
+    /* ריווח זהה לכפתור שמעליו */
+    margin: 40px auto; 
+    padding: 0 40px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+.info-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--color-medium-blue-gray);
+    margin: 0;
+    text-align: center;
+}
+.info-description {
+    font-size: 1.1rem;
+    color: var(--color-dark-gray);
+    text-align: center;
+    max-width: 650px;
+    line-height: 1.6;
+    margin: 0;
+}
+.info-cards-grid {
+    /* 🔥 שונה ל-3 עמודות */
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 30px;
+    width: 100%;
+    margin-top: 30px;
+}
+
+/* --- 🔥 עיצוב חדש לאייקונים של הכרטיסיות --- */
+.card-icon {
+    width: 28px;
+    height: 28px;
+    /* 🔥 שינוי צבע לזהב */
+    fill: var(--color-gold); 
+    flex-shrink: 0; /* מונע מהאייקון להתכווץ */
+}
+
+.info-card {
+    background: var(--color-light-gray); /* White */
+    border-radius: 20px; /* פינות מעוגלות כמו בדוגמה */
+    padding: 30px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    border: 1px solid rgba(0,0,0,0.05);
+    text-align: center; /* שמירה על יישור מרכזי */
+    
+    /* הוספת התנהגות קישור */
+    text-decoration: none;
+    
+    /* 🔥 תיקון: ברירת המחדל היא סמן רגיל */
+    cursor: default;
+    
+    /* הוספת האנימציה שביקשת */
+    transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
+}
+
+/* 🔥 תיקון: אפקט הריחוף חל על כל כרטיסייה */
+.info-card:hover {
+    transform: translateY(-5px); /* הרמה קלה */
+    box-shadow: 0 6px 20px rgba(0,0,0,0.08); /* צל מודגש */
+    /* 🔥 שינוי צבע לזהב */
+    border-color: var(--color-gold); 
+}
+
+/* 🔥 תיקון: רק קישורים מקבלים סמן "יד" */
+a.info-card {
+    cursor: pointer;
+}
+/* --- סוף השינויים --- */
+
+
+.info-card h4 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    /* 🔥 שינוי צבע לזהב */
+    color: var(--color-gold); 
+    margin: 0;
+
+    /* 🔥 עיצוב חדש ליישור האייקון */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* --- 🔥 הוספתי עיצוב לפסקה החדשה --- */
+.info-card .card-description {
+    font-size: 1rem;
+    color: var(--color-dark-gray); /* טקסט משני */
+    line-height: 1.6;
+    margin-top: 15px;
+    margin-bottom: 0;
+    text-align: start; /* יישור לימין (ב-RTL) */
+}
+
+/* --- 8. 🔥 אנימציית גלילה --- */
+.fade-in-up {
+    /* התחל מוסתר ו-30px למטה */
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    /* מאפשר דיליי מדורג מה-HTML */
+    transition-delay: var(--delay, 0ms);
+}
+.fade-in-up.visible {
+    /* מצב סופי: גלוי ובמקום */
+    opacity: 1;
+    transform: translateY(0);
+}
+
+
+/* התאמה למובייל */
+@media (max-width: 900px) {
+    .products-grid,
+    .info-cards-grid {
+        /* 🔥 מחזיר לעמודה 1 במובייל */
+        grid-template-columns: 1fr;
+    }
+}
+@media (max-width: 600px) {
+    .hero-headline {
+        font-size: 2.5rem;
+    }
+    .hero-subheadline {
+        font-size: 1.1rem;
+    }
+    .info-section {
+        margin: 40px auto;
+        padding: 0 20px;
+    }
+}
+
+/* --- 9. 🔥 עיצוב מקטע קהילה (חדש) --- */
+
+.community-section {
+    width: 100%;
+    /* 🔥 שינוי רקע לבהיר */
+    background-color: var(--color-canvas-bg); /* Sand */
+    padding: 60px 0; /* ריווח נקי */
+    box-sizing: border-box;
+    overflow: hidden; /* מונע גלישה */
+    position: relative;
+    border-top: 1px solid #e0e0e0; /* קו הפרדה עדין */
+}
+
+/* העטיפה שמכילה את הכותרת, הכפתורים והקרוסלה */
+.community-wrapper {
+    position: relative;
+    width: 100%;
+    /* (280*4) + (20*3) = 1180px. בתוספת 60px ריווח צד = 1300px */
+    max-width: 1300px; 
+    margin: 0 auto;
+    padding: 0 60px; /* ריווח צד לכפתורים */
+    box-sizing: border-box;
+}
+
+.community-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    /* 🔥 שינוי צבע לכהה */
+    color: var(--color-medium-blue-gray); 
+    margin: 0 0 30px 0;
+    text-align: center;
+}
+
+/* כפתורי הניווט */
+.scroll-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    /* 🔥 שינוי צבעים לגרסה הבהירה */
+    background-color: var(--color-light-gray); 
+    color: var(--color-dark-gray); 
+    border: 1px solid #eee;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    opacity: 0.9;
+}
+.scroll-btn:hover {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.scroll-btn.left { 
+    left: 0px; 
+}
+.scroll-btn.right { 
+    right: 0px; 
+}
+.scroll-btn svg { 
+    width: 24px; 
+    height: 24px;
+    stroke-width: 3px;
+}
+
+
+/* הקונטיינר שגולל */
+.community-scroll-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* 🔥 תיקון: הוסר display: flex; */
+    scroll-snap-type: x mandatory; 
+    scroll-behavior: smooth; 
+    
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.community-scroll-container::-webkit-scrollbar {
+    display: none;
+}
+
+/* הרצועה שמחזיקה את כל הכרטיסיות */
+.community-scroll-track {
+    display: flex;
+    gap: 20px;
+}
+
+/* כרטיסייה בודדת */
+.community-card {
+    /* 🔥 רוחב הכרטיסייה נקבע ל-4 בשורה */
+    width: 280px; 
+    flex-shrink: 0;
+    scroll-snap-align: center;
+}
+
+.community-video-placeholder {
+    width: 100%;
+    aspect-ratio: 9 / 16;
+    /* 🔥 רקע לבן לכרטיסייה */
+    background-color: var(--color-light-gray); 
+    border-radius: 12px;
+    border: 1px solid #eee;
+    overflow: hidden;
+    position: relative;
+}
+
+/* 🔥 עיצוב חדש לוידאו */
+.community-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; 
+    /* 🔥 הוספנו כדי לכסות את כל המסגרת גם אם היחס לא מושלם */
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+
+.community-text-placeholder {
+    padding: 15px 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.placeholder-line {
+    height: 14px;
+    border-radius: 4px;
+    /* 🔥 צבע הרקע של הפסים (חלק מהרקע הראשי) */
+    background-color: var(--color-canvas-bg); 
+}
+.placeholder-line.short {
+    width: 40%;
+}
+.placeholder-line.long {
+    width: 60%;
 }
