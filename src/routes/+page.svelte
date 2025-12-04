@@ -7,23 +7,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&display=swap" rel="stylesheet">
     
     <style>
-        /* * התיקון הסופי (ללא :global)
-         * סגנונות בתוך <svelte:head> הם גלובליים כברירת מחדל
-        */
-
-        /* 1. משחרר את הגלילה של כל הדף */
         body {
             overflow-y: auto !important;
             overflow-x: hidden !important;
         }
         
-        /* 2. מבטל את נעילת הגובה ופריסת ה-Flex של העטיפה */
         .page-container {
             height: auto !important;
             display: block !important;
         }
     </style>
-    
 </svelte:head>
 
 <script>
@@ -32,7 +25,6 @@
 
     // --- קוד לניהול מצב (כרטיסיות עליונות) ---
     import { magnets, editorSettings } from '$lib/stores.js';
-    
     function setMode(mode) {
         magnets.set([]);
         editorSettings.set({
@@ -53,28 +45,28 @@
             }
         });
     }
-    // --- סוף קוד ניהול מצב ---
 
-    // --- 🔥 קוד קרוסלה ---
+    // --- 🔥 קוד קרוסלה (הגרסה המתוקנת) ---
     let scrollContainerEl;
-    const scrollStep = 300; // רוחב כרטיסייה (280) + רווח (20)
+    const scrollStep = 300; 
 
     let isAtStart = true;
     let isAtEnd = false;
 
-    // פונקציה שבודקת אם הגענו לקצה
     function checkScroll() {
         if (!scrollContainerEl) return;
         const { scrollLeft, scrollWidth, clientWidth } = scrollContainerEl;
-        isAtStart = scrollLeft < 10; 
+        
+        isAtStart = scrollLeft < 10;
         isAtEnd = (scrollWidth - scrollLeft - clientWidth) < 10;
     }
 
     onMount(async () => {
-        await tick(); // מחכה שה-DOM יתעדכן ו-scrollContainerEl יקבל ערך
-        checkScroll(); // בדוק במצב התחלתי
+        await tick();
         if (scrollContainerEl) {
+            checkScroll();
             scrollContainerEl.addEventListener('scroll', checkScroll);
+            setTimeout(checkScroll, 500);
         }
     });
 
@@ -84,34 +76,40 @@
         }
     });
 
-    // פונקציית הגלילה החדשה עם לוגיקת לולאה (Loop)
     function scrollCommunity(direction) {
-        console.log('כפתור נלחץ. אלמנט הגלילה הוא:', scrollContainerEl); 
         if (!scrollContainerEl) return;
         
         checkScroll(); 
 
-        if (direction === 1) { // כפתור "הבא" (ימינה)
+        const currentScroll = scrollContainerEl.scrollLeft;
+        const currentIndex = Math.round(currentScroll / scrollStep);
+        
+        // חישוב מיקום יעד
+        let targetScroll = (currentIndex + direction) * scrollStep;
+
+        // לוגיקה מעגלית (Loop)
+        if (direction === 1) { // ימינה
             if (isAtEnd) {
-                scrollContainerEl.scrollTo({ left: 0, behavior: 'smooth' });
-            } else {
-                scrollContainerEl.scrollBy({ left: scrollStep, behavior: 'smooth' });
+                targetScroll = 0; // חזרה להתחלה
             }
-        } else { // כפתור "הקודם" (שמאלה)
+        } else { // שמאלה
             if (isAtStart) {
-                scrollContainerEl.scrollTo({ left: scrollContainerEl.scrollWidth, behavior: 'smooth' });
-            } else {
-                scrollContainerEl.scrollBy({ left: -scrollStep, behavior: 'smooth' });
+                targetScroll = scrollContainerEl.scrollWidth; // קפיצה לסוף
             }
         }
+
+        // ביצוע גלילה
+        scrollContainerEl.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
     }
-    // --- 🔥 סוף קוד קרוסלה ---
 
     // --- קוד להפעלת וידאו בריחוף ---
     function handleVideoPlay(event) {
         const video = event.currentTarget.querySelector('.community-video');
         if (video) {
-            video.play();
+            video.play().catch(e => console.log('Video play prevented:', e));
         }
     }
     function handleVideoPause(event) {
@@ -120,7 +118,6 @@
             video.pause();
         }
     }
-    // --- סוף קוד וידאו ---
 </script>
 
 <div class="home-content">
@@ -132,12 +129,12 @@
         </video>
         <div class="hero-text-overlay">
             <h1 class="hero-headline">לעצור את הזמן.
- להרגיש את הרגע.</h1>
+            להרגיש את הרגע.</h1>
             <p class="hero-subheadline">
                 הפכו את הזיכרונות שלכם למתנות מרגשות.
- <br>
+                <br>
                 חוויה שנוגעת בלב.
- </p>
+            </p>
         </div>
     </div>
     
@@ -147,7 +144,7 @@
         <h2 class="info-title fade-in-up" use:scrollAnimation>הופכים רגע לרגש, כך זה עובד</h2>
         <p class="info-description fade-in-up" use:scrollAnimation style="--delay: 100ms;">
             משלבים את הזכרונות הייחודים והכי יקרים שלכם עם מוצר סנטימינטאלי ונותנים לו גם נגיע טכנולוגית של בינה מלכותית מתקדמת, ליצירת חוויה אישית מדויקת.
- </p>
+        </p>
 
         <div class="info-cards-grid">
             
@@ -166,6 +163,7 @@
                     </svg>
                     <span>קולקציית תמונות</span>
                 </h4>
+        
                 <p class="card-description">
                     בחרו את התמונות שמספרות את הסיפור שלכם. הממשק החכם שלנו מאפשר לכם לעצב כל תמונה בנפרד ולהפוך אות לסיפור על מגנט בגודל 5x5 ס"מ. תוכלו להוסיף אפקט שמתאים לרגע או למקד את הפריים בדיוק ברגע הנכון.
                 </p>
@@ -287,6 +285,8 @@
                         </div>
                     </div>
 
-                </div> </div>
-        </div> </section>
-    </div>
+                </div> 
+            </div>
+        </div> 
+    </section>
+</div>

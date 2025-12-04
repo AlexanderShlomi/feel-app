@@ -1,40 +1,34 @@
-// This is effects.worker.js
+// static/effects.worker.js
 
-/**
- * הפונקציה הראשית של ה-Worker.
- * היא מאזינה להודעות מהממשק הראשי.
- */
 self.onmessage = async (event) => {
     const { magnetId, effectId, originalSrc } = event.data;
 
     try {
-        // ✅ --- תיקון: טעינת תמונה ב-Worker ---
-        // 1. הורד את התמונה כ-Blob
+        // 1. טעינת התמונה מה-URL (עובד מעולה גם עם Blob URL)
         const response = await fetch(originalSrc);
         const blob = await response.blob();
         
-        // 2. צור ממנה ImageBitmap (הדרך של Worker לראות תמונה)
+        // 2. יצירת ImageBitmap לעיבוד מהיר
         const image = await createImageBitmap(blob);
-        // ------------------------------------
 
-        // 3. צור קנבס זמני בזיכרון
+        // 3. הגדרת קנבס
         const canvas = new OffscreenCanvas(image.width, image.height);
         const ctx = canvas.getContext('2d');
         ctx.drawImage(image, 0, 0);
 
-        // 4. החל את הפילטר האיכותי 
+        // 4. החלת הפילטר
         applyEffect(ctx, effectId, image.width, image.height);
 
-        // 5. המר את התוצאה חזרה לקובץ תמונה
-        const resultBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 });
-        const newSrc = await blobToDataURL(resultBlob);
+        // 5. המרה חזרה ל-Blob (ולא למחרוזת Base64!)
+        // אנחנו משתמשים ב-JPEG איכותי כדי לחסוך מקום, או PNG אם צריך שקיפות
+        const resultBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
 
-        // 6. שלח את התוצאה חזרה לממשק הראשי
+        // 6. שליחת ה-Blob הבינארי חזרה ל-Main Thread
         self.postMessage({
             status: 'success',
             magnetId,
             effectId,
-            newSrc
+            blob: resultBlob // שינוי: שולחים אובייקט, לא טקסט
         });
 
     } catch (error) {
@@ -48,27 +42,13 @@ self.onmessage = async (event) => {
     }
 };
 
-/**
- * פונקציה שממירה Blob חזרה ל-DataURL
- */
-function blobToDataURL(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
-/**
- * "מנוע" הפילטרים.
- */
+// מנוע הפילטרים (ללא שינוי מהותי, רק הוסר קוד מיותר)
 function applyEffect(ctx, effectId, width, height) {
-    // קבל את כל הפיקסלים של התמונה
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const data = imageData.data; // מערך הפיקסלים [R,G,B,A, R,G,B,A, ...]
+    if (effectId === 'original') return;
 
-    // עבור על כל פיקסל
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
@@ -77,47 +57,32 @@ function applyEffect(ctx, effectId, width, height) {
         let newR = r, newG = g, newB = b;
 
         switch (effectId) {
-            case 'silver': {
-                const gray = (r * 0.299) + (g * 0.587) + (b * 0.114);
-                newR = gray * 1.1; // קצת יותר בהיר
-                newG = gray * 1.1;
-                newB = gray * 1.1;
+            case 'silver':
+                const grayS = (r * 0.299) + (g * 0.587) + (b * 0.114);
+                newR = newG = newB = grayS * 1.1;
                 break;
-            }
-            case 'noir': {
-                const gray = (r * 0.299) + (g * 0.587) + (b * 0.114);
-                newR = gray * 1.5 - 10; // ניגודיות גבוהה
-                newG = gray * 1.5 - 10;
-                newB = gray * 1.5 - 10;
+            case 'noir':
+                const grayN = (r * 0.299) + (g * 0.587) + (b * 0.114);
+                const val = grayN * 1.5 - 20; // יותר דרמטי
+                newR = newG = newB = val;
                 break;
-            }
-            case 'vivid': {
-                // זהו אלגוריתם פשוט ל-Saturate/Contrast
+            case 'vivid':
                 const avg = (r + g + b) / 3;
-                newR = avg + (r - avg) * 1.8; // הגברת רוויה
-                newG = avg + (g - avg) * 1.8;
-                newB = avg + (b - avg) * 1.8;
+                newR = avg + (r - avg) * 1.6;
+                newG = avg + (g - avg) * 1.6;
+                newB = avg + (b - avg) * 1.6;
                 break;
-            }
-            case 'dramatic': {
-                // אלגוריתם פשוט ל-Sepia + Contrast
-                newR = (r * 0.393 + g * 0.769 + b * 0.189) * 1.3;
-                newG = (r * 0.349 + g * 0.686 + b * 0.168) * 1.2;
-                newB = (r * 0.272 + g * 0.534 + b * 0.131) * 1.1;
-                break;
-            }
-            case 'original':
-            default:
-                // אל תעשה כלום
+            case 'dramatic':
+                newR = (r * 0.393 + g * 0.769 + b * 0.189) * 1.2;
+                newG = (r * 0.349 + g * 0.686 + b * 0.168) * 1.1;
+                newB = (r * 0.272 + g * 0.534 + b * 0.131) * 1.0;
                 break;
         }
 
-        // החזר את הפיקסלים המעובדים למערך
         data[i] = Math.min(255, Math.max(0, newR));
         data[i + 1] = Math.min(255, Math.max(0, newG));
         data[i + 2] = Math.min(255, Math.max(0, newB));
     }
     
-    // צייר את הפיקסלים החדשים בחזרה לקנבס
     ctx.putImageData(imageData, 0, 0);
 }

@@ -1,158 +1,169 @@
-import { writable, get } from 'svelte/store';
+import { writable, get, derived } from 'svelte/store';
 
-// --- קבועים גלובליים ---
-export const BASE_MAGNET_SIZE = 100;
-export const CSS_MAGNET_PADDING = 0; // v45: אין פדינג
-export const MULTI_MARGIN_PERCENT = 0.25;
-export const SPLIT_MARGIN_PERCENT = 0.05;
-export const MIN_GRID_BASE = 3;
+// --- הגדרות שונות למובייל ולדסקטופ ---
+const DESKTOP_CONFIG = {
+    baseSize: 150,
+    marginPercent: 0.1,
+    minGridBase: 3
+};
 
-// --- חישובים נגזרים ---
+const MOBILE_CONFIG = {
+    baseSize: 260, // מגנט גדול מאוד לקרוסלה במובייל
+    marginPercent: 0.05,
+    minGridBase: 2
+};
+
+export const isMobile = writable(false);
+
+export const activeConfig = derived(isMobile, ($isMobile) => 
+    $isMobile ? MOBILE_CONFIG : DESKTOP_CONFIG
+);
+
+// ✅ תמיכה לאחור + קבועים
+export const EXTRA_MAGNET_PRICE = 10;
+export const SCALE_MIN = 1.0;   
+export const SCALE_MAX = 2.5;   
+export const SCALE_DEFAULT = 1.44; 
+export const SPLIT_MARGIN_PERCENT = 0.03; 
+export const BASE_MAGNET_SIZE = 150; 
+export const SPLIT_MAGNET_SIZE = 150 * 1.15;
+
+export const PACKAGES = [
+    { count: 9, price: 119, name: 'FEEL Moments' },
+    { count: 12, price: 139, name: 'FEEL Story' },
+    { count: 15, price: 159, name: 'FEEL Collection', recommended: true },
+    { count: 24, price: 239, name: 'FEEL Gallery' },
+    { count: 30, price: 289, name: 'FEEL Life' }
+];
+
+// --- Helper Functions ---
+export function getBaseMagnetSize() {
+    return get(activeConfig).baseSize;
+}
+
 export function getFullMagnetSize() {
-    const scale = get(editorSettings).currentDisplayScale;
-    return (BASE_MAGNET_SIZE * scale) + (CSS_MAGNET_PADDING * 2);
+    // במובייל הגודל קבוע לפי הקונפיגורציה
+    if (get(isMobile)) return MOBILE_CONFIG.baseSize;
+    const scale = get(editorSettings).currentDisplayScale || SCALE_DEFAULT;
+    return getBaseMagnetSize() * scale;
 }
 
 export function getMargin() {
-    return getFullMagnetSize() * MULTI_MARGIN_PERCENT;
+    return getFullMagnetSize() * get(activeConfig).marginPercent;
 }
 
-// --- "מחסן הנתונים" הראשי שלנו ---
+export function getMinGridBase() {
+    return get(activeConfig).minGridBase;
+}
 
-// 1. מחזיק את רשימת כל המגנטים שעל המסך
+// --- Stores ---
 export const magnets = writable([]);
 
-// 2. מחזיק את ההגדרות הכלליות של העורך
+export const visibleMagnets = derived(magnets, ($magnets) => 
+    $magnets.filter(m => !m.hidden)
+);
+
 export const editorSettings = writable({
-    currentMode: 'multi', // 'multi' או 'split'
-    currentDisplayScale: 1.0, 
-    surfaceMinHeight: '100%',
+    currentMode: 'multi', 
+    currentDisplayScale: SCALE_DEFAULT, 
     isSurfaceDark: false,
+    currentEffect: 'original',
+    surfaceMinHeight: '100%',
     splitImageSrc: null,
-    splitImageRatio: 1, 
+    splitImageRatio: 1,
     gridBaseSize: 3,
-    currentEffect: 'original', 
-    
-    splitImageCache: {
-        original: null,
-        silver: null,
-        noir: null,
-        vivid: null,
-        dramatic: null
-    }
+    splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
+    splitImageCache: {} 
 });
 
-// --- פונקציות עזר לניהול המצב ---
-
-/**
- * ✅ ארכיטקטורה חדשה: הפונקציה הזו הופרדה כדי להחזיר Promise
- * היא קוראת קובץ בודד ומחזירה מגנט מוכן עם מטמון
- */
-function createMagnetFromFile(file) {
-    const size = getFullMagnetSize();
-    
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const originalSrc = e.target.result;
-            const newMagnet = {
-                id: crypto.randomUUID(), 
-                transform: { zoom: 1, x: 0, y: 0 },
-                position: { x: -9999, y: -9999 }, 
-                size: size,
-                originalSrc: originalSrc, 
-                
-                // --- 🔥 הוספנו "זיכרון" אפקט אישי ---
-                activeEffectId: 'original', 
-
-                processed: {
-                    original: originalSrc, 
-                    silver: null,
-                    noir: null,
-                    vivid: null,
-                    dramatic: null
-                }
-            };
-            resolve(newMagnet);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+function revokeMagnetUrls(magnetList) {
+    magnetList.forEach(m => {
+        if (m.originalSrc && m.originalSrc.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc);
+        if (m.processed) {
+            Object.values(m.processed).forEach(url => {
+                if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+            });
+        }
     });
 }
 
-/**
- * ✅ ארכיטקטורה חדשה: הפונקציה הראשית היא עכשיו async
- * היא מחכה שכל הקבצים ייקראו לפני שהיא מוסיפה אותם ל-store
- */
+export function resetSystem(mode) {
+    revokeMagnetUrls(get(magnets));
+    magnets.set([]);
+    const currentSettings = get(editorSettings);
+    if (currentSettings.splitImageSrc && currentSettings.splitImageSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(currentSettings.splitImageSrc);
+    }
+    const startGridBase = get(isMobile) ? MOBILE_CONFIG.minGridBase : DESKTOP_CONFIG.minGridBase;
+    editorSettings.set({
+        currentMode: mode,
+        currentDisplayScale: 1.0,
+        surfaceMinHeight: '100%',
+        isSurfaceDark: false,
+        splitImageSrc: null,
+        splitImageRatio: 1,
+        gridBaseSize: startGridBase,
+        currentEffect: 'original', 
+        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
+        splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null }
+    });
+}
+
+function createMagnetFromFile(file) {
+    const size = getFullMagnetSize(); 
+    const objectUrl = URL.createObjectURL(file);
+    return {
+        id: crypto.randomUUID(), 
+        transform: { zoom: 1, x: 0, y: 0 },
+        position: { x: 0, y: 0 }, 
+        size: size,
+        originalSrc: objectUrl,
+        src: objectUrl, 
+        activeEffectId: 'original', 
+        isSplitPart: false,
+        hidden: false, 
+        processed: {} 
+    };
+}
+
 export async function addUploadedMagnets(files) {
-    const newMagnetsPromises = Array.from(files).map(createMagnetFromFile);
-    const newMagnets = await Promise.all(newMagnetsPromises);
+    const newMagnets = Array.from(files).map(createMagnetFromFile);
     magnets.update(currentList => [...currentList, ...newMagnets]);
 }
 
-/**
- * ✅ ארכיטקטורה חדשה: פונקציה שמעדכנת גרסה מעובדת ספציפית במטמון
- */
 export function updateMagnetProcessedSrc(magnetId, effectId, newSrc) {
     magnets.update(currentList => 
         currentList.map(m => {
             if (m.id === magnetId) {
                 const processed = m.processed || { original: m.originalSrc };
-                return {
-                    ...m,
-                    processed: {
-                        ...processed,
-                        [effectId]: newSrc 
-                    }
-                };
+                if (processed[effectId] && processed[effectId].startsWith('blob:')) {
+                    URL.revokeObjectURL(processed[effectId]);
+                }
+                return { ...m, processed: { ...processed, [effectId]: newSrc } };
             }
             return m;
         })
     );
 }
 
-/**
- * ✅ ארכיטקט
- * ורה חדשה: פונקציה לעדכון מטמון הפסיפס
- */
-export function updateSplitImageCache(effectId, newSrc) {
-    editorSettings.update(s => {
-        const newCache = { ...s.splitImageCache, [effectId]: newSrc };
-        return { ...s, splitImageCache: newCache };
-    });
-}
-
-export function getMagnetById(id) {
-    const currentMagnets = get(magnets);
-    return currentMagnets ? currentMagnets.find(m => m.id === id) : null;
-}
-
 export function updateMagnetTransform(id, newTransform) {
     magnets.update(currentList => 
-        currentList.map(m => 
-            m.id === id ? { ...m, transform: newTransform } : m
-        )
+        currentList.map(m => m.id === id ? { ...m, transform: newTransform } : m)
     );
 }
 
-// --- 🔥 פונקציות חדשות לניהול אפקטים ---
-
-/**
- * מעדכן את האפקט הפעיל של מגנט בודד
- */
 export function updateMagnetActiveEffect(magnetId, effectId) {
      magnets.update(currentList => 
-        currentList.map(m => 
-            m.id === magnetId ? { ...m, activeEffectId: effectId } : m
-        )
+        currentList.map(m => m.id === magnetId ? { ...m, activeEffectId: effectId } : m)
     );
 }
 
-/**
- * "משדר" אפקט גלובלי לכל המגנטים (דורס בחירות אישיות)
- */
-export function updateAllMagnetsActiveEffect(effectId) {
-    magnets.update(currentList => 
-        currentList.map(m => ({ ...m, activeEffectId: effectId }))
-    );
+export function getFilterStyle(effectId) {
+    switch (effectId) {
+        case 'silver': return 'filter: grayscale(100%) contrast(90%) brightness(110%);';
+        case 'noir': return 'filter: grayscale(100%) contrast(140%) brightness(90%);';
+        case 'vivid': return 'filter: saturate(160%) contrast(110%) brightness(105%);';
+        case 'dramatic': return 'filter: sepia(25%) contrast(125%) brightness(95%) saturate(110%);';
+        case 'original': default: return 'filter: none;';
+    }
 }

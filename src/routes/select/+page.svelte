@@ -3,35 +3,10 @@
 </svelte:head>
 
 <script>
-    import { magnets, editorSettings } from '$lib/stores.js';
+    import { resetSystem } from '$lib/stores.js';
 
     function setMode(mode) {
-        // איפוס המגנטים הקיימים
-        magnets.set([]);
-        
-        // איפוס ההגדרות
-        editorSettings.set({
-            currentMode: mode,
-            currentDisplayScale: 1.0,
-            surfaceMinHeight: '100%',
-            isSurfaceDark: false,
-            splitImageSrc: null,
-            splitImageRatio: 1,
-            gridBaseSize: 3,
-            
-            // --- 🔥 התיקון כאן ---
-            // מאפסים את האפקט חזרה ל"מקורי"
-            currentEffect: 'original', 
-            
-            currentLayoutMode: 'centered', 
-            splitImageCache: { 
-                original: null,
-                silver: null,
-                noir: null,
-                vivid: null,
-                dramatic: null
-            }
-        });
+        resetSystem(mode);
     }
 </script>
 

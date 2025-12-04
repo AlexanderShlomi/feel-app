@@ -1,28 +1,29 @@
-<svelte:head>
-    <title>FEEL - עורך המגנטים</title>
-    <link rel="preload" href="/effects.png" as="image">
-</svelte:head>
-
 <script>
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, tick } from 'svelte';
     import Magnet from '$lib/components/Magnet.svelte';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+    import FileUploader from '$lib/components/FileUploader.svelte';
+    import MosaicEditor from '$lib/components/MosaicEditor.svelte';
+    
+    import { draggable } from '$lib/actions/draggable.js';
+    import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
+    
     import { 
         magnets, 
         editorSettings, 
         addUploadedMagnets,
         updateMagnetProcessedSrc, 
-        updateSplitImageCache,
         getFullMagnetSize, 
         getMargin,
-        BASE_MAGNET_SIZE, 
-        SPLIT_MARGIN_PERCENT,
-        MIN_GRID_BASE,
-        updateAllMagnetsActiveEffect // --- 🔥 ייבוא הפונקציה החדשה ---
-    } 
-    from '$lib/stores.js';
+        isMobile,
+        getMinGridBase,
+        SPLIT_MAGNET_SIZE,    
+        SPLIT_MARGIN_PERCENT, 
+        SCALE_MIN,    
+        SCALE_MAX,      
+        SCALE_DEFAULT  
+    } from '$lib/stores.js';
 
-    // --- רשימת אפקטים ---
     const effectsList = [
         { id: 'original', name: 'מקורי', filter: 'none' },
         { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
@@ -30,545 +31,422 @@
         { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
         { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
     ];
-    
+
     let effectsWorker;
-    let currentLayoutFn = 'grid'; 
-    let currentOffsetX = 0; 
+    let activePanel = null;
+    let loaderEl;
+    let surfaceEl;
+    let resizeObserver;
+    let isSplitEditing = false;
+    let splitRenderFrame;
+    let resizeTimeout;
 
-    let isDragging = false;
-    let isRepositioning = false; 
-
+    // --- Lifecycle Management ---
     onMount(() => {
-        currentOffsetX = getMargin(); 
+        window.addEventListener('dragstart', (e) => e.preventDefault());
+        
+        checkMobile();
+        ensureValidScale();
+        initWorker();
+        initResizeObserver();
+        
+        tick().then(() => {
+            if ($editorSettings.currentMode === 'multi') {
+                updateMagnetsSize();
+                if ($magnets.length > 0) {
+                   const needsPlacement = !$magnets[0].position || $magnets[0].position.x === 0;
+                   if (needsPlacement) fillEmptySlots();
+                   else updateSurfaceHeight();
+                }
+            } else if ($editorSettings.splitImageSrc) { 
+                calculateAndRenderSplitGrid();
+            }
+        });
+    });
 
+    onDestroy(() => {
+        if (effectsWorker) effectsWorker.terminate();
+        if (resizeObserver) resizeObserver.disconnect();
+        if (splitRenderFrame) cancelAnimationFrame(splitRenderFrame);
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+    });
+
+    // --- Helpers ---
+    function checkMobile() {
+        if (window.innerWidth < 768) isMobile.set(true);
+        else isMobile.set(false);
+    }
+
+    function ensureValidScale() {
+        let currentScale = $editorSettings.currentDisplayScale;
+        if (!currentScale || currentScale < SCALE_MIN || currentScale > SCALE_MAX) {
+            editorSettings.update(s => ({ ...s, currentDisplayScale: SCALE_DEFAULT }));
+        }
+    }
+
+    function initWorker() {
         effectsWorker = new Worker('/effects.worker.js');
         effectsWorker.onmessage = (event) => {
-            const { status, magnetId, effectId, newSrc } = event.data;
+            const { status, magnetId, effectId, blob } = event.data;
             if (status === 'success') {
-                if (magnetId === 'split_image_main') {
-                    updateSplitImageCache(effectId, newSrc);
+                const newSrc = URL.createObjectURL(blob);
+                if (magnetId === 'split-master') {
+                    editorSettings.update(s => {
+                        const newCache = { ...s.splitImageCache, [effectId]: newSrc };
+                        return { ...s, splitImageCache: newCache };
+                    });
+                    magnets.update(list => list.map(m => ({ ...m, src: newSrc })));
+                    if (loaderEl) loaderEl.style.display = 'none';
                 } else {
                     updateMagnetProcessedSrc(magnetId, effectId, newSrc);
                 }
             }
         };
-
-        setTimeout(() => {
-            if ($editorSettings.currentMode === 'multi') {
-                arrangeInGrid();
-            } else if ($editorSettings.splitImageSrc) { 
-                calculateAndRenderGrid();
-            }
-        }, 0); 
-    });
-
-    onDestroy(() => {
-        if (effectsWorker) {
-            effectsWorker.terminate();
-        }
-    });
-
-    function handleResize() {
-        if (isDragging || isRepositioning) return;
-        if ($editorSettings.currentMode === 'multi') {
-            if (currentLayoutFn === 'row') {
-                arrangeInRow();
-            } else {
-                arrangeInGrid();
-            }
-        }
     }
 
-    /**
-     * 🔥 שינוי: מעדכן את כל המגנטים (גלובלי)
-     */
-    function applyEffectToAllMagnets(effectId) {
-        // 1. עדכן את הגדרה הגלובלית (כדי שהפאנל יתעדכן)
-        editorSettings.update(s => ({ ...s, currentEffect: effectId }));
-        
-        // 2. 🔥 עדכן את ה"זיכרון" האישי של כל המגנטים
-        updateAllMagnetsActiveEffect(effectId);
+    function initResizeObserver() {
+        if (!surfaceEl || !surfaceEl.parentElement) return;
 
-        if (effectId === 'original') return; 
-        if (!$magnets && !$editorSettings.splitImageSrc) return;
-
-        // 3. (כמו קודם) הפעל Worker עבור כל מגנט שצריך עיבוד
-        if ($editorSettings.currentMode === 'multi') {
-            for (const magnet of $magnets) {
-                if (!magnet.isSplitPart && magnet.processed && !magnet.processed[effectId]) {
-                    updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
-                    effectsWorker.postMessage({
-                        magnetId: magnet.id,
-                        effectId: effectId,
-                        originalSrc: magnet.originalSrc
-                    });
+        resizeObserver = new ResizeObserver(() => {
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                const newWidth = surfaceEl.parentElement.clientWidth;
+                const mobileDetected = newWidth < 768;
+                
+                if ($isMobile !== mobileDetected) {
+                    isMobile.set(mobileDetected);
                 }
-            }
-        } else { // לוגיקת הפסיפס נשארת זהה
-            const cache = $editorSettings.splitImageCache;
-            if (cache && cache.original && !cache[effectId]) { 
-                updateSplitImageCache(effectId, 'processing');
-                effectsWorker.postMessage({
-                    magnetId: 'split_image_main', 
-                    effectId: effectId,
-                    originalSrc: $editorSettings.splitImageSrc 
-                });
-            }
-        }
-    }
-
-    // --- משתני פאנלים ---
-    let activePanel = null;
-    function togglePanel(panelName) {
-        if (activePanel === panelName) {
-            activePanel = null;
-        } else {
-            activePanel = panelName;
-        }
-    }
-    
-    // --- משתני גרירה ---
-    let activeMagnetId = null;
-    let dragOffsetX = 0;
-    let dragOffsetY = 0;
-    let dragStartX = 0; 
-    let dragStartY = 0;
-    let surfaceRectCache; 
-    let surfaceEl; 
-    let multiUploadInput; 
-    let splitUploadInput; 
-    let loaderEl; 
-    
-    async function handleMultiUpload(event) {
-        const files = event.target.files;
-        if (files.length === 0) return;
+                
+                if (!mobileDetected && $editorSettings.currentMode === 'multi') {
+                    handleReflow();
+                }
+            }, 100);
+        });
         
-        loaderEl.style.display = 'flex';
-        await addUploadedMagnets(files);
-        loaderEl.style.display = 'none';
-        arrangeInGrid();
+        resizeObserver.observe(surfaceEl.parentElement);
     }
-    
-    function handleSplitUpload(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-        loaderEl.style.display = 'flex';
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const newSplitSrc = e.target.result;
-            const img = new Image();
-            img.onload = () => {
-                const ratio = img.naturalWidth / img.naturalHeight;
-                editorSettings.update(s => ({ 
-                    ...s, 
-                    splitImageSrc: newSplitSrc,
-                    splitImageRatio: ratio,
-                    gridBaseSize: MIN_GRID_BASE,
-                    currentEffect: 'original',
-                    splitImageCache: { 
-                        original: newSplitSrc, 
-                        silver: null,
-                        noir: null,
-                        vivid: null,
-                        dramatic: null
-                    }
-                }));
-                calculateAndRenderGrid(); 
-                loaderEl.style.display = 'none';
-            };
-            img.src = newSplitSrc;
-        };
-        reader.readAsDataURL(file);
+    // --- Core Logic Actions ---
+
+    function togglePanel(name) {
+        activePanel = activePanel === name ? null : name;
     }
-    
+
+    function handleReflow() {
+        if ($isMobile) return; 
+        if ($magnets.length === 0 || $editorSettings.currentMode !== 'multi' || !surfaceEl) {
+            updateSurfaceHeight();
+            return;
+        }
+        
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        const itemFullSize = getFullMagnetSize();
+        const margin = getMargin();
+        
+        const newLayout = reflowMagnets($magnets, surfaceWidth, itemFullSize, margin);
+        magnets.set(newLayout);
+        tick().then(updateSurfaceHeight);
+    }
+
+    function fillEmptySlots() {
+        if ($isMobile || !surfaceEl) return;
+        
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        const itemFullSize = getFullMagnetSize(); 
+        const margin = getMargin();
+        
+        const newLayout = placeNewMagnets($magnets, surfaceWidth, itemFullSize, margin);
+        magnets.set(newLayout);
+        tick().then(updateSurfaceHeight);
+    }
+
     function updateSurfaceHeight() {
-        if (!surfaceEl) return;
-        let items = $magnets; 
-        let margin = ($editorSettings.currentMode === 'multi') ? getMargin() : (BASE_MAGNET_SIZE * SPLIT_MARGIN_PERCENT);
-        if (items.length === 0) {
+        if ($isMobile) {
+             editorSettings.update(s => ({ ...s, surfaceMinHeight: '100%' }));
+             return;
+        }
+        if (!surfaceEl || $magnets.length === 0) {
             editorSettings.update(s => ({ ...s, surfaceMinHeight: '100%' }));
             return;
         }
-
+        
         let maxBottom = 0;
-        items.forEach(item => {
-            if (item.position.y > -9000) {
-                const bottomPosition = item.position.y + item.size;
-                if (bottomPosition > maxBottom) {
-                    maxBottom = bottomPosition;
-                }
-            }
+        let margin = ($editorSettings.currentMode === 'multi') ? getMargin() : 50;
+        
+        $magnets.forEach(item => {
+            const bottomPosition = item.position.y + item.size;
+            if (bottomPosition > maxBottom) maxBottom = bottomPosition;
         });
+        
         const totalHeight = maxBottom + margin;
         const containerHeight = surfaceEl.parentElement.clientHeight;
         editorSettings.update(s => ({ ...s, surfaceMinHeight: `${Math.max(totalHeight, containerHeight)}px` }));
     }
 
-    function arrangeInRow() {
-        const count = $magnets.length;
-        if (count === 0 || $editorSettings.currentMode !== 'multi' || !surfaceEl) { 
-            updateSurfaceHeight();
-            return;
-        }
-
-        const newSize = getFullMagnetSize(); 
-        const margin = getMargin();
-        const gridStep = newSize + margin;
-        
-        const surfaceWidth = surfaceEl.parentElement.clientWidth; 
-        const cols = Math.floor((surfaceWidth - margin) / gridStep);
-        const numCols = Math.max(1, cols); 
-
-        currentOffsetX = margin; 
-
-        magnets.update(currentList => 
-            currentList.map((magnet, index) => {
-                const row = Math.floor(index / numCols); 
-                const col = index % numCols;             
-                return {
-                    ...magnet,
-                    size: newSize, 
-                    position: {
-                        x: currentOffsetX + (col * gridStep),
-                        y: margin + (row * gridStep)
-                    }
-                };
-            })
-        );
-        setTimeout(updateSurfaceHeight, 0);
+    function updateMagnetsSize() {
+        const newSize = getFullMagnetSize();
+        magnets.update(list => list.map(m => ({ ...m, size: newSize })));
     }
 
-    function arrangeInGrid() {
-        const count = $magnets.length;
-        if (count === 0 || $editorSettings.currentMode !== 'multi' || !surfaceEl) { 
-            updateSurfaceHeight();
-            return;
-        }
-
-        const itemFullSize = getFullMagnetSize();
-        const margin = getMargin();
-        const gridStep = itemFullSize + margin;
-        
-        const cols = Math.ceil(Math.sqrt(count)); 
-        const numCols = Math.max(1, cols);
-
-        const gridWidth = (numCols * itemFullSize) + ((numCols - 1) * margin);
-        const surfaceWidth = surfaceEl.parentElement.clientWidth;
-        
-        currentOffsetX = (surfaceWidth > gridWidth) ? 
-            (surfaceWidth - gridWidth) / 2 : margin;
-
-        magnets.update(currentList => 
-            currentList.map((magnet, index) => {
-                const row = Math.floor(index / numCols); 
-                const col = index % numCols;             
-                return {
-                    ...magnet,
-                    size: itemFullSize, 
-                    position: {
-                        x: currentOffsetX + (col * gridStep),
-                        y: margin + (row * gridStep)   
-                    }
-                };
-            })
-        );
-        setTimeout(updateSurfaceHeight, 0);
-    }
-    
-    function handleArrangeInRowClick() {
-        currentLayoutFn = 'row';
-        arrangeInRow();
-        activePanel = null;
-    }
-    
-    function handleArrangeCenteredClick() {
-        currentLayoutFn = 'grid';
-        arrangeInGrid();
-        activePanel = null;
-    }
-
-    function handleSizeChange(event) {
-        const newScale = parseFloat(event.target.value);
-        editorSettings.update(s => ({ 
-            ...s, 
-            currentDisplayScale: newScale,
-        }));
-        
-        magnets.update(currentList => 
-            currentList.map(m => ({
-                ...m,
-                size: getFullMagnetSize()
-            }))
-        );
-
-        if (currentLayoutFn === 'row') {
-            setTimeout(arrangeInRow, 0);
-        } else {
-            setTimeout(arrangeInGrid, 0);
-        }
-    }
-
-    function toggleBackground() {
-        editorSettings.update(s => ({ ...s, isSurfaceDark: !s.isSurfaceDark }));
-        activePanel = null; 
-    }
-
-    function calculateAndRenderGrid() {
-        const $settings = $editorSettings;
-        if ($settings.currentMode !== 'split' || !$settings.splitImageSrc) return;
-        const imageRatio = $settings.splitImageRatio;
-        const base = $settings.gridBaseSize;
-        let cols, rows;
-        if (imageRatio > 1) { 
-            cols = Math.round(base * imageRatio);
-            rows = base;
-        } else { 
-            rows = Math.round(base / imageRatio);
-            cols = base;
-        }
-        renderSplitGrid(cols, rows);
-    }
-
-    function renderSplitGrid(cols, rows) {
-        const $settings = $editorSettings;
-        let newMagnets = [];
-        const count = cols * rows; 
-        const itemStep = BASE_MAGNET_SIZE + (BASE_MAGNET_SIZE * SPLIT_MARGIN_PERCENT);
-        const margin = (BASE_MAGNET_SIZE * SPLIT_MARGIN_PERCENT);
-        const gridRatio = cols / rows;
-        const imageRatio = $settings.splitImageRatio;
-        let bgWidth, bgHeight;
-        if (imageRatio > gridRatio) {
-            bgHeight = rows * 100;
-            bgWidth = bgHeight * imageRatio;
-        } else {
-            bgWidth = cols * 100;
-            bgHeight = bgWidth / imageRatio;
-        }
-        for (let i = 0; i < count; i++) {
-            const col = i % cols;
-            const row = Math.floor(i / cols);
-            const bgX = (cols > 1) ?
-                (col / (cols - 1)) * 100 : 0;
-            const bgY = (rows > 1) ?
-                (row / (rows - 1)) * 100 : 0;
-            const newX = margin + (col * itemStep);
-            const newY = margin + (row * itemStep); 
-            newMagnets.push({
-                id: `split-tile-${row}-${col}`, 
-                src: $settings.splitImageSrc,
-                originalSrc: $settings.splitImageSrc, 
-                isSplitPart: true,
-                transform: { 
-                    bgWidth: bgWidth, 
-                    bgHeight: bgHeight, 
-                    bgPosX: bgX, 
-                    bgPosY: bgY 
-                },
-                position: { x: newX, y: newY },
-                size: BASE_MAGNET_SIZE
-            });
-        }
-        magnets.set(newMagnets); 
-        setTimeout(updateSurfaceHeight, 0);
-    }
-
-    function incrementGrid() {
-        editorSettings.update(s => ({ ...s, gridBaseSize: s.gridBaseSize + 1 }));
-        calculateAndRenderGrid();
-        activePanel = null; 
-    }
-    
-    function decrementGrid() {
-        if ($editorSettings.gridBaseSize > MIN_GRID_BASE) {
-            editorSettings.update(s => ({ ...s, gridBaseSize: s.gridBaseSize - 1 }));
-            calculateAndRenderGrid();
-            activePanel = null; 
-        }
-    }
-    
-    function getEventPosition(e) {
-         return e.touches ?
-            e.touches[0] : e;
-    }
-
-    function onDragStart(event) {
-        const { id, event: dragEvent, element: magnetEl } = event.detail;
-        dragEvent.preventDefault(); 
-        
-        isDragging = true; 
-        activeMagnetId = id;
-
-        if (!magnetEl || !surfaceEl) return;
-        
-        const magnet = $magnets.find(m => m.id === id);
-        if (magnet) {
-            dragStartX = magnet.position.x; 
-            dragStartY = magnet.position.y;
-        }
-
-        surfaceRectCache = surfaceEl.parentElement.getBoundingClientRect();
-        
-        const pos = getEventPosition(dragEvent);
-        const rect = magnetEl.getBoundingClientRect();
-        
-        dragOffsetX = pos.clientX - rect.left + surfaceEl.parentElement.scrollLeft;
-        dragOffsetY = pos.clientY - rect.top + surfaceEl.parentElement.scrollTop;
-        
-        magnetEl.classList.add('draggable');
-        
-        document.addEventListener('mousemove', onDragMove);
-        document.addEventListener('mouseup', onDragEnd);
-        document.addEventListener('touchmove', onDragMove, { passive: false });
-        document.addEventListener('touchend', onDragEnd);
-    }
-
-    function onDragMove(e) {
-        if (activeMagnetId === null) return;
-        e.preventDefault();
-        
-        const pos = getEventPosition(e);
-        
-        let newX = pos.clientX - surfaceRectCache.left + surfaceEl.parentElement.scrollLeft - dragOffsetX;
-        let newY = pos.clientY - surfaceRectCache.top + surfaceEl.parentElement.scrollTop - dragOffsetY;
-
-        if (newX < 0) newX = 0;
-        if (newY < 0) newY = 0;
-        
-        magnets.update(list => 
-            list.map(m => 
-                m.id === activeMagnetId ? { ...m, position: { x: newX, y: newY } } : m
-            )
-        );
-    }
-
-    function onDragEnd() {
-        if (activeMagnetId === null) return;
-        
-        isDragging = false; 
-        isRepositioning = true; 
-
-        const magnet = $magnets.find(m => m.id === activeMagnetId);
-        
-        document.removeEventListener('mousemove', onDragMove);
-        document.removeEventListener('mouseup', onDragEnd);
-        document.removeEventListener('touchmove', onDragMove);
-        document.removeEventListener('touchend', onDragEnd);
-        
-        if (!magnet) {
-             activeMagnetId = null;
-             surfaceRectCache = null;
-             isRepositioning = false;
-             return;
-        }
-
+    // --- Drag & Drop (Multi Mode) ---
+    function onMagnetDragEnd(event) {
+        if ($isMobile) return; 
+        const { x, y, id } = event;
         const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
         const gridStep = itemFullSize + margin; 
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
         
-        const gridCol = Math.round((magnet.position.x - currentOffsetX) / gridStep);
-        const gridRow = Math.round((magnet.position.y - margin) / gridStep);
+        const cols = Math.floor((surfaceWidth - margin) / gridStep);
+        const numCols = Math.max(1, cols);
         
-        let snapX = currentOffsetX + (gridCol * gridStep); 
-        let snapY = margin + (gridRow * gridStep); 
-
-        if (snapX < margin) snapX = margin;
-        if (snapY < margin) snapY = margin;
-
-        const collision = $magnets.some(m => {
-                if (m.id === activeMagnetId) return false; 
-                const x1_left = snapX;
-                const x1_right = snapX + itemFullSize;
-                const y1_top = snapY;
-                const y1_bottom = snapY + itemFullSize;
-                
-                const x2_left = m.position.x;
-                const x2_right = m.position.x + m.size;
-                const y2_top = m.position.y;
-                const y2_bottom = m.position.y + m.size;
-
-                const isOverlapping = (
-                    x1_left < x2_right &&
-                    x1_right > x2_left &&
-                    y1_top < y2_bottom &&
-                    y1_bottom > y2_top
-                );
-                
-                return isOverlapping;
-            });
-
-        if (collision) {
-             snapX = dragStartX;
-             snapY = dragStartY;
+        const bestSlot = findBestTargetSlot(x, y, margin, gridStep, numCols);
+        
+        let snapX, snapY;
+        if (bestSlot) {
+            snapX = margin + (bestSlot.col * gridStep);
+            snapY = margin + (bestSlot.row * gridStep);
+        } else {
+            snapX = x;
+            snapY = y;
         }
-
+        
         magnets.update(list => 
-            list.map(m => 
-                m.id === activeMagnetId ? { ...m, position: { x: snapX, y: snapY } } : m
-            )
+            list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m)
         );
         
-        const magnetEl = surfaceEl.querySelector(`[data-id="${activeMagnetId}"]`);
-        if (magnetEl) {
-            magnetEl.classList.remove('draggable');
-        }
+        setTimeout(updateSurfaceHeight, 300);
+    }
 
-        activeMagnetId = null;
-        surfaceRectCache = null; 
+    // --- Upload Handlers ---
+    function triggerUploadAction() {
+        const elementId = $editorSettings.currentMode === 'multi' ? 'upload-multi-input' : 'upload-split-input';
+        const el = document.getElementById(elementId);
+        if (el) el.click();
+    }
+
+    async function onMultiFilesSelected(event) {
+        const files = event.detail;
+        if (!files || files.length === 0) return;
         
-        setTimeout(updateSurfaceHeight, 550);
-
-        setTimeout(() => {
-            isRepositioning = false; 
-        }, 100); 
+        loaderEl.style.display = 'block'; 
+        await addUploadedMagnets(files);
+        updateMagnetsSize();
+        
+        loaderEl.style.display = 'none';
+        
+        if (!$isMobile) {
+            fillEmptySlots();
+        }
     }
     
-    function deleteMagnetFromStore(event) {
-        magnets.update(list => list.filter(m => m.id !== event.detail.id));
-        setTimeout(updateSurfaceHeight, 0);
+    // --- Split / Mosaic Mode Logic ---
+    function onSplitImageLoaded(event) {
+        const { src, ratio } = event.detail;
+        loaderEl.style.display = 'block';
+        
+        editorSettings.update(s => ({ 
+            ...s, 
+            splitImageSrc: src,
+            splitImageRatio: ratio,
+            gridBaseSize: getMinGridBase(),
+            currentEffect: 'original',
+            splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
+            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null }
+        }));
+        
+        calculateAndRenderSplitGrid(); 
     }
 
+    function calculateAndRenderSplitGrid() {
+        if (splitRenderFrame) cancelAnimationFrame(splitRenderFrame);
+        
+        splitRenderFrame = requestAnimationFrame(() => {
+            const $settings = $editorSettings;
+            if ($settings.currentMode !== 'split' || !$settings.splitImageSrc) return;
+            
+            const imageRatio = $settings.splitImageRatio;
+            const base = $settings.gridBaseSize;
+            
+            let cols, rows;
+            if (imageRatio > 1) { cols = Math.round(base * imageRatio); rows = base; } 
+            else { rows = Math.round(base / imageRatio); cols = base; }
+            
+            const size = SPLIT_MAGNET_SIZE; 
+            const gap = size * SPLIT_MARGIN_PERCENT;
+            const step = size + gap;
+            
+            const totalGridWidth = (cols * size) + ((cols - 1) * gap);
+            const totalGridHeight = (rows * size) + ((rows - 1) * gap);
+            
+            let bgWidth, bgHeight;
+            if (imageRatio > (totalGridWidth / totalGridHeight)) {
+                bgHeight = Math.ceil(totalGridHeight) + 2;
+                bgWidth = Math.ceil(bgHeight * imageRatio);
+            } else {
+                bgWidth = Math.ceil(totalGridWidth) + 2;
+                bgHeight = Math.ceil(bgWidth / imageRatio);
+            }
+            
+            const userTransform = $settings.splitTransform || { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 };
+            const finalBgWidth = bgWidth * userTransform.zoom;
+            const finalBgHeight = bgHeight * userTransform.zoom;
+            const startX = (totalGridWidth - finalBgWidth) / 2 + (userTransform.xPct || 0) * finalBgWidth;
+            const startY = (totalGridHeight - finalBgHeight) / 2 + (userTransform.yPct || 0) * finalBgHeight;
+            
+            const currentEffect = $settings.currentEffect || 'original';
+            let imageSource = ($settings.splitImageCache && $settings.splitImageCache[currentEffect]) 
+                              ? $settings.splitImageCache[currentEffect] 
+                              : $settings.splitImageSrc;
+            
+            let newMagnets = [];
+            const count = cols * rows;
+            
+            for (let i = 0; i < count; i++) {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                const magnetX = col * step;
+                const magnetY = row * step;
+                
+                newMagnets.push({
+                    id: `split-${row}-${col}`, 
+                    src: imageSource, 
+                    originalSrc: $settings.splitImageSrc, 
+                    isSplitPart: true,
+                    hidden: false, 
+                    size: size, 
+                    position: { x: magnetX, y: magnetY },
+                    transform: { 
+                        bgWidth: finalBgWidth, bgHeight: finalBgHeight, 
+                        bgPosX: startX - magnetX, bgPosY: startY - magnetY,
+                        zoom: 1 
+                    }
+                });
+            }
+            
+            magnets.set(newMagnets);
+            
+            if (surfaceEl) {
+                const h = (rows * step) - gap;
+                editorSettings.update(s => ({...s, surfaceMinHeight: `${Math.max(h, surfaceEl.parentElement.clientHeight)}px`}));
+            }
+            if (loaderEl) loaderEl.style.display = 'none';
+        });
+    }
+
+    function handleSaveMosaic(event) {
+        const newTransform = event.detail;
+        if (loaderEl) loaderEl.style.display = 'block';
+        
+        editorSettings.update(s => ({ ...s, splitTransform: newTransform }));
+        isSplitEditing = false;
+        
+        tick().then(() => setTimeout(calculateAndRenderSplitGrid, 50));
+    }
+
+    // --- Toolbar Actions ---
+    function handleSizeChange(event) {
+        const newScale = parseFloat(event.target.value);
+        editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
+        
+        requestAnimationFrame(() => {
+            updateMagnetsSize();
+            if ($editorSettings.currentMode === 'multi' && !$isMobile) handleReflow();
+        });
+    }
+
+    function applyEffectToAllMagnets(effectId) {
+        editorSettings.update(s => ({ ...s, currentEffect: effectId }));
+        magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
+        
+        if (effectId === 'original') {
+            if ($editorSettings.currentMode === 'split') {
+                magnets.update(list => list.map(m => ({ ...m, src: m.originalSrc })));
+            }
+            return;
+        }
+        
+        if ($editorSettings.currentMode === 'split') {
+            if ($editorSettings.splitImageCache && $editorSettings.splitImageCache[effectId]) {
+                const cachedSrc = $editorSettings.splitImageCache[effectId];
+                magnets.update(list => list.map(m => ({ ...m, src: cachedSrc })));
+            } else {
+                if (loaderEl) loaderEl.style.display = 'block';
+                effectsWorker.postMessage({ magnetId: 'split-master', effectId: effectId, originalSrc: $editorSettings.splitImageSrc });
+            }
+        } else {
+            for (const magnet of $magnets) {
+                if (!magnet.processed || !magnet.processed[effectId]) {
+                    updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
+                    effectsWorker.postMessage({ magnetId: magnet.id, effectId: effectId, originalSrc: magnet.originalSrc });
+                }
+            }
+        }
+    }
+
+    function changeGridSize(delta) {
+        const currentSize = $editorSettings.gridBaseSize;
+        const newSize = currentSize + delta;
+        
+        if (newSize < getMinGridBase()) return;
+        
+        if (loaderEl) loaderEl.style.display = 'block';
+        setTimeout(() => {
+            editorSettings.update(s => ({ ...s, gridBaseSize: newSize })); 
+            calculateAndRenderSplitGrid(); 
+        }, 50);
+    }
+
+    function handleDeleteRequest(event) {
+        const id = event.detail.id;
+        magnets.update(list => list.filter(m => m.id !== id));
+        if (!$isMobile) tick().then(handleReflow);
+    }
+
+    function handleToggleVisibility(event) {
+        const id = event.detail.id;
+        magnets.update(list => list.map(m => {
+            if (m.id === id) return { ...m, hidden: !m.hidden };
+            return m;
+        }));
+    }
 </script>
 
-<svelte:window on:resize={handleResize}/>
-
-<div class="canvas-container" class:container-dark={$editorSettings.isSurfaceDark}>
+<div class="canvas-container" class:container-dark={$editorSettings.isSurfaceDark} class:split-center={$editorSettings.currentMode === 'split'}>
+    
     <div 
         id="configurator-surface" 
         bind:this={surfaceEl} 
         style="min-height: {$editorSettings.surfaceMinHeight};"
         class:surface-dark={$editorSettings.isSurfaceDark}
+        class:carousel-mode={$isMobile && $editorSettings.currentMode === 'multi'}
     >
-        {#if $editorSettings.currentMode === 'multi'}
-            {#each $magnets as magnet (magnet.id)}
-                <Magnet 
-                    {...magnet} 
-                    activeEffectId={magnet.activeEffectId}
-                    isSplitPart={false}
-                    on:delete={deleteMagnetFromStore}
-                    on:dragstart={onDragStart}
-                />
-            {/each}
-        {:else}
-            {#each $magnets as magnet (magnet.id)}
+        {#each $magnets as magnet (magnet.id)}
+            <div 
+                class="magnet-wrapper"
+                class:draggable-active={$editorSettings.currentMode === 'multi' && !$isMobile}
+                style="
+                    {$isMobile ? '' : `left: ${magnet.position.x}px; top: ${magnet.position.y}px; width: ${magnet.size}px; height: ${magnet.size}px;`}
+                "
+                use:draggable={{
+                    enabled: $editorSettings.currentMode === 'multi' && !$isMobile, 
+                    onDragEnd: (e) => onMagnetDragEnd({ ...e, id: magnet.id })
+                }}
+            >
                 <Magnet 
                     {...magnet}
-                    isSplitPart={true}
-                    on:delete={deleteMagnetFromStore}
+                    position={$isMobile ? magnet.position : {x: 0, y: 0}} 
+                    on:delete={handleDeleteRequest}
+                    on:toggleVisibility={handleToggleVisibility} 
+                    on:dblclick={(e) => e.preventDefault()} 
                 />
-            {/each}
-        {/if}
-
+            </div>
+        {/each}
     </div>
         
     {#if $magnets.length === 0 && !$editorSettings.splitImageSrc}
     <div id="initial-upload-prompt">
-        <button 
-            id="initial-upload-btn" 
-            on:click={() => $editorSettings.currentMode === 'multi' ?
-                multiUploadInput.click() : splitUploadInput.click()}
-        >
+        <button id="initial-upload-btn" on:click={triggerUploadAction}>
             {#if $editorSettings.currentMode === 'multi'}
                 הוסף תמונות
             {:else}
@@ -586,89 +464,70 @@
     {/if}
 </div>
 
+{#if $magnets.length > 0 || $editorSettings.splitImageSrc}
+<footer class="bottom-toolbar controls-active">
+    
+    <button class="toolbar-btn" on:click={() => togglePanel('effects')}>אפקטים</button>
+    <button class="toolbar-btn" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>החלף רקע</button> 
 
-{#if $editorSettings.currentMode === 'multi'}
-    <footer class="bottom-toolbar" class:controls-active={$magnets.length > 0}>
-        <button class="toolbar-btn" on:click={handleArrangeCenteredClick}>סידור אוט'</button>
-        <button class="toolbar-btn" on:click={handleArrangeInRowClick}>סידור שורה</button>
-        <button class="toolbar-btn" on:click={() => togglePanel('size')}>גודל תצוגה</button>
-        <button class="toolbar-btn" on:click={() => togglePanel('effects')}>אפקטים</button>
-        <button class="toolbar-btn" on:click={toggleBackground}>החלף רקע</button> 
-        <button class="toolbar-add-btn" on:click={() => { multiUploadInput.click();
-            activePanel = null; }}>+</button>
-    </footer>
-{/if}
+    {#if $editorSettings.currentMode === 'multi'}
+        {#if !$isMobile}
+            <button class="toolbar-btn" on:click={() => { handleReflow(); activePanel = null; }}>סדר מחדש</button>
+            <button class="toolbar-btn" on:click={() => togglePanel('size')}>גודל תצוגה</button>
+        {/if}
+        <button class="toolbar-add-btn" on:click={() => { triggerUploadAction(); activePanel = null; }}>+</button>
+    {/if}
 
-{#if $editorSettings.currentMode === 'split'}
-    <footer class="bottom-toolbar" class:controls-active={$editorSettings.splitImageSrc !== null}>
-         <button class="toolbar-btn" on:click={() => { splitUploadInput.click();
-            activePanel = null; }}>החלף תמונה</button>
-         <button class="toolbar-btn" on:click={toggleBackground}>החלף רקע</button>
-         <button class="toolbar-btn" on:click={() => togglePanel('effects')}>אפקטים</button> 
+    {#if $editorSettings.currentMode === 'split'}
+         <button class="toolbar-btn" on:click={() => { triggerUploadAction(); activePanel = null; }}>החלף תמונה</button>
+         
          <div class="split-controls-group"> 
-             <button class="split-btn" on:click={decrementGrid} disabled={$editorSettings.gridBaseSize <= MIN_GRID_BASE}>-</button>
+             <button class="split-btn" on:click={() => changeGridSize(-1)} disabled={$editorSettings.gridBaseSize <= getMinGridBase()}>-</button>
              <span id="split-grid-display">גודל רשת</span>
-             <button class="split-btn" on:click={incrementGrid}>+</button>
+             <button class="split-btn" on:click={() => changeGridSize(1)}>+</button>
          </div>
-    </footer>
+         
+         <button class="toolbar-btn icon-only-btn" on:click={() => isSplitEditing = true} title="חיתוך ומיקוד">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;">
+                <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"></path>
+                <path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"></path>
+             </svg>
+         </button>
+    {/if}
+</footer>
 {/if}
 
-<input 
-    type="file" 
-    id="multi-image-upload" 
-    multiple 
-    accept="image/*" 
-    style="display: none;"
-    bind:this={multiUploadInput}
-    on:change={handleMultiUpload}
->
-<input 
-    type="file" 
-    id="split-image-upload" 
-    accept="image/*" 
-    style="display: none;"
-    bind:this={splitUploadInput}
-    on:change={handleSplitUpload}
->
+<FileUploader 
+    uploadId="upload-multi-input" 
+    mode="multi" 
+    on:uploadStart={() => loaderEl.style.display = 'block'}
+    on:filesSelected={onMultiFilesSelected} 
+/>
+<FileUploader 
+    uploadId="upload-split-input" 
+    mode="split" 
+    on:uploadStart={() => loaderEl.style.display = 'block'}
+    on:splitImageLoaded={onSplitImageLoaded} 
+/>
 
-<FloatingPanel 
-    title="גודל תצוגה" 
-    isOpen={activePanel === 'size'} 
-    on:close={() => activePanel = null}
->
+<div class="brand-loader-bar" id="loader" bind:this={loaderEl} style="display: none;">
+    <div class="loader-progress"></div>
+</div>
+
+<FloatingPanel title="גודל תצוגה" isOpen={activePanel === 'size'} on:close={() => activePanel = null}>
     <div class="size-slider-container">
         <span>-</span>
-        <input 
-            type="range" 
-            id="size-slider" 
-            min="0.5" 
-            max="3"
-            value={$editorSettings.currentDisplayScale}
-            step="0.1"
-            on:input={handleSizeChange}
-        >
+        <input type="range" min={SCALE_MIN} max={SCALE_MAX} step="0.01" value={$editorSettings.currentDisplayScale} on:input={handleSizeChange}>
         <span>+</span>
     </div>
 </FloatingPanel>
 
-<FloatingPanel 
-    title="בחר אפקט" 
-    isOpen={activePanel === 'effects'} 
-    on:close={() => activePanel = null}
->
+<FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
     <div class="effects-list">
         {#each effectsList as effect (effect.id)}
-            <button 
-                class="effect-select-btn"
-                class:active={effect.id === $editorSettings.currentEffect}
-                on:click={() => applyEffectToAllMagnets(effect.id)}
-            >
+            <button class="effect-select-btn" class:active={effect.id === $editorSettings.currentEffect} on:click={() => applyEffectToAllMagnets(effect.id)}>
                 <div class="thumbnail-wrapper">
-                    <img 
-                        src="/effects.png" 
-                        alt={effect.name}
-                        style="filter: {effect.filter};"
-                    >
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
                 </div>
                 <span>{effect.name}</span>
             </button>
@@ -676,6 +535,87 @@
     </div>
 </FloatingPanel>
 
-<div class="loader-wrapper" id="loader" bind:this={loaderEl} style="display: none;">
-    <div class="loader-text">FEEL</div>
-</div>
+{#if isSplitEditing && $editorSettings.splitImageSrc}
+    <MosaicEditor 
+        imageSrc={$editorSettings.splitImageSrc}
+        transform={$editorSettings.splitTransform}
+        gridSettings={{ 
+            cols: $editorSettings.gridBaseSize * ($editorSettings.splitImageRatio > 1 ? $editorSettings.splitImageRatio : 1), 
+            rows: $editorSettings.gridBaseSize * ($editorSettings.splitImageRatio > 1 ? 1 : (1/$editorSettings.splitImageRatio)) 
+        }}
+        on:save={handleSaveMosaic}
+        on:close={() => isSplitEditing = false}
+    />
+{/if}
+
+<style>
+    .magnet-wrapper {
+        position: absolute; 
+        touch-action: none; 
+        z-index: 10;
+        /* הוספנו כאן את המידות והמיקום באופן דינמי ב-HTML */
+    }
+    
+    .magnet-wrapper.draggable-active {
+        z-index: 1000;
+        cursor: grabbing;
+    }
+    
+    #configurator-surface {
+        background-color: #F2F0EC; 
+        transition: background-color 0.3s ease;
+        position: relative;
+    }
+    #configurator-surface.surface-dark { background-color: #1E1E1E; }
+    
+    /* קרוסלת מובייל */
+    #configurator-surface.carousel-mode {
+        display: flex;
+        flex-direction: row; 
+        flex-wrap: nowrap; 
+        overflow-x: auto; 
+        align-items: center; 
+        justify-content: flex-start;
+        padding: 0 40px; 
+        gap: 20px; 
+        scroll-snap-type: x mandatory; 
+        -webkit-overflow-scrolling: touch;
+        height: 70vh; 
+    }
+    
+    #configurator-surface.carousel-mode .magnet-wrapper {
+        position: relative !important; 
+        left: auto !important;
+        top: auto !important;
+        /* כאן לא צריך רוחב וגובה קבועים, המגנט הפנימי יקבע אותם */
+        width: auto !important; 
+        height: auto !important;
+        flex: 0 0 auto; 
+        scroll-snap-align: center; 
+    }
+    
+    .mosaic-icon { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; width: 24px; height: 24px; }
+    .mosaic-icon span { background-color: currentColor; border-radius: 1px; width: 100%; height: 100%; }
+    .canvas-container.split-center #configurator-surface { display: flex; justify-content: center; align-items: center; }
+    
+    .brand-loader-bar { position: fixed; bottom: 0; left: 0; width: 100%; height: 6px; background-color: #F2F0EC; z-index: 9999; overflow: hidden; }
+    .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, #3F524F, #846349, #475160, #3F524F); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
+    @keyframes brandLoading { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    
+    .split-controls-group { display: flex; align-items: center; gap: 10px; }
+    .split-btn { border: 2px solid var(--color-pink); background: transparent; color: var(--color-pink); width: 40px; height: 40px; border-radius: 50%; font-size: 24px; font-weight: 700; cursor: pointer; }
+    .split-btn:hover { background: var(--color-pink); color: white; }
+    .split-btn:disabled { border-color: #ccc; color: #ccc; cursor: not-allowed; background: transparent; }
+    #split-grid-display { font-size: 16px; font-weight: 700; color: var(--color-medium-blue-gray); width: 80px; text-align: center; }
+    
+    .size-slider-container { display: flex; align-items: center; gap: 15px; }
+    .size-slider-container span { font-size: 16px; color: var(--color-medium-blue-gray); }
+    
+    .effects-list { display: flex; gap: 15px; justify-content: center; padding: 5px 0; overflow-x: auto; }
+    .effect-select-btn { background: none; border: none; cursor: pointer; padding: 0; font-family: 'Assistant', sans-serif; font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .effect-select-btn .thumbnail-wrapper { width: 80px; height: 80px; border-radius: 8px; border: 3px solid transparent; overflow: hidden; }
+    .effect-select-btn .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+    .effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
+    
+    .icon-only-btn { padding: 8px; display: flex; align-items: center; justify-content: center; }
+</style>

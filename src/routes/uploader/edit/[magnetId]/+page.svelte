@@ -9,7 +9,6 @@
     import { magnets, editorSettings, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect } from '$lib/stores.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte'; 
 
-    // --- רשימת אפקטים ---
     const effectsList = [
         { id: 'original', name: 'מקורי', filter: 'none' },
         { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
@@ -18,40 +17,28 @@
         { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
     ];
 
-    // --- קריאת נתונים ---
     const magnetId = $page.params.magnetId;
     let magnet;
-    $: magnet = $magnets.find(m => m.id === magnetId); // הפכנו לריאקטיבי
+    $: magnet = $magnets.find(m => m.id === magnetId); 
     
-    // --- משתני עריכה מקומיים (זום ומיקום) ---
     let currentEditZoom = magnet?.transform.zoom || 1;
     let currentEditX = magnet?.transform.x || 0;
     let currentEditY = magnet?.transform.y || 0;
     
-    // 🔥 שינוי: נגדיר את נתוני האיפוס כקבועים
-    const originalEditData = { 
-        zoom: 1, 
-        x: 0, // זהו יחס (ratio)
-        y: 0  // זהו יחס (ratio)
-    };
+    const originalEditData = { zoom: 1, x: 0, y: 0 };
     
-    // --- משתני גרירה (זום ומיקום) ---
     let isEditingDrag = false;
     let editStartPosX = 0;
     let editStartPosY = 0;
     let editImageEl;
 
-    // --- לוגיקה חדשה: אפקטים ---
     let effectsWorker;
     let activePanel = null; 
     
     $: currentEffectId = magnet?.activeEffectId || 'original'; 
     $: processedSrc = magnet?.processed[currentEffectId];
     $: isLoadingEffect = processedSrc === 'processing';
-    
-    $: displaySrc = (processedSrc && processedSrc !== 'processing') 
-                    ? processedSrc 
-                    : magnet?.originalSrc;
+    $: displaySrc = (processedSrc && processedSrc !== 'processing') ? processedSrc : magnet?.originalSrc;
 
     onMount(() => {
         if (!magnet) {
@@ -59,35 +46,27 @@
             return; 
         }
 
-        // 🔥 התיקון: המרת היחסים (מה-store) לפיקסלים (של עמוד העריכה) ---
-        const frameSize = editImageEl.clientWidth; // גודל מסגרת העריכה
-        
+        const frameSize = editImageEl.clientWidth; 
         currentEditZoom = magnet.transform.zoom;
-        // המר מיחס (0.1) לפיקסלים (0.1 * 400 = 40px)
         currentEditX = magnet.transform.x * frameSize; 
         currentEditY = magnet.transform.y * frameSize;
         
-        // החל את הטרנספורם בפעם הראשונה
         applyEditTransform(); 
 
         effectsWorker = new Worker('/effects.worker.js');
         effectsWorker.onmessage = (event) => {
-            const { status, magnetId: processedMagnetId, effectId, newSrc } = event.data;
+            const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
             if (status === 'success' && processedMagnetId === magnetId) {
+                const newSrc = URL.createObjectURL(blob);
                 updateMagnetProcessedSrc(magnetId, effectId, newSrc);
             }
         };
     });
 
     onDestroy(() => {
-        if (effectsWorker) {
-            effectsWorker.terminate();
-        }
+        if (effectsWorker) effectsWorker.terminate();
     });
 
-    /**
-     * פונקציה חדשה: החלת אפקט
-     */
     function applyEffect(effectId) {
         updateMagnetActiveEffect(magnetId, effectId);
         activePanel = null;
@@ -123,31 +102,23 @@
         applyEditTransform();
     }
 
-    /**
-     * 🔥 פונקציית איפוס מתוקנת 🔥
-     */
     function resetEditTransform() {
-        // 1. אפס זום ומיקום לערכי "מפעל"
-        currentEditZoom = originalEditData.zoom; // 1
-        currentEditX = originalEditData.x; // 0
-        currentEditY = originalEditData.y; // 0
+        currentEditZoom = originalEditData.zoom; 
+        currentEditX = originalEditData.x; 
+        currentEditY = originalEditData.y; 
         applyEditTransform();
-        
-        // 2. אפס את האפקט ל"מקורי"
         applyEffect('original');
     }
 
     function saveAndClose() {
-        // --- 🔥 התיקון: המר מפיקסלים בחזרה ליחסים ---
         const frameSize = editImageEl.clientWidth;
-        // המר מפיקסלים (40px) ליחס (40 / 400 = 0.1)
         const savedX_ratio = currentEditX / frameSize;
         const savedY_ratio = currentEditY / frameSize;
 
         updateMagnetTransform(magnetId, {
             zoom: currentEditZoom,
-            x: savedX_ratio, // שמור יחס
-            y: savedY_ratio  // שמור יחס
+            x: savedX_ratio, 
+            y: savedY_ratio  
         });
         goto('/uploader'); 
     }
@@ -156,9 +127,7 @@
         goto('/uploader');
     }
 
-    function getEventPosition(e) {
-        return e.touches ? e.touches[0] : e;
-    }
+    function getEventPosition(e) { return e.touches ? e.touches[0] : e; }
 
     function startEditDrag(e) {
         e.preventDefault();
@@ -166,7 +135,6 @@
         const pos = getEventPosition(e);
         editStartPosX = pos.clientX;
         editStartPosY = pos.clientY;
-        
         editImageEl.style.transition = 'none';
     }
 
@@ -174,16 +142,12 @@
         if (!isEditingDrag) return;
         e.preventDefault();
         const pos = getEventPosition(e);
-        
         const deltaX = (pos.clientX - editStartPosX);
         const deltaY = (pos.clientY - editStartPosY);
-
         currentEditX += (deltaX / currentEditZoom);
         currentEditY += (deltaY / currentEditZoom);
-        
         editStartPosX = pos.clientX;
         editStartPosY = pos.clientY;
-        
         applyEditTransform();
     }
 
@@ -192,7 +156,6 @@
         isEditingDrag = false;
         editImageEl.style.transition = 'transform 0.1s ease-out';
     }
-
 </script>
 
 <svelte:window 
@@ -222,8 +185,7 @@
     </div>
 </div>
 
-<footer id="bottom-toolbar-edit" class="bottom-toolbar controls-active">
-    <button class="toolbar-btn" on:click={cancelAndClose}>ביטול</button>
+<footer id="bottom-toolbar-edit" class="bottom-toolbar controls-active edit-mode-toolbar">
     <div class="zoom-slider-container">
         <span>-</span>
         <input 
@@ -236,11 +198,13 @@
         >
         <span>+</span>
     </div>
-    <button class="toolbar-btn" on:click={resetEditTransform}>אפס</button>
-    
-    <button class="toolbar-btn" on:click={() => activePanel = 'effects'}>אפקטים</button>
-    
-    <button class="toolbar-btn" id="edit-save-btn" on:click={saveAndClose}>שמור שינויים</button>
+
+    <div class="actions-row">
+        <button class="toolbar-btn secondary" on:click={cancelAndClose}>ביטול</button>
+        <button class="toolbar-btn" on:click={resetEditTransform}>אפס</button>
+        <button class="toolbar-btn" on:click={() => activePanel = 'effects'}>אפקטים</button>
+        <button class="toolbar-btn primary" id="edit-save-btn" on:click={saveAndClose}>שמור</button>
+    </div>
 </footer>
 
 <FloatingPanel 
@@ -269,29 +233,55 @@
 </FloatingPanel>
 
 <style>
-    .magnet-loader {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        background: rgba(255,255,255,0.5);
-        box-sizing: border-box;
-        border-radius: 12px;
+    /* ... (שאר הסגנונות הקודמים נשארים) ... */
+
+    /* --- עיצוב ייעודי למובייל לעמוד העריכה --- */
+    .actions-row {
+        display: contents; /* בדסקטופ הכפתורים רגילים */
     }
-    .loader-spinner {
-        width: 30px;
-        height: 30px;
-        border: 4px solid var(--color-pink);
-        border-top-color: transparent;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-        to { transform: rotate(360deg); }
+
+    @media (max-width: 768px) {
+        .edit-mode-toolbar {
+            flex-direction: row !important; /* שומר על שורה אחת */
+            flex-wrap: wrap; /* מאפשר ירידת שורה אם צפוף */
+            height: auto !important;
+            padding: 15px !important;
+            gap: 10px !important;
+            background: white;
+            justify-content: center; /* מרכוז הכפתורים */
+            align-items: center;
+        }
+
+        .zoom-slider-container {
+            width: 100% !important; /* סליידר לרוחב מלא בשורה נפרדת */
+            padding: 0 10px 10px 10px; /* רווח תחתון מהכפתורים */
+            box-sizing: border-box;
+        }
+
+        .actions-row {
+            display: flex;
+            width: 100%;
+            justify-content: space-around; /* פיזור אחיד של הכפתורים */
+            align-items: center;
+            gap: 10px; /* רווח קטן בין הכפתורים */
+        }
+
+        .toolbar-btn {
+            font-size: 14px;
+            padding: 10px 15px; /* כפתורים קצת יותר גדולים ללחיצה */
+            flex-grow: 1; /* מאפשר לכפתורים להתרחב מעט */
+            text-align: center;
+            max-width: 100px; /* שלא יהיו רחבים מדי */
+        }
+        
+        #edit-save-btn {
+            background-color: var(--color-pink);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            /* כפתור שמירה יהיה מעט בולט יותר */
+            flex-grow: 1.2;
+        }
     }
 </style>
 {/if}
