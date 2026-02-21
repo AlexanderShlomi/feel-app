@@ -1,0 +1,34 @@
+# Project Rules for Magnet/Mosaic Svelte Project
+
+## 1. Context & Architecture
+- **Framework:** Svelte 4.
+- **State Management:** Centralized in `src/lib/stores.js`.
+- **Styling:** CSS-in-JS/Tailwind (Follow patterns in `app.css`).
+- **Core Logic:** A photo-to-magnet/mosaic ordering system.
+- **Persistence:** Uses IndexedDB (`src/lib/utils/idb.js`) for workspace saving.
+
+## 2. State & Reactivity Rules (Critical)
+- **Store Access:** Always use the `$` prefix to access and subscribe to stores in `.svelte` files (e.g., `$magnets`, `$editorSettings`).
+- **Reactive Declarations:** Use `$: { ... }` blocks for complex derived logic that depends on multiple stores (like price calculations in `UpsellWidget`).
+- **Business Logic:** Maintain constant values like `PACKAGES`, `EXTRA_MAGNET_PRICE`, and `PRODUCT_TYPES` inside `src/lib/stores.js` for global consistency.
+
+## 3. Component Standards
+- **Organization:** - UI components: `src/lib/components/`
+  - Logic/Utilities: `src/lib/utils/`
+  - Routes: SvelteKit structure in `src/routes/`
+- **Language:** UI text is primarily in Hebrew (RTL). Ensure any new UI elements support RTL and use the correct CSS logical properties.
+- **Transitions:** Use Svelte's built-in transitions (`fly`, `fade`, `scale`) for UI panels and widgets.
+
+## 4. Integration & Features
+- **Database (Supabase/Firebase):** Future integrations should reside in `src/lib/services/`.
+- **Mosaic Logic:** Respect the `PRODUCT_TYPES.MOSAIC` vs `PRODUCT_TYPES.COLLECTION` logic when handling counts and pricing.
+- **Error Handling:** Async operations (like `saveWorkspaceToCart`) must have a loading state (`isSaving`) and handle success/error feedback.
+
+## 5. Coding Style
+- **TypeScript:** Use strict types for all utility functions.
+- **Clean Code:** Prefer descriptive variable names for UI states (e.g., `isMinReached`, `progressPercent`).
+- **Performance:** For heavy tasks (image processing), refer to `static/effects.worker.js`.
+
+## 6. Development Workflow
+- **Context Awareness:** Before suggesting changes, always check `src/lib/stores.js` to see if a store already exists for that data.
+- **Holistic Bug Fixing:** When a bug is reported in a component, check if the root cause is a missing reactive update (`$:`) or an unsynced store.
