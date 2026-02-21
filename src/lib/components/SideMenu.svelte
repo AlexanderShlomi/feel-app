@@ -42,7 +42,10 @@
         z-index: 2000;
         transition: right 0.3s ease-in-out;
         box-shadow: -5px 0 15px rgba(0,0,0,0.1);
-        box-sizing: border-box; 
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden; /* מניעת גלילה מיותרת */
     }
     #side-menu.active {
         right: 0;
@@ -107,7 +110,10 @@
     #side-menu ul { 
         list-style: none;
         padding: 0; 
-        margin: 20px; 
+        margin: 20px;
+        flex: 1;
+        overflow-y: auto; /* גלילה רק בתוך התפריט אם צריך */
+        overflow-x: hidden;
     }
     #side-menu li a {
         display: flex;

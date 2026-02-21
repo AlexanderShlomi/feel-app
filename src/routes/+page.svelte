@@ -14,7 +14,9 @@
         
         .page-container {
             height: auto !important;
+            min-height: calc(100vh - 70px); /* גובה מינימלי פחות Header */
             display: block !important;
+            padding-top: 0; /* דף הבית לא צריך padding-top כי הוא override */
         }
     </style>
 </svelte:head>
@@ -22,31 +24,21 @@
 <script>
     import { scrollAnimation } from '$lib/actions/scrollAnimation.js';
     import { onMount, onDestroy, tick } from 'svelte'; 
+    import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
 
-    // --- קוד לניהול מצב (כרטיסיות עליונות) ---
-    import { magnets, editorSettings } from '$lib/stores.js';
-    function setMode(mode) {
-        magnets.set([]);
-        editorSettings.set({
-            currentMode: mode,
-            currentDisplayScale: 1.0,
-            surfaceMinHeight: '100%',
-            isSurfaceDark: false,
-            splitImageSrc: null,
-            splitImageRatio: 1,
-            gridBaseSize: 3,
-            currentEffect: 'original', 
-            splitImageCache: { 
-                original: null,
-                silver: null,
-                noir: null,
-                vivid: null,
-                dramatic: null
-            }
-        });
+    // --- יצירת פרויקט חדש ---
+    function startNewMagnets() {
+        resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
+        goto('/uploader');
     }
 
-    // --- 🔥 קוד קרוסלה (הגרסה המתוקנת) ---
+    function startNewMosaic() {
+        resetSystem(PRODUCT_TYPES.MOSAIC);
+        goto('/uploader');
+    }
+
+    // --- קוד קרוסלה ---
     let scrollContainerEl;
     const scrollStep = 300; 
 
@@ -148,12 +140,11 @@
 
         <div class="info-cards-grid">
             
-            <a 
-                href="/uploader" 
+            <button 
                 class="info-card fade-in-up" 
                 use:scrollAnimation 
                 style="--delay: 200ms;"
-                on:click={() => setMode('multi')}
+                on:click={startNewMagnets}
             >
                 <h4>
                     <svg class="card-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
@@ -167,14 +158,13 @@
                 <p class="card-description">
                     בחרו את התמונות שמספרות את הסיפור שלכם. הממשק החכם שלנו מאפשר לכם לעצב כל תמונה בנפרד ולהפוך אות לסיפור על מגנט בגודל 5x5 ס"מ. תוכלו להוסיף אפקט שמתאים לרגע או למקד את הפריים בדיוק ברגע הנכון.
                 </p>
-            </a>
+            </button>
             
-            <a 
-                href="/uploader" 
+            <button 
                 class="info-card fade-in-up" 
                 use:scrollAnimation 
                 style="--delay: 300ms;"
-                on:click={() => setMode('split')}
+                on:click={startNewMosaic}
             >
                 <h4>
                     <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -185,7 +175,7 @@
                 <p class="card-description">
                     בחרו תמונה אחת אייקונית – כזו שמכילה עולם שלם. אנחנו נהפוך אותה לפסיפס מרשים המורכב מחלקי 5x5 ס"מ. תוכלו להגדיר את הגודל הכולל, לבחור את כמות החלקים, ולמקם את התמונה כך שכל הפרטים החשובים יקבלו את הבמה.
                 </p>
-            </a>
+            </button>
 
             <div 
                 class="info-card fade-in-up" 

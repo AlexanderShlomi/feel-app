@@ -1,14 +1,15 @@
-<svelte:head>
-    <title>FEEL - עריכת מגנט</title>
-</svelte:head>
-
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    // הוספתי את getFilterStyle לייבוא
-    import { magnets, editorSettings, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle } from '$lib/stores.js';
-    import FloatingPanel from '$lib/components/FloatingPanel.svelte'; 
+    import { magnets, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle } from '$lib/stores.js';
+    import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+
+    const FRAME_SIZE = 300; 
+
+    const magnetId = $page.params.magnetId;
+    let magnet;
+    $: magnet = $magnets.find(m => m.id === magnetId);
 
     const effectsList = [
         { id: 'original', name: 'מקורי', filter: 'none' },
@@ -18,44 +19,29 @@
         { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
     ];
 
-    const magnetId = $page.params.magnetId;
-    let magnet;
-    $: magnet = $magnets.find(m => m.id === magnetId); 
+    let bgTranslateX = 0;
+    let bgTranslateY = 0;
+    let bgScale = 1;
+    let minScaleLimit = 0.1;
+
+    let isDragging = false;
+    let isInteracting = false; 
+    let dragStartX = 0;
+    let dragStartY = 0;
     
-    let currentEditZoom = magnet?.transform.zoom || 1;
-    let currentEditX = magnet?.transform.x || 0;
-    let currentEditY = magnet?.transform.y || 0;
-    
-    let isEditingDrag = false;
-    let editStartPosX = 0;
-    let editStartPosY = 0;
-    let editImageEl;
+    let bgImageEl; 
     let effectsWorker;
-    let activePanel = null; 
-    
-    $: currentEffectId = magnet?.activeEffectId || 'original'; 
-    // שינוי קריטי: התצוגה תמיד משתמשת במקור, הפילטר מוחל ב-CSS
-    $: displaySrc = magnet?.originalSrc;
-    // אנו עדיין עוקבים אחרי העיבוד לשמירה, אבל לא לתצוגה
-    $: processedSrc = magnet?.processed[currentEffectId];
+    let activePanel = null;
+
+    $: currentEffectId = magnet?.activeEffectId || 'original';
+    $: displaySrc = magnet?.originalSrc || magnet?.src; 
+    $: activeFilterCss = getFilterStyle(currentEffectId);
+    $: processedSrc = magnet?.processed?.[currentEffectId];
     $: isLoadingEffect = processedSrc === 'processing';
 
-    // חישוב הפילטר לתצוגה
-    $: activeFilterCss = getFilterStyle(currentEffectId);
-
     onMount(() => {
-        if (!magnet) {
-            goto('/uploader');
-            return; 
-        }
-
-        const frameSize = editImageEl.clientWidth; 
-        currentEditZoom = magnet.transform.zoom;
-        currentEditX = magnet.transform.x * frameSize; 
-        currentEditY = magnet.transform.y * frameSize;
+        if (!magnet) { goto('/uploader'); return; }
         
-        applyEditTransform(); 
-
         effectsWorker = new Worker('/effects.worker.js');
         effectsWorker.onmessage = (event) => {
             const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
@@ -66,87 +52,161 @@
         };
     });
 
-    onDestroy(() => {
-        if (effectsWorker) effectsWorker.terminate();
-    });
+    onDestroy(() => { if (effectsWorker) effectsWorker.terminate(); });
+
+    // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
+
+    function onBgImageLoad() {
+        if (!bgImageEl) return;
+        
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+
+        // חישוב יחס זום כדי לכסות את המסגרת
+        const scaleX = FRAME_SIZE / naturalW;
+        const scaleY = FRAME_SIZE / naturalH;
+        minScaleLimit = Math.max(scaleX, scaleY);
+
+        if (magnet.transform && magnet.transform.zoom) {
+            // שחזור מלא של מצב עריכה קיים
+            bgTranslateX = magnet.transform.x * FRAME_SIZE; 
+            bgTranslateY = magnet.transform.y * FRAME_SIZE;
+            bgScale = magnet.transform.zoom * minScaleLimit;
+        } else {
+            // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
+            applyDefaultPositioning(naturalW, naturalH);
+        }
+        
+        clampPosition();
+    }
+
+    // פונקציה מרכזית לחישוב מיקום ה-Default (Top Align)
+    function applyDefaultPositioning(w, h) {
+        // איפוס סקייל למינימום שמכסה את המסגרת
+        bgScale = minScaleLimit;
+        
+        // מכיוון שנקודת הייחוס (Transform Origin) היא המרכז (Center Center):
+        // X=0 ממקם את מרכז התמונה במרכז המסגרת (וזה מה שאנחנו רוצים אופקית ב-Landscape וגם ב-Portrait זה בסדר כי זה ממלא רוחב).
+        bgTranslateX = 0; 
+
+        // Y=0 ממקם את מרכז התמונה במרכז המסגרת.
+        // אבל הדרישה היא Top Align (הצמדה למעלה).
+        // כדי להזיז את התמונה כך שהחלק העליון שלה ייגע בחלק העליון של המסגרת,
+        // עלינו להזיז אותה "למטה" (חיובי) בחצי מההפרש שבין הגובה הנוכחי למסגרת.
+        
+        const currentH = h * bgScale;
+        
+        // הנוסחה: (גובה התמונה בפועל - גובה המסגרת) / 2
+        // זה יתן את ה-Offset החיובי הנדרש כדי שראש התמונה יהיה ב-0.
+        bgTranslateY = (currentH - FRAME_SIZE) / 2;
+    }
+
+    function clampPosition() {
+        if (!bgImageEl) return;
+
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+
+        const currentW = naturalW * bgScale;
+        const currentH = naturalH * bgScale;
+
+        // גבולות גזרה: לא מאפשרים לראות רקע לבן בתוך המסגרת
+        const maxX = (currentW - FRAME_SIZE) / 2;
+        const maxY = (currentH - FRAME_SIZE) / 2;
+
+        if (bgTranslateX > maxX) bgTranslateX = maxX;
+        if (bgTranslateX < -maxX) bgTranslateX = -maxX;
+        
+        if (bgTranslateY > maxY) bgTranslateY = maxY;
+        if (bgTranslateY < -maxY) bgTranslateY = -maxY;
+    }
+
+    // --- אירועי גרירה ואינטראקציה ---
+
+    function startInteraction() { isInteracting = true; }
+    function endInteraction() { isDragging = false; isInteracting = false; }
+
+    function startDrag(e) {
+        e.preventDefault();
+        isDragging = true;
+        startInteraction();
+        const pos = getEventPosition(e);
+        dragStartX = pos.clientX;
+        dragStartY = pos.clientY;
+    }
+
+    function onDrag(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const pos = getEventPosition(e);
+        
+        const deltaX = pos.clientX - dragStartX;
+        const deltaY = pos.clientY - dragStartY;
+
+        bgTranslateX += deltaX;
+        bgTranslateY += deltaY;
+        
+        dragStartX = pos.clientX;
+        dragStartY = pos.clientY;
+
+        clampPosition();
+    }
+
+    function handleGlobalEnd() { if (isInteracting) endInteraction(); }
+    function handleZoomInput(e) {
+        const multiplier = parseFloat(e.target.value);
+        bgScale = multiplier * minScaleLimit;
+        clampPosition();
+    }
+    function getEventPosition(e) { return e.touches ? e.touches[0] : e; }
+
+    // --- שמירה ואיפוס ---
+
+    function resetTransform() {
+        if (!bgImageEl) return;
+        // חישוב מחדש של המינימום
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+        const scaleX = FRAME_SIZE / naturalW;
+        const scaleY = FRAME_SIZE / naturalH;
+        minScaleLimit = Math.max(scaleX, scaleY);
+
+        // שימוש בלוגיקה המרכזית
+        applyDefaultPositioning(naturalW, naturalH);
+        
+        clampPosition();
+        applyEffect('original');
+    }
+
+    function saveAndClose() {
+        // שמירת ערכים יחסיים (באחוזים/יחס) כדי שיתאימו לכל גודל בגריד
+        updateMagnetTransform(magnetId, {
+            zoom: bgScale / minScaleLimit,
+            x: bgTranslateX / FRAME_SIZE,
+            y: bgTranslateY / FRAME_SIZE
+        });
+        goto('/uploader');
+    }
 
     function applyEffect(effectId) {
         updateMagnetActiveEffect(magnetId, effectId);
-        // Worker runs ONLY for saving purposes now
         if (effectId !== 'original' && !magnet.processed[effectId]) {
             updateMagnetProcessedSrc(magnetId, effectId, 'processing');
-            effectsWorker.postMessage({
-                magnetId: magnetId,
-                effectId: effectId,
-                originalSrc: magnet.originalSrc
-            });
+            effectsWorker.postMessage({ magnetId, effectId, originalSrc: magnet.originalSrc });
         }
     }
-
-    function applyEditTransform() {
-        if (!editImageEl) return;
-        // לוגיקת גרירה וזום נשארת זהה
-        editImageEl.style.transform = `scale(${currentEditZoom}) translate(${currentEditX}px, ${currentEditY}px)`;
-    }
-
-    // ... (פונקציות עזר: handleZoomInput, resetEditTransform, saveAndClose, deleteMagnet, Drag Logic - ללא שינוי) ...
-    function handleZoomInput(e) {
-        currentEditZoom = parseFloat(e.target.value);
-        applyEditTransform();
-    }
-    function resetEditTransform() {
-        currentEditZoom = 1; currentEditX = 0; currentEditY = 0;
-        applyEditTransform();
-        applyEffect('original');
-    }
-    function saveAndClose() {
-        const frameSize = editImageEl.clientWidth;
-        updateMagnetTransform(magnetId, {
-            zoom: currentEditZoom,
-            x: currentEditX / frameSize, 
-            y: currentEditY / frameSize  
-        });
-        goto('/uploader'); 
-    }
+    
     function deleteMagnet() {
         if (confirm('למחוק את התמונה?')) {
             magnets.update(list => list.filter(m => m.id !== magnetId));
             goto('/uploader');
         }
     }
-    function getEventPosition(e) { return e.touches ? e.touches[0] : e; }
-    function startEditDrag(e) {
-        e.preventDefault();
-        isEditingDrag = true;
-        const pos = getEventPosition(e);
-        editStartPosX = pos.clientX;
-        editStartPosY = pos.clientY;
-        editImageEl.style.transition = 'none';
-    }
-    function editDrag(e) {
-        if (!isEditingDrag) return;
-        e.preventDefault();
-        const pos = getEventPosition(e);
-        const deltaX = (pos.clientX - editStartPosX);
-        const deltaY = (pos.clientY - editStartPosY);
-        currentEditX += (deltaX / currentEditZoom);
-        currentEditY += (deltaY / currentEditZoom);
-        editStartPosX = pos.clientX;
-        editStartPosY = pos.clientY;
-        applyEditTransform();
-    }
-    function endEditDrag() {
-        if (!isEditingDrag) return;
-        isEditingDrag = false;
-        editImageEl.style.transition = 'transform 0.1s ease-out';
-    }
 </script>
 
 <svelte:window 
-    on:mousemove={editDrag} 
-    on:mouseup={endEditDrag}
-    on:touchmove|preventDefault={editDrag}
-    on:touchend={endEditDrag}
+    on:mousemove={onDrag} on:mouseup={handleGlobalEnd}
+    on:touchmove|preventDefault={onDrag} on:touchend={handleGlobalEnd}
 />
 
 <div class="brand-loader-bar" style="display: {isLoadingEffect ? 'block' : 'none'};">
@@ -154,104 +214,147 @@
 </div>
 
 {#if magnet}
-<div class="edit-canvas-container">
-    <div class="edit-frame">
-        <img 
-            src={displaySrc} 
-            id="edit-image" 
-            alt="עריכת תמונה"
-            bind:this={editImageEl}
-            style="{activeFilterCss} transform: scale({currentEditZoom}) translate({currentEditX}px, {currentEditY}px);"
-            on:mousedown={startEditDrag}
-            on:touchstart|preventDefault={startEditDrag}
-        />
-        {#if isLoadingEffect}
-            <div class="magnet-loader">
-                <div class="loader-spinner"></div>
-            </div>
-        {/if}
+<div class="editor-page" class:is-interacting={isInteracting}>
+    
+    <div class="image-layer">
+        <div 
+            class="movable-content"
+            style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
+        >
+            <img 
+                src={displaySrc} 
+                bind:this={bgImageEl}
+                on:load={onBgImageLoad}
+                style="{activeFilterCss}" 
+                alt="editing source"
+            />
+        </div>
     </div>
 
-    <div class="slider-control-area">
-        <input 
-            type="range" 
-            id="zoom-slider-canvas" 
-            min="1" max="3" 
-            bind:value={currentEditZoom} 
-            step="0.01"
-            on:input={handleZoomInput}
-        >
-        <span class="slider-hint">גרור להתאמת גודל</span>
+    <div 
+        class="mask-layer"
+        on:mousedown={startDrag}
+        on:touchstart|preventDefault={startDrag}
+    >
+        <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
     </div>
+
+    <div class="zoom-controls" on:mousedown={startInteraction} on:touchstart={startInteraction}>
+        <input type="range" min="1" max="3" step="0.01" value={bgScale / (minScaleLimit || 1)} on:input={handleZoomInput}>
+        <span class="hint">צבוט או גרור לזום ומיקום</span>
+    </div>
+
+    {#if isLoadingEffect}
+        <div class="center-loader"><div class="loader-spinner"></div></div>
+    {/if}
 </div>
 
 <footer id="bottom-toolbar-edit" class="glass-dock">
-    <button class="dock-btn-text" on:click={resetEditTransform}>אפס</button>
+    <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
     <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
-    
     <div class="dock-divider"></div>
-
-    <button class="dock-btn-circle danger" on:click={deleteMagnet} title="מחק">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-    </button>
-
-    <button class="dock-btn-circle primary" on:click={saveAndClose}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-    </button>
+    <button class="dock-btn-circle danger" on:click={deleteMagnet}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+    <button class="dock-btn-circle primary" on:click={saveAndClose}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
 </footer>
 
-<FloatingPanel 
-    title="בחר אפקט" 
-    isOpen={activePanel === 'effects'} 
-    on:close={() => activePanel = null}
->
+<FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
     <div class="effects-list theme-scroll">
         {#each effectsList as effect (effect.id)}
-            <button 
-                class="effect-select-btn"
-                class:active={effect.id === currentEffectId}
-                on:click={() => applyEffect(effect.id)}
-            >
+            <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
                 <div class="thumbnail-wrapper theme-shadow">
-                    <img 
-                        src="/effects.png" 
-                        alt={effect.name}
-                        style="filter: {effect.filter};"
-                    >
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
                 </div>
                 <span class="theme-text">{effect.name}</span>
             </button>
         {/each}
     </div>
 </FloatingPanel>
+{/if}
 
 <style>
-    .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; background-color: transparent; z-index: 99999; overflow: hidden; pointer-events: none; }
+    .editor-page {
+        position: relative;
+        width: 100%; flex-grow: 1;
+        background-color: var(--color-canvas-bg);
+        overflow: hidden; 
+        display: flex; justify-content: center; align-items: center;
+    }
+
+    .image-layer {
+        position: absolute;
+        width: 100%; height: 100%;
+        display: flex; justify-content: center; align-items: center;
+        /* 🔥 שינוי קריטי: ביטול overflow hidden מאפשר לראות את התמונה מחוץ למסכה */
+        overflow: visible; 
+        z-index: 1;
+    }
+
+    .movable-content {
+        transform-origin: center center;
+        will-change: transform;
+        display: flex; justify-content: center; align-items: center;
+    }
+
+    .movable-content img {
+        max-width: none; max-height: none;
+        display: block; user-select: none; pointer-events: none;
+    }
+
+    .mask-layer {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        z-index: 10;
+        display: flex; justify-content: center; align-items: center;
+        cursor: grab;
+    }
+    .mask-layer:active { cursor: grabbing; }
+
+    .mask-hole {
+        /* 🔥 שינוי קריטי: צל חצי שקוף כדי לראות את הקונטקסט */
+        box-shadow: 0 0 0 9999px rgba(242, 240, 236, 0.85); 
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        background: transparent; 
+        pointer-events: none;
+        transition: box-shadow 0.3s ease-in-out;
+    }
+    
+    /* בעת אינטראקציה, מכהים מעט את הרקע כדי להבליט את אזור העריכה */
+    .editor-page.is-interacting .mask-hole {
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+    }
+    
+    /* שאר ה-CSS ללא שינוי */
+    .zoom-controls { position: absolute; bottom: 120px; z-index: 20; width: 80%; max-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: opacity 0.3s; opacity: 0.7; }
+    .zoom-controls:hover, .editor-page.is-interacting .zoom-controls { opacity: 1; }
+    .zoom-controls input { width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; -webkit-appearance: none; }
+    .zoom-controls input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--color-pink); border: 2px solid white; border-radius: 50%; cursor: pointer; }
+    .hint { color: var(--color-medium-blue-gray); font-size: 14px; font-weight: 600; text-shadow: none; }
+    .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
-    .edit-canvas-container { width: 100%; height: calc(100vh - 90px); display: flex; flex-direction: column; justify-content: center; align-items: center; background-color: var(--color-canvas-bg); overflow: hidden; gap: 25px; }
-    .edit-frame { width: 300px; height: 300px; position: relative; overflow: hidden; border-radius: 4px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); background: white; flex-shrink: 0; }
-    #edit-image { width: 100%; height: 100%; object-fit: cover; } /* הסרתי transform ו-filter מפה כי הם מגיעים מ-inline style */
-    .slider-control-area { width: 300px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-    .slider-control-area input[type=range] { width: 100%; height: 4px; background: #ccc; border-radius: 2px; -webkit-appearance: none; appearance: none; outline: none; }
-    .slider-control-area input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: white; border: 2px solid var(--color-pink); cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-    .slider-hint { font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 500; }
-    .glass-toolbar { background: var(--color-light-gray); border-top: 1px solid rgba(0,0,0,0.05); padding: 15px 30px; display: flex; justify-content: center; align-items: center; gap: 20px; position: fixed; bottom: 0; left: 0; width: 100%; box-sizing: border-box; z-index: 100; box-shadow: 0 -2px 5px rgba(0,0,0,0.1); flex-wrap: wrap; }
-    .toolbar-btn { background: none; border: none; cursor: pointer; font-family: 'Assistant', sans-serif; font-size: 16px; font-weight: 600; color: var(--color-medium-blue-gray); padding: 10px; transition: color 0.2s; display: flex; align-items: center; justify-content: center; }
-    .toolbar-btn:hover { color: var(--color-pink); }
-    .icon-btn-clean svg { width: 20px; height: 20px; stroke: #e53935; }
-    .icon-btn-clean:hover svg { stroke: #d32f2f; }
-    .save-circle-btn { background-color: var(--color-pink); color: #ffffff; width: 50px; height: 50px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 8px rgba(63, 82, 79, 0.2); transition: transform 0.2s; }
-    .save-circle-btn:hover { transform: scale(1.1); }
-    .save-circle-btn svg { width: 24px; height: 24px; }
-    .theme-scroll { padding: 10px 20px; gap: 20px; overflow-x: auto; display: flex; }
-    .thumbnail-wrapper.theme-shadow { border-radius: 12px; width: 70px; height: 70px; overflow: hidden; border: 2px solid transparent; }
-    .theme-text { font-family: 'Assistant', sans-serif; font-size: 13px; margin-top: 6px; font-weight: 600; color: var(--color-medium-blue-gray); }
-    .effect-select-btn { display: flex; flex-direction: column; align-items: center; border: none; background: none; cursor: pointer; }
-    .effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
+    .center-loader { position: absolute; z-index: 30; }
+    .glass-dock { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 15px; padding: 10px 25px; border-radius: 50px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); transition: opacity 0.3s; }
+    .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }
+    .dock-divider { width: 1px; height: 20px; background: #ccc; }
+    .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
+    .dock-btn-circle.primary { background: var(--color-pink); color: white; }
+    .dock-btn-circle.danger { background: #eee; color: #d32f2f; }
+    .effects-list { display: flex; gap: 15px; padding: 10px; overflow-x: auto; }
+    .thumbnail-wrapper { width: 60px; height: 60px; border-radius: 8px; overflow: hidden; margin-bottom: 5px; }
+    .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+    .effect-select-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
+    .effect-select-btn.active .thumbnail-wrapper { border: 2px solid var(--color-pink); }
+    
+    /* 🔥 מוביל: הסרת גלילה מיותרת באפקטים */
+    @media (max-width: 768px) {
+        .effects-list {
+            overflow-x: visible !important; /* ללא גלילה אופקית במוביל */
+            justify-content: space-between; /* פיזור אחיד של האפקטים */
+            gap: 10px;
+            padding: 5px 0;
+        }
+        
+        /* הסרת theme-scroll במוביל */
+        .effects-list.theme-scroll {
+            overflow-y: visible !important;
+        }
+    }
 </style>
-{/if}

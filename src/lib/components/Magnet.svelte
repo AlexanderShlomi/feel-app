@@ -13,14 +13,18 @@
     
     const dispatch = createEventDispatcher();
     
-    // שליפת הפילטר (SVG)
+    let imgElement;
+    let isLandscape = true; 
+    let isImageLoaded = false;
+    
+    $: hasTransform = transform && (transform.x !== 0 || transform.y !== 0 || transform.zoom !== 1);
     $: filterCss = getFilterStyle(activeEffectId);
     
     $: cssVars = `
         --magnet-size: ${size}px;
         --zoom: ${(!isSplitPart && transform) ? transform.zoom : 1};
-        --trans-x: ${(!isSplitPart && transform) ? transform.x * 100 : 0}%;
-        --trans-y: ${(!isSplitPart && transform) ? transform.y * 100 : 0}%;
+        --pos-x: ${(!isSplitPart && transform) ? (transform.x * 100) : 0}%;
+        --pos-y: ${(!isSplitPart && transform) ? (transform.y * 100) : 0}%;
         --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
         --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
         --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
@@ -28,21 +32,49 @@
         --bg-url: url('${src}');
     `;
 
-    // ... (שאר הפונקציות ללא שינוי: handleInteraction, handleEditClick, etc.) ...
+    function handleImageLoad() {
+        if (!imgElement) return;
+        isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
+        isImageLoaded = true;
+    }
+    
+    // --- אירועים ---
+    // שיפור לוגיקה למניעת התנגשויות טאץ'/קליק
     function handleInteraction(e) {
         if (e && e.stopPropagation) e.stopPropagation();
-        if (e && e.preventDefault) e.preventDefault();
-        if (isSplitPart) { dispatch('toggleVisibility', { id }); return; } 
-        if ($isMobile) { goto(`/uploader/edit/${id}`); return; }
+        
+        // בפסיפס, לחיצה משנה נראות
+        if (isSplitPart) { 
+            // מניעת הפעלת האירוע פעמיים אם המערכת יורה גם touch וגם click
+            if (e.type === 'touchstart') e.preventDefault(); 
+            dispatch('toggleVisibility', { id }); 
+            return; 
+        } 
+        
+        // במובייל (מגנטים רגילים), לחיצה מעבירה לעריכה
+        if ($isMobile) { 
+            // מניעת התנהגות כפולה
+            if (e.type === 'touchstart') {
+                 // בטאץ' אנחנו רוצים למנוע את יצירת ה-click המלאכותי של הדפדפן
+                 // אבל לאפשר את המעבר
+                 // e.preventDefault() כאן עלול לחסום גלילה אם לא נזהרים, 
+                 // אבל מכיוון שזה אירוע על המגנט עצמו ולא גרירה, זה תקין לניווט.
+            }
+            goto(`/uploader/edit/${id}`); 
+            return; 
+        }
     }
+
     function handleEditClick(e) {
-        if (e) { e.stopPropagation(); e.preventDefault(); }
+        if (e) { e.stopPropagation(); }
         goto(`/uploader/edit/${id}`);
     }
+    
     function handleDeleteClick(e) {
-        if (e) { e.stopPropagation(); e.preventDefault(); }
+        if (e) { e.stopPropagation(); }
         if (isSplitPart) { dispatch('toggleVisibility', { id }); } else { dispatch('delete', { id }); }
     }
+    
     function handleImageError(e) { 
         if (e.target.src !== src) e.target.src = src; 
         else e.target.style.opacity = 0;
@@ -56,17 +88,27 @@
     class:desktop-mode={!$isMobile}
     style="{cssVars}"
     on:click={handleInteraction} 
-    on:touchstart={handleInteraction}
 >
-    <div class="image-wrapper" class:sharp-corners={isSplitPart}>
+    <div 
+        class="image-wrapper" 
+        class:sharp-corners={isSplitPart}
+        class:is-portrait={!isLandscape}
+        class:has-transform={hasTransform}
+    >
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
         {:else}
             <img 
                 src={src} 
+                bind:this={imgElement}
+                on:load={handleImageLoad}
                 alt="" 
                 draggable="false" 
-                style="{filterCss} transform: scale(var(--zoom)) translate(var(--trans-x), var(--trans-y));" 
+                class="magnet-image"
+                class:is-landscape={isLandscape}
+                class:is-portrait={!isLandscape}
+                class:loaded={isImageLoaded}
+                style="{filterCss} left: var(--pos-x); top: var(--pos-y); transform: scale(var(--zoom));" 
                 on:error={handleImageError} 
             />
         {/if}
@@ -94,21 +136,38 @@
 </div>
 
 <style>
-    /* ... (CSS נשאר ללא שינוי מהקוד המקורי שלך) ... */
     .magnet { width: 100%; height: 100%; position: relative; touch-action: none; user-select: none; cursor: pointer; padding: 0; box-sizing: border-box; }
     .magnet.is-hidden .image-wrapper { opacity: 0.3; filter: grayscale(100%); border: 1px dashed #ccc; }
-    .image-wrapper { width: 100%; height: 100%; position: relative; border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform 0.3s, box-shadow 0.3s, opacity 0.2s; z-index: 1; pointer-events: none; }
+    
+    .image-wrapper { 
+        width: 100%; height: 100%; position: relative; border-radius: 12px; overflow: hidden; background: #fff; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: box-shadow 0.3s, opacity 0.2s; z-index: 1; pointer-events: none; 
+        display: flex; justify-content: center; align-items: center; 
+    }
+    
+    .image-wrapper.is-portrait:not(.has-transform) { align-items: flex-start; }
+    
     .magnet.split-part .image-wrapper { background: transparent; }
     .image-wrapper.sharp-corners { border-radius: 0 !important; box-shadow: none; }
+    
+    .magnet-image { 
+        display: block; position: relative; transform-origin: center center; will-change: transform, left, top; opacity: 0; transition: opacity 0.2s;
+    }
+    
+    .magnet-image.loaded { opacity: 1; }
+    .magnet-image.is-landscape { height: 100%; width: auto; }
+    .magnet-image.is-portrait { width: 100%; height: auto; }
+    
     @media (hover: hover) {
         .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
         .magnet.desktop-mode:hover .overlay { opacity: 1; }
     }
+    
     .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: -webkit-optimize-contrast; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }
-    img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.5s ease; }
     .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); backdrop-filter: blur(2px); opacity: 0; transition: opacity 0.2s; z-index: 20; pointer-events: none; }
     .overlay.force-visible { opacity: 1; background: rgba(255,255,255,0.2); pointer-events: auto; }
     .magnet:hover .overlay { pointer-events: auto; }
+    
     .control-btn { position: absolute; top: 8px; width: 32px; height: 32px; border-radius: 50%; background: white; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.2); opacity: 0; transform: scale(0.8); transition: all 0.2s; padding: 0; pointer-events: auto; z-index: 30; }
     .magnet:hover .control-btn { opacity: 1; transform: scale(1); }
     .control-btn:hover { transform: scale(1.1); background: #f5f5f7; }

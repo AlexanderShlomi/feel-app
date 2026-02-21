@@ -1,0 +1,5034 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: **/*.svelte, **/*.js, **/*.css
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/app.css
+src/lib/actions/draggable.js
+src/lib/actions/scrollAnimation.js
+src/lib/components/CartCounter.svelte
+src/lib/components/FileUploader.svelte
+src/lib/components/FloatingPanel.svelte
+src/lib/components/GiftButton.svelte
+src/lib/components/Header.svelte
+src/lib/components/Magnet.svelte
+src/lib/components/MosaicEditor.svelte
+src/lib/components/SideMenu.svelte
+src/lib/components/UpsellWidget.svelte
+src/lib/index.js
+src/lib/stores.js
+src/lib/utils/grid.js
+src/lib/utils/idb.js
+src/lib/utils/storage.js
+src/routes/+layout.svelte
+src/routes/+page.svelte
+src/routes/select/+page.svelte
+src/routes/uploader/+page.svelte
+src/routes/uploader/edit/[magnetId]/+page.svelte
+static/effects.worker.js
+svelte.config.js
+vite.config.js
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/lib/components/UpsellWidget.svelte">
+<script>
+    import { magnets, editorSettings, PACKAGES, EXTRA_MAGNET_PRICE, saveWorkspaceToCart, editingItemId, PRODUCT_TYPES } from '$lib/stores.js';
+    import { fly, fade, scale } from 'svelte/transition';
+
+    // זיהוי סוג המוצר הנוכחי
+    $: isMosaic = $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC;
+    
+    // ספירה: במגנטים רגילים זה מספר התמונות, בפסיפס זה מספר החלקים
+    $: count = $magnets.filter(m => !m.hidden).length;
+    $: isEditing = !!$editingItemId;
+
+    // --- חישובי מחיר וסטטוס ---
+    let totalPrice = 0;
+    let basePrice = 0;
+    let extraCount = 0;
+    let currentPackage = null;
+    let nextPackage = null;
+    let isMinReached = false;
+    let progressPercent = 0;
+    let message = '';
+    let isSaving = false;
+
+    $: {
+        if (isMosaic) {
+            // --- לוגיקה לפסיפס ---
+            currentPackage = PACKAGES[0]; 
+            isMinReached = count >= 9; // מינימום לפסיפס 3x3
+            
+            if (count < 9) {
+                totalPrice = currentPackage.price;
+                message = "מינימום 9 חלקים";
+            } else {
+                extraCount = count - 9;
+                basePrice = currentPackage.price;
+                totalPrice = basePrice + (extraCount * EXTRA_MAGNET_PRICE);
+                message = `פסיפס בגודל ${count} חלקים`;
+            }
+        } else {
+            // --- לוגיקה לקולקציית מגנטים ---
+            isMinReached = count >= PACKAGES[0].count;
+            
+            const reversedPackages = [...PACKAGES].reverse();
+            currentPackage = reversedPackages.find(p => count >= p.count) || PACKAGES[0];
+            
+            const actualCurrentPkg = PACKAGES.find(p => p.name === currentPackage.name);
+            const actualIndex = PACKAGES.indexOf(actualCurrentPkg);
+            nextPackage = PACKAGES[actualIndex + 1] || null;
+
+            if (!isMinReached) {
+                totalPrice = PACKAGES[0].price;
+                extraCount = 0;
+                message = `עוד <strong>${PACKAGES[0].count - count}</strong> להזמנה`;
+            } else {
+                extraCount = count - currentPackage.count;
+                basePrice = currentPackage.price;
+                totalPrice = basePrice + (extraCount * EXTRA_MAGNET_PRICE);
+                
+                if (nextPackage) {
+                    const diff = nextPackage.count - count;
+                    if (diff === 0) message = "בול על החבילה! 🎉";
+                    else if (diff <= 3) message = `רק עוד <strong>${diff}</strong> למחיר מעולה`;
+                    else message = `היעד הבא: ${nextPackage.count} יח'`;
+                } else {
+                    message = "הגעת למקסימום ✨";
+                }
+            }
+
+            // חישוב אחוזים לציר
+            const totalSteps = PACKAGES.length;
+            const stepSize = 100 / (totalSteps - 1);
+            
+            if (!isMinReached) {
+                progressPercent = (count / PACKAGES[0].count) * 10; 
+            } else if (nextPackage) {
+                const startStep = actualIndex * stepSize;
+                const itemsRange = nextPackage.count - currentPackage.count;
+                const itemsProgress = count - currentPackage.count;
+                progressPercent = startStep + ((itemsProgress / itemsRange) * stepSize);
+            } else {
+                progressPercent = 100;
+            }
+        }
+    }
+
+    // --- ניהול תצוגה ---
+    let isOpen = false;
+
+    function toggleOpen() { isOpen = !isOpen; }
+    function close() { isOpen = false; }
+
+    async function handleAddToCart() {
+        if (isMinReached) {
+            isSaving = true;
+            const success = await saveWorkspaceToCart();
+            isSaving = false;
+            if (success) close();
+        }
+    }
+</script>
+
+{#if isOpen}
+    <div class="backdrop-click-area" on:click={close} transition:fade={{ duration: 200 }}></div>
+{/if}
+
+<div class="widget-wrapper" data-tooltip={isEditing ? "שמור עדכון להזמנה" : "הוסף לסל"}>
+    
+    {#if isOpen}
+        <div class="upsell-popover" transition:fly={{ y: 20, duration: 250 }}>
+            
+            <div class="popover-header">
+                <div class="header-content">
+                    <span class="status-msg">{@html message}</span>
+                    <span class="count-display">סה"כ {count} {isMosaic ? 'חלקים' : 'תמונות'}</span>
+                </div>
+            </div>
+
+            <div class="popover-body theme-scroll">
+                
+                {#if !isMosaic}
+                    <div class="timeline-wrapper">
+                        <div class="track"></div>
+                        <div class="fill" style="width: {progressPercent}%"></div>
+                        
+                        {#each PACKAGES as pkg, i}
+                            {@const isPassed = count >= pkg.count}
+                            {@const isCurrentTarget = (nextPackage && nextPackage.count === pkg.count) || (currentPackage.count === pkg.count && extraCount === 0)}
+                            
+                            <div class="dot-container" style="left: {(i / (PACKAGES.length - 1)) * 100}%">
+                                <div class="dot" class:passed={isPassed} class:target={isCurrentTarget}>
+                                    {pkg.count}
+                                </div>
+                                {#if isCurrentTarget}
+                                    <div class="price-tag-floating">₪{pkg.price}</div>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+
+                <div class="price-details">
+                    {#if isMinReached}
+                        <div class="detail-row">
+                            <span>{isMosaic ? 'מחיר בסיס (9 חלקים)' : `חבילת ${currentPackage.name}`}</span>
+                            <span>₪{currentPackage.price}</span>
+                        </div>
+                        {#if extraCount > 0}
+                            <div class="detail-row extra">
+                                <span>+ {extraCount} {isMosaic ? 'חלקים' : 'תמונות'} (₪{EXTRA_MAGNET_PRICE}/יח')</span>
+                                <span>₪{extraCount * EXTRA_MAGNET_PRICE}</span>
+                            </div>
+                        {/if}
+                    {:else}
+                        <div class="detail-row warning">
+                            <span>מינימום להזמנה</span>
+                            <span>{isMosaic ? '9 חלקים' : '9 תמונות'}</span>
+                        </div>
+                    {/if}
+                </div>
+            </div>
+
+            <div class="popover-footer">
+                <div class="total-wrapper">
+                    <span class="label">סה"כ:</span>
+                    <span class="amount">₪{totalPrice}</span>
+                </div>
+                
+                <button 
+                    class="add-to-cart-btn" 
+                    class:disabled={!isMinReached || isSaving}
+                    on:click={handleAddToCart}
+                >
+                    {#if isSaving}
+                         <span class="btn-text">שומר...</span>
+                    {:else if isMinReached}
+                        {#if isEditing}
+                             <span class="btn-text">עדכן הזמנה</span>
+                             <div class="icon-circle">✓</div>
+                        {:else}
+                             <span class="btn-text">הוסף להזמנה</span>
+                             <div class="icon-circle">
+                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                             </div>
+                        {/if}
+                    {:else}
+                        השלם למינימום
+                    {/if}
+                </button>
+            </div>
+
+            <div class="arrow-down"></div>
+        </div>
+    {/if}
+
+    <button 
+        class="trigger-circle" 
+        class:active={isOpen}
+        class:is-editing={isEditing}
+        on:click={toggleOpen}
+    >
+        <div class="bag-icon-wrapper">
+            {#if isEditing}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="edit-order-icon">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    
+                    <path d="M8 12h8" stroke-width="1.5" opacity="0.7"></path>
+                    <path d="M8 16h5" stroke-width="1.5" opacity="0.7"></path>
+
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" 
+                          transform="translate(-2, 2) scale(0.8)" 
+                          fill="var(--color-gold)" 
+                          stroke="var(--color-canvas-bg)" 
+                          stroke-width="1.5">
+                    </path>
+                </svg>
+            {:else}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22">
+                    <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <path d="M16 10a4 4 0 0 1-8 0"></path>
+                </svg>
+                <div class="plus-mini">+</div>
+            {/if}
+        </div>
+        
+        {#if count > 0}
+            <div class="floating-badge count-badge" transition:scale key={count}>
+                {count}
+            </div>
+        {/if}
+    </button>
+
+</div>
+
+<style>
+    .widget-wrapper { position: relative; display: flex; justify-content: center; align-items: center; }
+    .backdrop-click-area { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 4999; background: transparent; cursor: default; }
+    
+    .trigger-circle { 
+        width: 50px; height: 50px; border-radius: 50%; 
+        background: var(--color-pink); 
+        border: 3px solid rgba(255,255,255,0.3); 
+        color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; 
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2); 
+        position: relative; z-index: 2000; 
+        transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+    }
+    
+    .trigger-circle:active { transform: scale(0.95); }
+    .trigger-circle.active { background: #2c3a38; }
+    
+    /* 🔥 עיצוב מיוחד למצב עריכה: מסגרת זהב כדי להדגיש שמדובר בשינוי קיים */
+    .trigger-circle.is-editing {
+        border-color: var(--color-gold); 
+        box-shadow: 0 0 15px rgba(198, 178, 154, 0.4); /* זוהר עדין בצבע הזהב */
+    }
+
+    .bag-icon-wrapper { position: relative; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+    
+    .edit-order-icon {
+        width: 24px; 
+        height: 24px;
+        filter: drop-shadow(0 2px 3px rgba(0,0,0,0.2)); /* צל קטן לאייקון לשיפור הקריאות */
+    }
+
+    .plus-mini { position: absolute; bottom: -3px; right: -3px; width: 12px; height: 12px; background: white; color: var(--color-pink); font-size: 12px; font-weight: 800; border-radius: 50%; display: flex; align-items: center; justify-content: center; line-height: 1; }
+    
+    /* העיצוב של הבאדג' עם המספר */
+    .floating-badge { 
+        position: absolute; top: -4px; left: -4px; 
+        font-weight: 700; font-size: 11px; 
+        min-width: 18px; height: 18px; border-radius: 50%; 
+        display: flex; align-items: center; justify-content: center; 
+        border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
+    }
+    
+    .count-badge { background: var(--color-gold); color: var(--color-dark-blue); }
+    
+    /* שאר ה-CSS נשאר ללא שינוי */
+    .upsell-popover { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); width: 340px; background: white; border-radius: 16px; box-shadow: 0 10px 50px rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.05); z-index: 5000; display: flex; flex-direction: column; font-family: 'Assistant', sans-serif; cursor: default; overflow: hidden; }
+    .arrow-down { position: absolute; bottom: -6px; left: 50%; margin-left: -6px; width: 12px; height: 12px; background: white; transform: rotate(45deg); border-bottom: 1px solid rgba(0,0,0,0.05); border-right: 1px solid rgba(0,0,0,0.05); z-index: 5001; }
+    .popover-header { padding: 12px 15px; background: #f8f9fa; border-bottom: 1px solid #eee; }
+    .header-content { display: flex; justify-content: space-between; align-items: center; }
+    .status-msg { font-size: 14px; color: var(--color-ink); }
+    .status-msg :global(strong) { color: var(--color-pink); font-weight: 800; }
+    .count-display { font-size: 12px; color: #888; font-weight: 600; }
+    .popover-body { padding: 15px; overflow-y: auto; max-height: 300px; }
+    .timeline-wrapper { position: relative; height: 50px; width: 92%; margin: 10px auto 20px auto; direction: ltr; }
+    .track { position: absolute; top: 12px; left: 0; width: 100%; height: 4px; background: #eee; border-radius: 2px; }
+    .fill { position: absolute; top: 12px; left: 0; height: 4px; background: var(--color-pink); border-radius: 2px; transition: width 0.3s ease; }
+    .dot-container { position: absolute; top: 5px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
+    .dot { width: 18px; height: 18px; background: white; border: 2px solid #ddd; border-radius: 50%; font-size: 9px; color: #aaa; font-weight: 700; display: flex; align-items: center; justify-content: center; z-index: 2; transition: all 0.2s; }
+    .dot.passed { background: var(--color-pink); border-color: var(--color-pink); color: white; }
+    .dot.target { transform: scale(1.3); border-color: var(--color-gold); color: var(--color-dark-blue); background: #fff8e1; box-shadow: 0 0 0 3px rgba(198, 178, 154, 0.2); }
+    .price-tag-floating { position: absolute; top: 24px; font-size: 10px; background: var(--color-gold); color: white; padding: 1px 4px; border-radius: 4px; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .price-details { display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: #333; margin-top: 10px; }
+    .detail-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #eee; padding-bottom: 4px; }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-row.extra { color: var(--color-pink); font-weight: 600; }
+    .detail-row.warning { color: #d32f2f; }
+    .popover-footer { padding: 15px; background: #fff; border-top: 1px solid #eee; display: flex; flex-direction: column; gap: 12px; }
+    .total-wrapper { display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
+    .total-wrapper .label { color: #555; font-weight: 600; }
+    .total-wrapper .amount { font-weight: 800; color: var(--color-ink); font-size: 20px; }
+    .add-to-cart-btn { width: 100%; padding: 14px; background: #1E1E1E; color: white; border: none; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: background 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    .add-to-cart-btn:hover { background: #000; }
+    .add-to-cart-btn.disabled { background: #e0e0e0; color: #999; cursor: not-allowed; box-shadow: none; }
+    .icon-circle { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
+    @media (max-width: 768px) { .upsell-popover { width: 94vw; bottom: 90px; } }
+</style>
+</file>
+
+<file path="src/lib/utils/idb.js">
+// src/lib/utils/idb.js
+
+const DB_NAME = 'FeelAppDB';
+const STORE_NAME = 'keyval';
+const DB_VERSION = 1;
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+    });
+}
+
+export async function setItem(key, value) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(value, key);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+    });
+}
+
+export async function getItem(key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(key);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+    });
+}
+
+export async function removeItem(key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(key);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+    });
+}
+</file>
+
+<file path="src/lib/utils/storage.js">
+// src/lib/utils/storage.js
+
+import { setItem, getItem, removeItem } from './idb.js';
+
+const WORKSPACE_KEY = 'feel_app_workspace';
+
+// המרה לקובץ טקסט לשמירה
+export const fileToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+};
+
+// המרה חזרה לתמונה לתצוגה
+export const base64ToBlobUrl = async (base64Data) => {
+    if (!base64Data) return null;
+    try {
+        const res = await fetch(base64Data);
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+    } catch (e) {
+        console.error('Failed to convert base64 to blob', e);
+        return null;
+    }
+};
+
+// --- שמירת Workspace (טיוטה) ל-IndexedDB ---
+export const saveStateToStorage = async (magnets, settings, editingId) => {
+    try {
+        // הכנת המגנטים
+        const serializedMagnets = await Promise.all(magnets.map(async (m) => {
+            // בפסיפס: לא שומרים את התמונה בתוך המגנט (חוסך מקום)
+            if (m.isSplitPart) {
+                return { ...m, originalSrc: null, src: null, processed: {} };
+            }
+
+            // במגנטים רגילים: שומרים את התמונה
+            let base64Src = null;
+            if (m.originalSrc && m.originalSrc.startsWith('blob:')) {
+                const blob = await fetch(m.originalSrc).then(r => r.blob());
+                base64Src = await fileToBase64(blob);
+            } else {
+                base64Src = m.originalSrc || m.src;
+            }
+
+            return { ...m, originalSrc: base64Src, src: base64Src, processed: {} };
+        }));
+
+        // הכנת ההגדרות (כולל תמונת פסיפס ראשית)
+        const serializedSettings = { ...settings };
+        
+        if (settings.splitImageSrc && settings.splitImageSrc.startsWith('blob:')) {
+            const blob = await fetch(settings.splitImageSrc).then(r => r.blob());
+            serializedSettings.splitImageSrc = await fileToBase64(blob);
+        }
+        
+        if (settings.giftImage && settings.giftImage.startsWith('blob:')) {
+             const blob = await fetch(settings.giftImage).then(r => r.blob());
+             serializedSettings.giftImage = await fileToBase64(blob);
+        }
+        
+        serializedSettings.splitImageCache = {}; 
+
+        const workspaceData = {
+            magnets: serializedMagnets,
+            settings: serializedSettings,
+            editingItemId: editingId,
+            timestamp: Date.now()
+        };
+
+        // שימוש ב-setItem של idb.js
+        await setItem(WORKSPACE_KEY, workspaceData);
+        return true;
+
+    } catch (e) {
+        console.error('Failed to save Workspace to DB:', e);
+        return false;
+    }
+};
+
+// --- טעינת Workspace מ-IndexedDB ---
+export const loadStateFromStorage = async () => {
+    try {
+        const data = await getItem(WORKSPACE_KEY);
+        if (!data) return null;
+
+        const hydratedSettings = { ...data.settings };
+
+        // שחזור תמונות הגדרות
+        if (hydratedSettings.splitImageSrc && hydratedSettings.splitImageSrc.startsWith('data:')) {
+            hydratedSettings.splitImageSrc = await base64ToBlobUrl(hydratedSettings.splitImageSrc);
+        }
+        if (hydratedSettings.giftImage && hydratedSettings.giftImage.startsWith('data:')) {
+            hydratedSettings.giftImage = await base64ToBlobUrl(hydratedSettings.giftImage);
+        }
+
+        // שחזור מגנטים
+        const hydratedMagnets = await Promise.all(data.magnets.map(async (m) => {
+            // אם זה פסיפס - משתמשים בתמונה מההגדרות
+            if (m.isSplitPart) {
+                return {
+                    ...m,
+                    src: hydratedSettings.splitImageSrc,
+                    originalSrc: hydratedSettings.splitImageSrc,
+                    processed: {}
+                };
+            }
+
+            // אם זה מגנט רגיל - משחזרים את התמונה שלו
+            let objectUrl = m.originalSrc;
+            if (m.originalSrc && m.originalSrc.startsWith('data:')) {
+                objectUrl = await base64ToBlobUrl(m.originalSrc);
+            }
+            return { ...m, originalSrc: objectUrl, src: objectUrl, processed: {} };
+        }));
+
+        return {
+            magnets: hydratedMagnets,
+            settings: hydratedSettings,
+            editingItemId: data.editingItemId
+        };
+
+    } catch (e) {
+        console.error('Failed to load from DB:', e);
+        return null;
+    }
+};
+
+export const clearStorage = async () => {
+    await removeItem(WORKSPACE_KEY);
+};
+</file>
+
+<file path="src/lib/actions/draggable.js">
+// src/lib/actions/draggable.js
+// Version: 1.1 (Decoupled Mobile/Desktop Logic)
+
+export function draggable(node, params = {}) {
+    let { 
+        enabled = true, 
+        containerBounds = null, 
+        dragThreshold = 5, // שינוי: פרמטר חדש לשליטה ברגישות (נמוך לדסקטופ, גבוה למובייל)
+        lockScroll = true, // שינוי: האם לחסום גלילה בזמן גרירה (בעיקר למובייל)
+        onDragStart, 
+        onDragMove, 
+        onDragEnd,
+        onPress 
+    } = params;
+
+    let isDragging = false;
+    let startX, startY;
+    let initialLeft, initialTop;
+    let dragFrame;
+
+    function getClientPos(event) {
+        // תמיכה אחודה בטאץ' ובעכבר
+        const source = event.touches ? event.touches[0] : event;
+        return { x: source.clientX, y: source.clientY };
+    }
+
+    function handleStart(event) {
+        if (!enabled) return;
+        
+        // מניעת הפעלה כפולה (אם יש גם עכבר וגם טאץ')
+        if (event.type === 'mousedown' && event.button !== 0) return; // רק קליק שמאלי
+
+        const pos = getClientPos(event);
+        startX = pos.x;
+        startY = pos.y;
+        
+        const rect = node.getBoundingClientRect();
+        initialLeft = node.offsetLeft;
+        initialTop = node.offsetTop;
+
+        // הוספת האזנה לאירועים הגלובליים
+        addGlobalListeners(event.type === 'touchstart');
+
+        if (onDragStart) onDragStart({ x: startX, y: startY, element: node, event });
+    }
+
+    function handleMove(event) {
+        const pos = getClientPos(event);
+        const dx = pos.x - startX;
+        const dy = pos.y - startY;
+
+        // בדיקת סף רגישות (Threshold)
+        if (!isDragging) {
+            if (Math.hypot(dx, dy) > dragThreshold) {
+                isDragging = true;
+                node.classList.add('draggable-active');
+            } else {
+                // עדיין לא הגענו לסף הגרירה - לא עושים כלום
+                return;
+            }
+        }
+
+        // הגענו לכאן רק אם אנחנו במצב גרירה פעיל
+        
+        // חסימת גלילה (קריטי למובייל) - מופעל רק אם הוגדר בפרמטרים
+        if (lockScroll && event.cancelable) {
+            event.preventDefault();
+        }
+
+        if (dragFrame) cancelAnimationFrame(dragFrame);
+        dragFrame = requestAnimationFrame(() => {
+            let newLeft = initialLeft + dx;
+            let newTop = initialTop + dy;
+
+            if (containerBounds) {
+                const bounds = containerBounds();
+                if (bounds) {
+                    newLeft = Math.max(bounds.minX, Math.min(newLeft, bounds.maxX));
+                    newTop = Math.max(bounds.minY, Math.min(newTop, bounds.maxY));
+                }
+            }
+
+            node.style.left = `${newLeft}px`;
+            node.style.top = `${newTop}px`;
+            
+            if (onDragMove) onDragMove({ x: newLeft, y: newTop, dx, dy });
+        });
+    }
+
+    function handleEnd(event) {
+        removeGlobalListeners();
+        
+        if (dragFrame) cancelAnimationFrame(dragFrame);
+        node.classList.remove('draggable-active');
+
+        if (isDragging) {
+            const finalLeft = parseFloat(node.style.left);
+            const finalTop = parseFloat(node.style.top);
+            if (onDragEnd) onDragEnd({ x: finalLeft, y: finalTop, element: node });
+        } else {
+            // טופל כלחיצה רגילה
+            if (onPress) onPress(event);
+        }
+        
+        isDragging = false;
+        
+        // ניקוי סטיילים זמניים (משאירים את המיקום לניהול ה-State החיצוני)
+        node.style.left = ''; 
+        node.style.top = '';
+    }
+
+    // ניהול מאזינים גלובליים בצורה מרוכזת
+    function addGlobalListeners(isTouch) {
+        if (isTouch) {
+            // passive: false חובה כדי שנוכל לעשות preventDefault לגלילה
+            window.addEventListener('touchmove', handleMove, { passive: false }); 
+            window.addEventListener('touchend', handleEnd);
+        } else {
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', handleEnd);
+        }
+    }
+
+    function removeGlobalListeners() {
+        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mouseup', handleEnd);
+        window.removeEventListener('touchmove', handleMove);
+        window.removeEventListener('touchend', handleEnd);
+    }
+
+    // האזנה לאלמנט עצמו
+    node.addEventListener('mousedown', handleStart);
+    // passive: true כאן כדי לא לפגוע בביצועי גלילה לפני שהגרירה התחילה
+    node.addEventListener('touchstart', handleStart, { passive: true });
+
+    return {
+        update(newParams) {
+            enabled = newParams.enabled;
+            containerBounds = newParams.containerBounds;
+            dragThreshold = newParams.dragThreshold !== undefined ? newParams.dragThreshold : 5;
+            lockScroll = newParams.lockScroll !== undefined ? newParams.lockScroll : true;
+            onDragStart = newParams.onDragStart;
+            onDragMove = newParams.onDragMove;
+            onDragEnd = newParams.onDragEnd;
+            onPress = newParams.onPress;
+        },
+        destroy() {
+            node.removeEventListener('mousedown', handleStart);
+            node.removeEventListener('touchstart', handleStart);
+            removeGlobalListeners();
+        }
+    };
+}
+</file>
+
+<file path="src/lib/actions/scrollAnimation.js">
+// src/lib/actions/scrollAnimation.js
+
+/**
+ * אקשן של Svelte שמוסיף קלאס 'visible'
+ * כשהאלמנט נכנס למסך
+ */
+export function scrollAnimation(node) {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                node.classList.add('visible');
+                // (אופציונלי: הפסק להאזין אחרי שהאנימציה קרתה)
+                // observer.unobserve(node);
+            }
+        });
+    }, {
+        threshold: 0.1 // הפעל כשרק 10% מהאלמנט נראה
+    });
+
+    observer.observe(node);
+
+    return {
+        destroy() {
+            observer.unobserve(node);
+        }
+    };
+}
+</file>
+
+<file path="src/lib/components/FileUploader.svelte">
+<script>
+    import { createEventDispatcher } from 'svelte';
+    
+    export let mode = 'multi'; // 'multi' or 'split'
+    export let uploadId = 'file-upload';
+    
+    const dispatch = createEventDispatcher();
+
+    function handleChange(event) {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+
+        dispatch('uploadStart');
+
+        if (mode === 'multi') {
+            // מעבירים את ה-Files כמו שהם, ללא המרה ל-Base64
+            dispatch('filesSelected', files);
+        } else {
+            // מצב פסיפס - טעינה מהירה
+            const file = files[0];
+            // יצירת URL זמני לתמונה
+            const objectUrl = URL.createObjectURL(file);
+            
+            const img = new Image();
+            img.onload = () => {
+                dispatch('splitImageLoaded', {
+                    src: objectUrl,
+                    ratio: img.naturalWidth / img.naturalHeight,
+                    originalFile: file // שומרים את המקור למקרה הצורך
+                });
+            };
+            img.src = objectUrl;
+        }
+
+        event.target.value = ''; // מאפשר העלאה של אותו קובץ שוב
+    }
+</script>
+
+<input 
+    type="file" 
+    id={uploadId}
+    multiple={mode === 'multi'}
+    accept="image/*" 
+    style="display: none;"
+    on:change={handleChange}
+>
+</file>
+
+<file path="src/lib/components/GiftButton.svelte">
+<script>
+    import { fade, fly } from 'svelte/transition';
+    import { editorSettings, saveWorkspaceToCart, PRODUCT_TYPES } from '$lib/stores.js';
+    import FileUploader from '$lib/components/FileUploader.svelte';
+
+    let isOpen = false;
+    let isAnimating = true;
+
+    $: if ($editorSettings.giftImage) {
+        isAnimating = false;
+    }
+
+    function toggleGift() {
+        isOpen = !isOpen;
+    }
+
+    function handleGiftUpload(event) {
+        const files = event.detail;
+        if (files && files.length > 0) {
+            const url = URL.createObjectURL(files[0]);
+            editorSettings.update(s => ({ ...s, giftImage: url }));
+            isAnimating = false; 
+        }
+    }
+
+    function triggerUpload() {
+        const el = document.getElementById('gift-upload-input');
+        if (el) el.click();
+    }
+    
+    async function handleSave() {
+        toggleGift();
+        if ($editorSettings.currentProductType === PRODUCT_TYPES.GIFT) {
+            await saveWorkspaceToCart();
+        }
+    }
+
+    function portal(node) {
+        let target = document.body;
+        async function update() {
+            target.appendChild(node);
+            node.hidden = false;
+        }
+        update();
+        return {
+            destroy() {
+                if (node.parentNode) {
+                    node.parentNode.removeChild(node);
+                }
+            }
+        };
+    }
+</script>
+
+<button 
+    class="dock-btn-circle gift-btn" 
+    class:pulsing={isAnimating && !$editorSettings.giftImage}
+    class:has-gift={$editorSettings.giftImage}
+    on:click={toggleGift}
+    data-tooltip="מתנה מאיתנו"
+>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 12 20 22 4 22 4 12"></polyline>
+        <rect x="2" y="7" width="20" height="5"></rect>
+        <line x1="12" y1="22" x2="12" y2="7"></line>
+        <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"></path>
+        <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"></path>
+    </svg>
+    {#if $editorSettings.giftImage}
+        <div class="check-badge-mini">✓</div>
+    {/if}
+</button>
+
+{#if isOpen}
+    <div class="gift-editor-overlay" use:portal transition:fade={{ duration: 200 }}>
+        
+        <div class="gift-editor-container" transition:fly={{ y: 20, duration: 300 }}>
+            
+            <div class="gift-editor-header">
+                <h3>מתנה מאיתנו 🎁</h3>
+                <button class="close-editor-btn" on:click={toggleGift}>✕</button>
+            </div>
+
+            <div class="gift-editor-body">
+                <p class="gift-text">
+                    עיבוד תמונה בטכנולוגיה סופר-מתקדמת, <span class="highlight">על חשבון הבית!</span>
+                    <br>
+                    תבחר תמונה שאתה אוהב, ואנחנו נדאג לקסם.
+                </p>
+
+                <div class="image-preview-area square-ratio" on:click={triggerUpload}>
+                    {#if $editorSettings.giftImage}
+                        <img src={$editorSettings.giftImage} alt="Gift" class="uploaded-gift-img" />
+                        <div class="overlay-hint">לחץ להחלפה</div>
+                    {:else}
+                        <div class="placeholder-content">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                            <span>לחץ לבחירת תמונה</span>
+                        </div>
+                    {/if}
+                </div>
+            </div>
+
+            <div class="gift-editor-controls">
+                <button class="editor-btn secondary" on:click={toggleGift}>ביטול</button>
+                
+                {#if $editorSettings.giftImage}
+                    <button class="save-circle-btn" on:click={handleSave}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </button>
+                {/if}
+            </div>
+        </div>
+    </div>
+{/if}
+
+<FileUploader 
+    uploadId="gift-upload-input" 
+    mode="multi" 
+    on:filesSelected={handleGiftUpload} 
+/>
+
+<style>
+    /* הסטיילים נשארים זהים, העיצוב הגלובלי כבר תופס */
+    .gift-btn { position: relative; color: var(--color-gold); border: 1px solid rgba(198, 178, 154, 0.3); }
+    .gift-btn:hover { background-color: rgba(198, 178, 154, 0.1); transform: scale(1.1); }
+    .gift-btn.has-gift { background-color: var(--color-pink); color: white; border-color: transparent; }
+    .gift-btn.pulsing { animation: dock-pulse 2s infinite; }
+    
+    @keyframes dock-pulse {
+        0% { box-shadow: 0 0 0 0 rgba(198, 178, 154, 0.4); }
+        70% { box-shadow: 0 0 0 6px rgba(198, 178, 154, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(198, 178, 154, 0); }
+    }
+    
+    .check-badge-mini { position: absolute; top: -2px; right: -2px; background: #4CAF50; color: white; font-size: 9px; width: 14px; height: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid white; font-weight: bold; }
+    
+    .gift-editor-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85);
+        z-index: 99999;
+        display: flex; justify-content: center; align-items: center;
+        backdrop-filter: blur(5px);
+    }
+    .gift-editor-container {
+        background: var(--color-canvas-bg);
+        width: 90%; max-width: 380px; 
+        border-radius: 16px; overflow: hidden;
+        display: flex; flex-direction: column;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        direction: rtl;
+    }
+    .gift-editor-header {
+        padding: 18px 20px; display: flex; justify-content: space-between; align-items: center;
+        background: white; border-bottom: 1px solid #eee;
+    }
+    .gift-editor-header h3 { margin: 0; font-size: 18px; color: var(--color-medium-blue-gray); font-weight: 800; }
+    .close-editor-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; padding: 5px; }
+    .close-editor-btn:hover { color: #333; }
+    
+    .gift-editor-body {
+        padding: 30px 20px;
+        background: white;
+        display: flex; flex-direction: column; align-items: center; gap: 20px;
+        text-align: center;
+    }
+    .gift-text { font-size: 16px; color: var(--color-dark-gray); line-height: 1.5; margin: 0; max-width: 95%; }
+    .highlight { color: var(--color-pink); font-weight: 800; }
+    
+    .image-preview-area {
+        width: 100%;
+        max-width: 260px; 
+        aspect-ratio: 1 / 1;
+        background: var(--color-canvas-bg);
+        border: 2px dashed #ccc;
+        border-radius: 12px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden; position: relative;
+        transition: all 0.2s;
+    }
+    .image-preview-area:hover { border-color: var(--color-pink); transform: scale(1.02); }
+    .uploaded-gift-img { width: 100%; height: 100%; object-fit: cover; }
+    .placeholder-content { display: flex; flex-direction: column; align-items: center; gap: 10px; color: #888; }
+    .placeholder-content svg { width: 40px; height: 40px; opacity: 0.5; }
+    .overlay-hint { position: absolute; bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.6); color: white; font-size: 12px; padding: 6px; font-weight: 600; }
+    
+    .gift-editor-controls {
+        padding: 15px 25px; 
+        display: flex; 
+        justify-content: space-between; 
+        align-items: center;
+        background: #f9f9f9; 
+        border-top: 1px solid #eee;
+    }
+    .editor-btn { background: none; border: none; cursor: pointer; font-size: 16px; font-weight: 600; color: var(--color-medium-blue-gray); }
+    .editor-btn:hover { color: var(--color-pink); }
+    
+    .save-circle-btn {
+        background-color: var(--color-pink);
+        color: #ffffff;
+        width: 48px; height: 48px;
+        border-radius: 50%; border: none;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(63, 82, 79, 0.25);
+        transition: transform 0.2s;
+    }
+    .save-circle-btn:hover { transform: scale(1.1); background-color: #2c3a38; }
+    .save-circle-btn svg { width: 24px; height: 24px; }
+</style>
+</file>
+
+<file path="src/lib/components/MosaicEditor.svelte">
+<script>
+    import { createEventDispatcher, onMount } from 'svelte';
+    
+    export let imageSrc;
+    export let transform = { zoom: 1, x: 0, y: 0 };
+    export let gridSettings = { cols: 3, rows: 3 };
+    
+    const dispatch = createEventDispatcher();
+    
+    let containerEl;
+    let imageEl;
+    
+    // משתני עריכה
+    let scale = 1; 
+    let translateX = 0;
+    let translateY = 0;
+    
+    // משתני חישוב (לשימוש פנימי)
+    let containerWidth = 0;
+    let containerHeight = 0;
+    let imgDisplayWidth = 0;
+    let imgDisplayHeight = 0;
+    
+    // גרירה
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let startTransX = 0, startTransY = 0;
+
+    // אתחול
+    onMount(() => {
+        calculateLayout();
+        window.addEventListener('resize', calculateLayout);
+        return () => window.removeEventListener('resize', calculateLayout);
+    });
+
+    // 1. חישוב גודל מסגרת החיתוך (Container)
+    // המסגרת חייבת להיות ביחס מדויק של העמודות/שורות כדי שהתאים יהיו ריבועים.
+    function calculateLayout() {
+        if (!containerEl) return;
+
+        // שטח מקסימלי במסך
+        const maxWidth = window.innerWidth * 0.9;
+        const maxHeight = window.innerHeight * 0.55;
+
+        const cols = gridSettings.cols;
+        const rows = gridSettings.rows;
+
+        // היחס של הגריד כולו (בהנחה שכל תא הוא ריבוע 1:1)
+        const gridRatio = cols / rows;
+
+        // ניסיון להתאים לפי רוחב
+        let finalW = maxWidth;
+        let finalH = finalW / gridRatio;
+
+        // אם הגובה חורג, מתאימים לפי גובה
+        if (finalH > maxHeight) {
+            finalH = maxHeight;
+            finalW = finalH * gridRatio;
+        }
+
+        containerWidth = finalW;
+        containerHeight = finalH;
+        
+        // לאחר קביעת המסגרת, טוענים את התמונה
+        if (imageEl) {
+            if (imageEl.complete) setupImage();
+            else imageEl.onload = setupImage;
+        }
+    }
+
+    // 2. חישוב התמונה (Cover Logic)
+    function setupImage() {
+        if (!imageEl) return;
+        const natW = imageEl.naturalWidth;
+        const natH = imageEl.naturalHeight;
+        
+        // חישוב היחסים בין התמונה למסגרת
+        const ratioW = containerWidth / natW;
+        const ratioH = containerHeight / natH;
+
+        // כדי לבצע Cover (כיסוי מלא), אנחנו צריכים את היחס הגדול מביניהם
+        // זה מבטיח שלא יהיו "חורים" לבנים בצדדים
+        const baseScale = Math.max(ratioW, ratioH);
+
+        // חישוב הגודל הפיזי של התמונה על המסך (במצב זום 1)
+        imgDisplayWidth = natW * baseScale;
+        imgDisplayHeight = natH * baseScale;
+
+        // שחזור עריכה קודמת אם קיימת
+        if (transform && transform.zoom) {
+            scale = transform.zoom;
+            translateX = transform.x;
+            translateY = transform.y;
+        } else {
+            resetPosition();
+        }
+        
+        clamp(); // וידוא שהתמונה לא בורחת
+    }
+
+    function resetPosition() {
+        scale = 1;
+        translateX = 0;
+        translateY = 0;
+        clamp();
+    }
+
+    // --- גרירה (Drag) ---
+    function handleMouseDown(e) {
+        if (e.cancelable) e.preventDefault();
+        isDragging = true;
+        
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        
+        startX = clientX;
+        startY = clientY;
+        startTransX = translateX;
+        startTransY = translateY;
+        
+        addGlobalListeners();
+    }
+
+    function handleMove(e) {
+        if (!isDragging) return;
+        if (e.cancelable) e.preventDefault();
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+
+        translateX = startTransX + dx;
+        translateY = startTransY + dy;
+
+        clamp(); // הגבלה בזמן אמת
+    }
+
+    function handleUp() {
+        isDragging = false;
+        removeGlobalListeners();
+    }
+
+    function addGlobalListeners() {
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleUp);
+        window.addEventListener('touchmove', handleMove, { passive: false });
+        window.addEventListener('touchend', handleUp);
+    }
+
+    function removeGlobalListeners() {
+        window.removeEventListener('mousemove', handleMove);
+        window.removeEventListener('mouseup', handleUp);
+        window.removeEventListener('touchmove', handleMove);
+        window.removeEventListener('touchend', handleUp);
+    }
+
+    function handleZoom(e) {
+        scale = parseFloat(e.target.value);
+        clamp();
+    }
+
+    // 3. הגבלת גבולות (Constraints)
+    // הפונקציה מחשבת את ה"עודף" של התמונה מעבר למסגרת ומונעת גרירה מעבר לו.
+    function clamp() {
+        // גודל התמונה הנוכחי (כולל זום)
+        const currentW = imgDisplayWidth * scale;
+        const currentH = imgDisplayHeight * scale;
+
+        // חישוב הגבול המקסימלי להזזה (לכל צד)
+        // הנוסחה: (רוחב תמונה פחות רוחב מסגרת) חלקי 2
+        const maxX = (currentW - containerWidth) / 2;
+        const maxY = (currentH - containerHeight) / 2;
+
+        // נעילה: הערך המוחלט של ההזזה לא יכול לעבור את המקסימום
+        if (translateX > maxX) translateX = maxX;
+        if (translateX < -maxX) translateX = -maxX;
+        
+        if (translateY > maxY) translateY = maxY;
+        if (translateY < -maxY) translateY = -maxY;
+    }
+
+    function onSave() {
+        // המרה לערכים יחסיים (Percentage) לשמירה בבסיס הנתונים
+        // זה מאפשר לשחזר את העריכה בכל גודל מסך
+        const currentW = imgDisplayWidth * scale;
+        const currentH = imgDisplayHeight * scale;
+        
+        dispatch('save', {
+            zoom: scale,
+            x: translateX,
+            y: translateY,
+            xPct: currentW > 0 ? translateX / currentW : 0,
+            yPct: currentH > 0 ? translateY / currentH : 0
+        });
+    }
+</script>
+
+<div class="mosaic-editor-overlay">
+    <div class="mosaic-editor-card">
+        <div class="header">
+            <h3>הזז והגדל את התמונה</h3>
+            <button class="close-btn" on:click={() => dispatch('close')}>✕</button>
+        </div>
+
+        <div class="viewport-area">
+            <div 
+                class="crop-box" 
+                bind:this={containerEl}
+                style="width: {containerWidth}px; height: {containerHeight}px;"
+                on:mousedown={handleMouseDown}
+                on:touchstart={handleMouseDown}
+            >
+                <img 
+                    src={imageSrc} 
+                    bind:this={imageEl}
+                    style="
+                        width: {imgDisplayWidth}px; 
+                        height: {imgDisplayHeight}px;
+                        transform: translate({translateX}px, {translateY}px) scale({scale});
+                    "
+                    draggable="false"
+                    alt="editing source"
+                />
+
+                <div 
+                    class="grid-lines" 
+                    style="
+                        grid-template-columns: repeat({gridSettings.cols}, 1fr);
+                        grid-template-rows: repeat({gridSettings.rows}, 1fr);
+                    "
+                >
+                    {#each Array(gridSettings.cols * gridSettings.rows) as _}
+                        <div class="cell"></div>
+                    {/each}
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="text-btn" on:click={() => dispatch('close')}>ביטול</button>
+            
+            <div class="slider-wrapper">
+                <span class="icon">-</span>
+                <input 
+                    type="range" 
+                    min="1" max="3" step="0.01" 
+                    value={scale} 
+                    on:input={handleZoom}
+                >
+                <span class="icon">+</span>
+            </div>
+
+            <button class="text-btn" on:click={resetPosition}>אפס</button>
+            <button class="save-btn" on:click={onSave}>שמור</button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .mosaic-editor-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85); z-index: 9999;
+        display: flex; justify-content: center; align-items: center;
+        animation: fadeIn 0.2s ease-out;
+    }
+
+    .mosaic-editor-card {
+        background: white;
+        width: 95%; max-width: 500px;
+        border-radius: 16px;
+        display: flex; flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+
+    .header {
+        padding: 15px 20px; display: flex; justify-content: space-between; align-items: center;
+        border-bottom: 1px solid #eee;
+    }
+    .header h3 { margin: 0; font-size: 18px; color: #333; }
+    .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #999; padding: 0; line-height: 1; }
+
+    .viewport-area {
+        background: #1a1a1a;
+        padding: 30px;
+        display: flex; justify-content: center; align-items: center;
+        flex-grow: 1;
+        overflow: hidden;
+    }
+
+    .crop-box {
+        position: relative;
+        overflow: hidden; /* חיתוך החלקים שיוצאים */
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
+        background: #000;
+        
+        display: flex; justify-content: center; align-items: center;
+        cursor: grab;
+    }
+    .crop-box:active { cursor: grabbing; }
+
+    .crop-box img {
+        display: block;
+        max-width: none;
+        pointer-events: none;
+        user-select: none;
+        transform-origin: center center;
+        will-change: transform;
+    }
+
+    /* הגריד הויזואלי */
+    .grid-lines {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        display: grid;
+        pointer-events: none;
+        border: 2px solid rgba(255,255,255,0.8);
+        box-sizing: border-box;
+    }
+
+    .cell {
+        border: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .controls {
+        padding: 15px 20px; background: #fff; border-top: 1px solid #eee;
+        display: flex; align-items: center; gap: 15px;
+    }
+
+    .slider-wrapper { flex: 1; display: flex; align-items: center; gap: 10px; }
+    .icon { font-weight: bold; color: #666; font-size: 18px; }
+    
+    input[type=range] { width: 100%; cursor: pointer; }
+
+    .text-btn { background: none; border: none; cursor: pointer; font-weight: 600; color: #666; font-size: 14px; }
+    .save-btn { background: #1E1E1E; color: white; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 700; cursor: pointer; font-size: 14px; }
+
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+</style>
+</file>
+
+<file path="src/lib/index.js">
+// place files you want to import through the `$lib` alias in this folder.
+</file>
+
+<file path="src/lib/utils/grid.js">
+// src/lib/utils/grid.js
+
+import { get } from 'svelte/store';
+
+/**
+ * מחשב את המיקום הקרוב ביותר (סלוט) ברשת עבור נקודה נתונה (פיקסלים).
+ */
+export function findBestTargetSlot(pixelX, pixelY, margin, gridStep, numCols, occupiedSlotsFn) {
+    // occupiedSlotsFn: פונקציה שמחזירה Set של סלוטים תפוסים ("col,row")
+    // כדי לא לנחות על עצמנו או על אחרים אם אסור (כרגע מותר להחליף מקומות, אז נבדוק את הלוגיקה בהמשך)
+    
+    // הערכה גסה של השורה והעמודה
+    const approxCol = Math.round((pixelX - margin) / gridStep);
+    const approxRow = Math.round((pixelY - margin) / gridStep);
+    
+    // חיפוש הסלוט הפנוי/המתאים ביותר בסביבה הקרובה
+    // כרגע הפונקציה מחזירה את הסלוט הקרוב ביותר מתמטית, הטיפול בהתנגשות ייעשה בחוץ
+    let bestCol = Math.max(0, Math.min(approxCol, numCols - 1));
+    let bestRow = Math.max(0, approxRow);
+
+    return { col: bestCol, row: bestRow };
+}
+
+/**
+ * מסדר מחדש רשימת מגנטים לפי סדר קריאה (שמאל לימין, למעלה למטה).
+ * מחזיר רשימה חדשה עם מיקומים מעודכנים.
+ */
+export function reflowMagnets(magnets, surfaceWidth, magnetSize, margin) {
+    const gridStep = magnetSize + margin;
+    const cols = Math.floor((surfaceWidth - margin) / gridStep);
+    const numCols = Math.max(1, cols);
+
+    // ממיינים את המגנטים הקיימים לפי המיקום הנוכחי שלהם
+    // (כדי לשמור על הסדר היחסי שהמשתמש יצר)
+    const sorted = [...magnets].sort((a, b) => {
+        // סובלנות של חצי שורה כדי לא "לקפוץ" בגלל פיקסל
+        const rowA = Math.round(a.position.y / gridStep);
+        const rowB = Math.round(b.position.y / gridStep);
+        if (rowA !== rowB) return rowA - rowB;
+        return a.position.x - b.position.x;
+    });
+
+    // מסדרים מחדש ללא חורים
+    return sorted.map((magnet, index) => {
+        const row = Math.floor(index / numCols);
+        const col = index % numCols;
+        return {
+            ...magnet,
+            position: {
+                x: margin + (col * gridStep),
+                y: margin + (row * gridStep)
+            }
+        };
+    });
+}
+
+/**
+ * ממלא "חורים" עבור מגנטים חדשים שאין להם מיקום.
+ */
+export function placeNewMagnets(currentMagnets, surfaceWidth, magnetSize, margin) {
+    const gridStep = magnetSize + margin;
+    const cols = Math.floor((surfaceWidth - margin) / gridStep);
+    const numCols = Math.max(1, cols);
+
+    // מיפוי הסלוטים התפוסים
+    const occupied = new Set();
+    currentMagnets.forEach(m => {
+        if (m.position && m.position.x > 0) {
+            const c = Math.round((m.position.x - margin) / gridStep);
+            const r = Math.round((m.position.y - margin) / gridStep);
+            occupied.add(`${c},${r}`);
+        }
+    });
+
+    return currentMagnets.map(magnet => {
+        // אם למגנט כבר יש מיקום תקין, דלג עליו
+        if (magnet.position && magnet.position.x > 0) return magnet;
+
+        // חפש את הסלוט הפנוי הראשון
+        let col = 0, row = 0;
+        while (occupied.has(`${col},${row}`)) {
+            col++;
+            if (col >= numCols) {
+                col = 0;
+                row++;
+            }
+        }
+        occupied.add(`${col},${row}`);
+
+        return {
+            ...magnet,
+            position: {
+                x: margin + (col * gridStep),
+                y: margin + (row * gridStep)
+            }
+        };
+    });
+}
+</file>
+
+<file path="vite.config.js">
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+	plugins: [sveltekit()]
+});
+</file>
+
+<file path="src/lib/components/CartCounter.svelte">
+<script>
+    //src\lib\components\CartCounter.svelte
+    
+    import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
+    import { fly, fade, slide } from 'svelte/transition';
+
+    $: items = $cart;
+    $: count = items.length;
+    $: total = $cartTotal;
+
+    let isOpen = false; 
+
+    function toggleCart() { 
+        isOpen = !isOpen; 
+    }
+    
+    function closeCart() { isOpen = false; }
+    
+    function handleEdit(itemId) {
+        editCartItem(itemId);
+        closeCart();
+    }
+
+    function handleDelete(itemId) {
+        if (confirm('בטוח שאתה רוצה להסיר את הפריט מהסל?')) {
+            removeCartItem(itemId);
+            if ($cart.length === 0) isOpen = false;
+        }
+    }
+
+    function goCreate() {
+        closeCart();
+        goto('/select');
+    }
+</script>
+
+<button 
+    class="header-cart-btn" 
+    class:is-empty={count === 0}
+    on:click={toggleCart}
+    title="פתח את הסל"
+>
+    <div class="icon-wrapper">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+            <circle cx="9" cy="21" r="1"></circle>
+            <circle cx="20" cy="21" r="1"></circle>
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+        </svg>
+        
+        {#if count > 0}
+            <div class="badge" transition:fade>{count}</div>
+        {/if}
+    </div>
+    
+    {#if count > 0}
+        <span class="cart-price" transition:slide={{ axis: 'x' }}>₪{total}</span>
+    {/if}
+</button>
+
+{#if isOpen}
+    <div class="backdrop" on:click={closeCart} transition:fade={{ duration: 200 }}></div>
+
+    <div class="cart-drawer" transition:fly={{ x: -350, duration: 300, opacity: 1 }}>
+        
+        <div class="drawer-header">
+            <h2>הסל שלי <span class="header-count">({count})</span></h2>
+            <button class="close-btn" on:click={closeCart}>✕</button>
+        </div>
+
+        <div class="drawer-content theme-scroll">
+            {#if count === 0}
+                <div class="empty-state" transition:fade>
+                    <div class="empty-icon">🛒</div>
+                    <h3>הסל שלך ריק</h3>
+                    <p>זה הזמן למלא אותו בזיכרונות!</p>
+                    <button class="cta-btn" on:click={goCreate}>התחל לעצב</button>
+                </div>
+            {:else}
+                <div class="cart-items-list">
+                    {#each items as item (item.id)}
+                        
+                        {#if item.type === PRODUCT_TYPES.GIFT}
+                            <div class="cart-item gift-item" transition:slide>
+                                <div class="item-image gift-border">
+                                    <img src={item.previewImage} alt="Gift" />
+                                    <div class="gift-icon-overlay">🎁</div>
+                                </div>
+                                <div class="item-details">
+                                    <div class="item-top">
+                                        <span class="item-title highlight-gift">{item.title}</span>
+                                        <button class="delete-item-btn" on:click={() => handleDelete(item.id)}>✕</button>
+                                    </div>
+                                    <span class="item-subtitle">{item.subtitle}</span>
+                                    
+                                    <div class="item-bottom">
+                                        <button class="edit-pill-btn" on:click={() => handleEdit(item.id)}>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                            <span>החלף תמונה</span>
+                                        </button>
+                                        <span class="item-price free">חינם</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        {:else if item.type === PRODUCT_TYPES.MOSAIC}
+                            <div class="cart-item mosaic-item" transition:slide>
+                                <div class="item-image mosaic-border">
+                                    <img src={item.previewImage} alt="Mosaic" />
+                                    <div class="type-badge">פסיפס</div>
+                                </div>
+                                <div class="item-details">
+                                    <div class="item-top">
+                                        <span class="item-title">{item.title}</span>
+                                        <button class="delete-item-btn" on:click={() => handleDelete(item.id)}>✕</button>
+                                    </div>
+                                    <span class="item-subtitle">{item.subtitle}</span>
+                                    
+                                    <div class="item-bottom">
+                                        <button class="edit-pill-btn" on:click={() => handleEdit(item.id)}>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                            <span>ערוך עיצוב</span>
+                                        </button>
+                                        <span class="item-price">₪{item.price}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        {:else}
+                            <div class="cart-item" transition:slide>
+                                <div class="item-image">
+                                    {#if item.previewImage}
+                                        <img src={item.previewImage} alt="Preview" />
+                                    {:else}
+                                        <div class="no-img">📷</div>
+                                    {/if}
+                                </div>
+                                <div class="item-details">
+                                    <div class="item-top">
+                                        <span class="item-title">{item.title}</span>
+                                        <button class="delete-item-btn" on:click={() => handleDelete(item.id)}>✕</button>
+                                    </div>
+                                    <span class="item-subtitle">{item.subtitle}</span>
+                                    
+                                    <div class="item-bottom">
+                                        <button class="edit-pill-btn" on:click={() => handleEdit(item.id)}>
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                            <span>ערוך עיצוב</span>
+                                        </button>
+                                        <span class="item-price">₪{item.price}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        {/if}
+
+                    {/each}
+                </div>
+            {/if}
+        </div>
+
+        {#if count > 0}
+            <div class="drawer-footer">
+                <div class="summary-line">
+                    <span>משלוח מהיר</span>
+                    <span class="green-text">חינם</span>
+                </div>
+                <div class="summary-line total">
+                    <span>סה"כ לתשלום</span>
+                    <span class="leather-total">₪{total}</span>
+                </div>
+                
+                <button class="checkout-btn-full">
+                        מעבר לתשלום מאובטח
+                </button>
+            </div>
+        {/if}
+    </div>
+{/if}
+
+<style>
+    .header-cart-btn {
+        background: transparent;
+        border: 1px solid rgba(198, 178, 154, 0.3);
+        color: var(--color-gold);
+        display: flex; align-items: center; gap: 8px;
+        padding: 5px 12px;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-family: 'Assistant', sans-serif;
+        height: 40px;
+    }
+    
+    .header-cart-btn:hover {
+        border-color: var(--color-gold);
+        background: rgba(255,255,255,0.05);
+        color: white;
+    }
+
+    .header-cart-btn.is-empty {
+        opacity: 0.7; /* שקיפות עדינה יותר */
+    }
+
+    .icon-wrapper { position: relative; display: flex; align-items: center; }
+    
+    .badge { 
+        position: absolute; top: -8px; right: -8px; 
+        background: var(--color-pink); color: white; 
+        font-size: 10px; font-weight: 700; 
+        width: 16px; height: 16px; 
+        border-radius: 50%; 
+        display: flex; justify-content: center; align-items: center; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .cart-price {
+        font-weight: 700; font-size: 15px; color: #fff; white-space: nowrap;
+    }
+
+    /* --- Drawer --- */
+    .backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 5000 !important; backdrop-filter: blur(4px); cursor: pointer; }
+    .cart-drawer { position: fixed; top: 0; left: 0; width: 360px; max-width: 85%; height: 100vh; background: #fff; color: #1E1E1E; z-index: 5001 !important; box-shadow: 5px 0 40px rgba(0,0,0,0.1); display: flex; flex-direction: column; direction: rtl; }
+
+    .drawer-header { padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f9f9f9; }
+    .drawer-header h2 { margin: 0; font-size: 18px; font-weight: 800; }
+    .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; padding: 5px; }
+
+    .drawer-content { flex: 1; padding: 20px; overflow-y: auto; }
+    
+    /* --- Empty State --- */
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; color: #888; }
+    .empty-icon { font-size: 40px; margin-bottom: 15px; opacity: 0.5; }
+    .empty-state h3 { margin: 0; color: #333; }
+    .cta-btn { margin-top: 20px; background: var(--color-pink); color: white; border: none; padding: 10px 25px; border-radius: 20px; font-weight: 700; cursor: pointer; }
+
+    .cart-items-list { display: flex; flex-direction: column; gap: 15px; }
+    
+    .cart-item { display: flex; gap: 10px; border: 1px solid #eee; padding: 10px; border-radius: 8px; background: white; }
+    
+    /* Gift specific styles */
+    .cart-item.gift-item { background: #f0f7f6; border-color: #b2dfdb; }
+    .highlight-gift { color: var(--color-teal); font-weight: 800; }
+    .item-price.free { color: var(--color-teal); }
+    .gift-border { border: 2px solid var(--color-gold); position: relative; }
+    .gift-icon-overlay { position: absolute; bottom: 0; right: 0; background: white; width: 16px; height: 16px; border-radius: 50% 0 4px 0; font-size: 10px; display: flex; align-items: center; justify-content: center; }
+
+    /* Mosaic specific styles */
+    .cart-item.mosaic-item { background: #fffbf5; border-color: #eaddcf; }
+    .mosaic-border { position: relative; }
+    .type-badge { position: absolute; bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.6); color: white; font-size: 9px; text-align: center; padding: 2px 0; }
+
+    .item-image { width: 60px; height: 60px; background: #eee; border-radius: 4px; overflow: hidden; flex-shrink: 0; position: relative; }
+    .item-image img { width: 100%; height: 100%; object-fit: cover; }
+    .no-img { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+    
+    .item-details { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .item-top { display: flex; justify-content: space-between; }
+    .item-title { font-weight: 700; font-size: 14px; }
+    .delete-item-btn { background: none; border: none; color: #999; cursor: pointer; padding: 0 5px; }
+    .delete-item-btn:hover { color: red; }
+    .item-subtitle { font-size: 12px; color: #666; }
+    
+    .item-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 14px; }
+    .item-price { font-weight: 700; }
+
+    /* 🔥 עיצוב חדש לכפתור העריכה 🔥 */
+    .edit-pill-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        border: 1px solid #ddd;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-family: 'Assistant', sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--color-medium-blue-gray);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .edit-pill-btn svg {
+        width: 12px;
+        height: 12px;
+    }
+
+    .edit-pill-btn:hover {
+        border-color: var(--color-pink);
+        color: var(--color-pink);
+        background: #f9f9f9;
+        transform: translateY(-1px);
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+
+    .drawer-footer { padding: 20px; border-top: 1px solid #eee; background: #f9f9f9; }
+    .summary-line { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
+    .green-text { color: #3F524F; font-weight: bold; }
+    .summary-line.total { font-size: 18px; font-weight: 800; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
+    .checkout-btn-full { width: 100%; padding: 14px; background: #1E1E1E; color: white; border: none; border-radius: 6px; font-weight: 700; font-size: 16px; margin-top: 15px; cursor: pointer; transition: background 0.2s; }
+    .checkout-btn-full:hover { background: black; }
+</style>
+</file>
+
+<file path="src/lib/components/Header.svelte">
+<script>
+    import { createEventDispatcher } from 'svelte';
+    import CartCounter from '$lib/components/CartCounter.svelte';
+
+    const dispatch = createEventDispatcher();
+    function toggleMenu() {
+        dispatch('toggleMenu');
+    }
+</script>
+
+<header class="app-header">
+    <div class="header-right">
+        <button class="hamburger-btn header-icon-btn" on:click={toggleMenu}>
+            &#9776;
+        </button>
+    </div>
+    
+    <div class="header-center">
+        <a href="/" class="logo">
+            <img src="/Logo.svg" alt="FEEL Logo" class="logo-img">
+        </a>
+    </div>
+
+    <div class="header-left">
+        <CartCounter />
+    </div>
+</header>
+
+<style>
+    .app-header { 
+        display: grid; 
+        /* חלוקה ל-3 חלקים שווים בדיוק כמו בתפריט הצד */
+        grid-template-columns: 1fr 1fr 1fr; 
+        align-items: center; 
+        
+        /* 🔥 יישור קריטי: פדינג זהה לתפריט הצדדי (SideMenu) */
+        padding: 10px 30px; 
+        
+        background: var(--color-dark-blue); 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
+        z-index: 100; 
+        
+        /* גובה קבוע וחישוב נכון למניעת גלישה */
+        height: 70px; 
+        box-sizing: border-box;
+        
+        /* 🔥 Header קבוע במוביל ודסקטופ */
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+    }
+    
+    .header-right { 
+        justify-self: start; 
+        display: flex; 
+        align-items: center; 
+    } 
+    
+    .header-center { 
+        justify-self: center; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center;
+        height: 100%;
+    } 
+    
+    .header-left { 
+        justify-self: end; 
+        display: flex; 
+        align-items: center; 
+        gap: 10px; 
+    } 
+    
+    .app-header .logo { 
+        display: flex; 
+        align-items: center; 
+        cursor: pointer; 
+        text-decoration: none; 
+        
+        /* גובה הלוגו מותאם לגובה הנותר (70px - 20px padding = 50px) */
+        height: 50px; 
+    }
+    
+    .app-header .logo .logo-img { 
+        height: 100%; 
+        width: auto; 
+    }
+    
+    .header-icon-btn { 
+        border: none; 
+        background: none; 
+        color: var(--color-gold); 
+        font-size: 26px; 
+        cursor: pointer; 
+        padding: 5px; 
+        line-height: 1; 
+        display: flex;
+        align-items: center;
+    }
+    
+    .header-icon-btn:hover {
+        color: white;
+    }
+</style>
+</file>
+
+<file path="src/lib/components/SideMenu.svelte">
+<script>
+    export let isOpen = false;
+
+    function closeMenu() {
+        isOpen = false;
+    }
+</script>
+
+{#if isOpen}
+    <div class="menu-backdrop active" on:click={closeMenu} />
+{/if}
+
+<div id="side-menu" class:active={isOpen}>
+    <div class="menu-header">
+        <div class="header-right"></div>
+        <div class="header-center">
+            <a href="/" class="logo">
+                <img src="/Logo.svg" alt="FEEL Logo" class="logo-img">
+            </a>
+        </div>
+        <div class="header-left">
+            <button class="close-menu-btn header-icon-btn" on:click={closeMenu}>
+                &times; </button>
+        </div>
+    </div>
+    
+    <ul>
+        <li><a href="/"><span>א</span> אודות</a></li>
+        <li><a href="/"><span>מ</span> מדיניות פרטיות</a></li>
+        <li><a href="/"><span>צ</span> צור קשר</a></li>
+    </ul>
+</div>
+
+<style>
+    #side-menu {
+        position: fixed;
+        top: 0;
+        right: -300px; 
+        width: 300px; 
+        height: 100vh;
+        background: var(--color-light-gray); /* White */
+        z-index: 2000;
+        transition: right 0.3s ease-in-out;
+        box-shadow: -5px 0 15px rgba(0,0,0,0.1);
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden; /* מניעת גלילה מיותרת */
+    }
+    #side-menu.active {
+        right: 0;
+    }
+
+    /* --- 🔥 עיצוב חדש לכותרת התפריט --- */
+    .menu-header {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        align-items: center;
+        padding: 10px 30px; /* התאמה לכותרת הראשית */
+        border-bottom: 1px solid var(--color-canvas-bg); 
+        background-color: var(--color-dark-blue); 
+        height: 70px; /* גובה זהה לכותרת הראשית */
+        box-sizing: border-box;
+    }
+
+    .menu-header .logo {
+        display: flex;
+        align-items: center; 
+        text-decoration: none; 
+        height: 50px; /* 🔥 גובה לוגו 50px */
+    }
+    
+    .menu-header .logo .logo-img {
+        height: 50px; /* 🔥 גובה לוגו 50px */
+        width: auto;
+    }
+
+    /* 🔥 שימוש חוזר בעיצוב הכפתור מהקובץ הראשי */
+    .close-menu-btn {
+        background: none;
+        border: none;
+        color: var(--color-gold);
+        cursor: pointer;
+        padding: 5px;
+        line-height: 1;
+        font-size: 30px; /* גופן גדול יותר ל-X */
+    }
+    .close-menu-btn:hover {
+        color: white;
+    }
+    /* --- סוף עיצוב חדש --- */
+
+    
+    .menu-backdrop { 
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+        z-index: 1999;
+        animation: fadeIn 0.3s;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    
+    #side-menu ul { 
+        list-style: none;
+        padding: 0; 
+        margin: 20px;
+        flex: 1;
+        overflow-y: auto; /* גלילה רק בתוך התפריט אם צריך */
+        overflow-x: hidden;
+    }
+    #side-menu li a {
+        display: flex;
+        align-items: center;
+        padding: 15px 10px;
+        text-decoration: none;
+        color: var(--color-medium-blue-gray); /* Ink */
+        font-size: 18px;
+        font-weight: 600;
+        border-radius: 8px;
+    }
+    #side-menu li a:hover { 
+        background-color: var(--color-canvas-bg); /* Sand */
+    }
+    #side-menu li a span { 
+        margin-left: 10px;
+        font-style: italic;
+        color: var(--color-pink);
+    }
+</style>
+</file>
+
+<file path="static/effects.worker.js">
+// static/effects.worker.js
+
+self.onmessage = async (event) => {
+    const { magnetId, effectId, originalSrc } = event.data;
+
+    try {
+        // 1. טעינת התמונה
+        const response = await fetch(originalSrc);
+        const blob = await response.blob();
+        
+        // 2. יצירת ImageBitmap לעיבוד מהיר
+        const image = await createImageBitmap(blob);
+
+        // 3. הגדרת קנבס
+        const canvas = new OffscreenCanvas(image.width, image.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0);
+
+        // 4. החלת הפילטר (הפונקציה המעודכנת למטה)
+        applyEffect(ctx, effectId, image.width, image.height);
+
+        // 5. המרה חזרה ל-Blob
+        const resultBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+
+        // 6. שליחה חזרה
+        self.postMessage({
+            status: 'success',
+            magnetId,
+            effectId,
+            blob: resultBlob
+        });
+
+    } catch (error) {
+        console.error('Worker error:', error);
+        self.postMessage({
+            status: 'error',
+            magnetId,
+            effectId,
+            error: error.message
+        });
+    }
+};
+
+// --- מנוע פילטרים מכויל ל-SVG ---
+function applyEffect(ctx, effectId, width, height) {
+    if (effectId === 'original') return;
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        // המרה לטווח 0-1 לחישובים מדויקים
+        const r = data[i] / 255;
+        const g = data[i + 1] / 255;
+        const b = data[i + 2] / 255;
+
+        let newR = r, newG = g, newB = b;
+
+        switch (effectId) {
+            case 'silver':
+                // תואם ל: feColorMatrix type="saturate" values="0" + Linear slope 1.1
+                const grayS = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+                newR = newG = newB = grayS * 1.1;
+                break;
+
+            case 'noir':
+                // תואם ל: Saturation 0 + Slope 1.5 + Intercept -0.1
+                const grayN = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+                const val = (grayN * 1.5) - 0.1; 
+                newR = newG = newB = val;
+                break;
+
+            case 'vivid':
+                // תואם ל: Matrix values + Gamma
+                // חיקוי מטריצת הצבעים מה-SVG
+                newR = (r * 1.4) - 0.1;
+                newG = (g * 1.4) - 0.1;
+                newB = (b * 1.4) - 0.1;
+                
+                // חיקוי גמא (קירוב ל-exponent 1.1)
+                newR = Math.pow(Math.max(0, newR), 1.1) * 1.2;
+                newG = Math.pow(Math.max(0, newG), 1.1) * 1.2;
+                newB = Math.pow(Math.max(0, newB), 1.1) * 1.2;
+                break;
+
+            case 'dramatic':
+                // תואם ל: Saturation 1.2 -> Contrast 1.3/-0.05 -> Tint Matrix
+                
+                // 1. Saturation
+                const lum = (r * 0.2126) + (g * 0.7152) + (b * 0.0722);
+                let dr = lum + (r - lum) * 1.2;
+                let dg = lum + (g - lum) * 1.2;
+                let db = lum + (b - lum) * 1.2;
+
+                // 2. Contrast
+                dr = (dr * 1.3) - 0.05;
+                dg = (dg * 1.3) - 0.05;
+                db = (db * 1.3) - 0.05;
+
+                // 3. Tint Matrix
+                newR = (dr * 0.8) + (dg * 0.1) + (db * 0.1);
+                newG = (dr * 0.1) + (dg * 0.8) + (db * 0.1);
+                newB = (dr * 0.1) + (dg * 0.1) + (db * 0.8);
+                break;
+        }
+
+        // חזרה לטווח 0-255 עם גבולות
+        data[i] = Math.min(255, Math.max(0, newR * 255));
+        data[i + 1] = Math.min(255, Math.max(0, newG * 255));
+        data[i + 2] = Math.min(255, Math.max(0, newB * 255));
+    }
+    
+    ctx.putImageData(imageData, 0, 0);
+}
+</file>
+
+<file path="svelte.config.js">
+import adapter from '@sveltejs/adapter-static'; // שים לב: static במקום netlify
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+	kit: {
+		adapter: adapter({
+			// הגדרות אלו קריטיות לגרירה ידנית ל-Netlify
+			pages: 'build',
+			assets: 'build',
+			fallback: 'index.html', // זה הטריק שמונע שגיאות 404 ברענון עמוד
+			precompress: false,
+			strict: true
+		})
+	},
+    preprocess: vitePreprocess()
+};
+
+export default config;
+</file>
+
+<file path="src/lib/components/FloatingPanel.svelte">
+<script>
+    import { createEventDispatcher } from 'svelte';
+    import { fly } from 'svelte/transition'; // הסרנו את fade לרקע כי הוא שקוף
+    
+    export let title = 'Panel';
+    export let isOpen = false;
+    
+    const dispatch = createEventDispatcher();
+    
+    function close() {
+        dispatch('close');
+    }
+
+    // פונקציית ה-Portal להוצאת הפאנל לגוף המסמך
+    function portal(node) {
+        let target = document.body;
+        async function update() {
+            target.appendChild(node);
+            node.hidden = false;
+        }
+        update();
+        return {
+            destroy() {
+                if (node.parentNode) {
+                    node.parentNode.removeChild(node);
+                }
+            }
+        };
+    }
+</script>
+
+{#if isOpen}
+    <div class="backdrop" on:click={close} use:portal />
+    
+    <div 
+        class="floating-panel active" 
+        use:portal 
+        transition:fly={{ y: 20, duration: 300, opacity: 1 }}
+    >
+        <div class="floating-panel-header">
+            <h4>{title}</h4>
+            <button class="done-btn" on:click={close}>סיום</button>
+        </div>
+        
+        <div class="panel-content">
+            <slot />
+        </div>
+    </div>
+{/if}
+
+<style>
+    /* --- רקע (Backdrop) --- */
+    .backdrop {
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        
+        /* 🔥 שינוי קריטי: שקוף לחלוטין כדי לראות את התמונה בבירור */
+        background: transparent; 
+        z-index: 2000;
+        
+        /* ביטלנו את האנימציה ואת הטשטוש (Blur) */
+    }
+
+    /* --- עיצוב הפאנל --- */
+    .floating-panel {
+        position: fixed;
+        z-index: 2001;
+        
+        /* עיצוב Glassmorphism */
+        background: rgba(255, 255, 255, 0.95); /* קצת יותר אטום כדי שהטקסט בפאנל יהיה קריא */
+        backdrop-filter: blur(15px) saturate(180%);
+        -webkit-backdrop-filter: blur(15px) saturate(180%);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        
+        box-shadow: 0 15px 50px rgba(0,0,0,0.15);
+        border-radius: 24px;
+        padding: 20px;
+        
+        /* מיקום */
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 100px; /* מעל ה-Dock */
+        
+        width: auto;
+        min-width: 320px;
+        max-width: 90vw;
+        
+        display: flex;
+        flex-direction: column;
+        direction: rtl;
+    }
+
+    .floating-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    
+    .floating-panel-header h4 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--color-medium-blue-gray);
+    }
+    
+    .floating-panel-header .done-btn {
+        background: none;
+        border: none;
+        color: var(--color-pink);
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        padding: 5px 10px;
+        border-radius: 15px;
+        transition: background 0.2s;
+    }
+    .floating-panel-header .done-btn:hover {
+        background: rgba(63, 82, 79, 0.1);
+    }
+
+    /* --- התאמות למובייל --- */
+    @media (max-width: 768px) {
+        .floating-panel {
+            bottom: 90px; 
+            width: 90vw; 
+            min-width: unset;
+        }
+    }
+</style>
+</file>
+
+<file path="src/routes/uploader/edit/[magnetId]/+page.svelte">
+<script>
+    import { onMount, onDestroy } from 'svelte';
+    import { page } from '$app/stores';
+    import { goto } from '$app/navigation';
+    import { magnets, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle } from '$lib/stores.js';
+    import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+
+    const FRAME_SIZE = 300; 
+
+    const magnetId = $page.params.magnetId;
+    let magnet;
+    $: magnet = $magnets.find(m => m.id === magnetId);
+
+    const effectsList = [
+        { id: 'original', name: 'מקורי', filter: 'none' },
+        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
+        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
+        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
+        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
+    ];
+
+    let bgTranslateX = 0;
+    let bgTranslateY = 0;
+    let bgScale = 1;
+    let minScaleLimit = 0.1;
+
+    let isDragging = false;
+    let isInteracting = false; 
+    let dragStartX = 0;
+    let dragStartY = 0;
+    
+    let bgImageEl; 
+    let effectsWorker;
+    let activePanel = null;
+
+    $: currentEffectId = magnet?.activeEffectId || 'original';
+    $: displaySrc = magnet?.originalSrc || magnet?.src; 
+    $: activeFilterCss = getFilterStyle(currentEffectId);
+    $: processedSrc = magnet?.processed?.[currentEffectId];
+    $: isLoadingEffect = processedSrc === 'processing';
+
+    onMount(() => {
+        if (!magnet) { goto('/uploader'); return; }
+        
+        effectsWorker = new Worker('/effects.worker.js');
+        effectsWorker.onmessage = (event) => {
+            const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
+            if (status === 'success' && processedMagnetId === magnetId) {
+                const newSrc = URL.createObjectURL(blob);
+                updateMagnetProcessedSrc(magnetId, effectId, newSrc);
+            }
+        };
+    });
+
+    onDestroy(() => { if (effectsWorker) effectsWorker.terminate(); });
+
+    // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
+
+    function onBgImageLoad() {
+        if (!bgImageEl) return;
+        
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+
+        // חישוב יחס זום כדי לכסות את המסגרת
+        const scaleX = FRAME_SIZE / naturalW;
+        const scaleY = FRAME_SIZE / naturalH;
+        minScaleLimit = Math.max(scaleX, scaleY);
+
+        if (magnet.transform && magnet.transform.zoom) {
+            // שחזור מלא של מצב עריכה קיים
+            bgTranslateX = magnet.transform.x * FRAME_SIZE; 
+            bgTranslateY = magnet.transform.y * FRAME_SIZE;
+            bgScale = magnet.transform.zoom * minScaleLimit;
+        } else {
+            // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
+            applyDefaultPositioning(naturalW, naturalH);
+        }
+        
+        clampPosition();
+    }
+
+    // פונקציה מרכזית לחישוב מיקום ה-Default (Top Align)
+    function applyDefaultPositioning(w, h) {
+        // איפוס סקייל למינימום שמכסה את המסגרת
+        bgScale = minScaleLimit;
+        
+        // מכיוון שנקודת הייחוס (Transform Origin) היא המרכז (Center Center):
+        // X=0 ממקם את מרכז התמונה במרכז המסגרת (וזה מה שאנחנו רוצים אופקית ב-Landscape וגם ב-Portrait זה בסדר כי זה ממלא רוחב).
+        bgTranslateX = 0; 
+
+        // Y=0 ממקם את מרכז התמונה במרכז המסגרת.
+        // אבל הדרישה היא Top Align (הצמדה למעלה).
+        // כדי להזיז את התמונה כך שהחלק העליון שלה ייגע בחלק העליון של המסגרת,
+        // עלינו להזיז אותה "למטה" (חיובי) בחצי מההפרש שבין הגובה הנוכחי למסגרת.
+        
+        const currentH = h * bgScale;
+        
+        // הנוסחה: (גובה התמונה בפועל - גובה המסגרת) / 2
+        // זה יתן את ה-Offset החיובי הנדרש כדי שראש התמונה יהיה ב-0.
+        bgTranslateY = (currentH - FRAME_SIZE) / 2;
+    }
+
+    function clampPosition() {
+        if (!bgImageEl) return;
+
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+
+        const currentW = naturalW * bgScale;
+        const currentH = naturalH * bgScale;
+
+        // גבולות גזרה: לא מאפשרים לראות רקע לבן בתוך המסגרת
+        const maxX = (currentW - FRAME_SIZE) / 2;
+        const maxY = (currentH - FRAME_SIZE) / 2;
+
+        if (bgTranslateX > maxX) bgTranslateX = maxX;
+        if (bgTranslateX < -maxX) bgTranslateX = -maxX;
+        
+        if (bgTranslateY > maxY) bgTranslateY = maxY;
+        if (bgTranslateY < -maxY) bgTranslateY = -maxY;
+    }
+
+    // --- אירועי גרירה ואינטראקציה ---
+
+    function startInteraction() { isInteracting = true; }
+    function endInteraction() { isDragging = false; isInteracting = false; }
+
+    function startDrag(e) {
+        e.preventDefault();
+        isDragging = true;
+        startInteraction();
+        const pos = getEventPosition(e);
+        dragStartX = pos.clientX;
+        dragStartY = pos.clientY;
+    }
+
+    function onDrag(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const pos = getEventPosition(e);
+        
+        const deltaX = pos.clientX - dragStartX;
+        const deltaY = pos.clientY - dragStartY;
+
+        bgTranslateX += deltaX;
+        bgTranslateY += deltaY;
+        
+        dragStartX = pos.clientX;
+        dragStartY = pos.clientY;
+
+        clampPosition();
+    }
+
+    function handleGlobalEnd() { if (isInteracting) endInteraction(); }
+    function handleZoomInput(e) {
+        const multiplier = parseFloat(e.target.value);
+        bgScale = multiplier * minScaleLimit;
+        clampPosition();
+    }
+    function getEventPosition(e) { return e.touches ? e.touches[0] : e; }
+
+    // --- שמירה ואיפוס ---
+
+    function resetTransform() {
+        if (!bgImageEl) return;
+        // חישוב מחדש של המינימום
+        const naturalW = bgImageEl.naturalWidth;
+        const naturalH = bgImageEl.naturalHeight;
+        const scaleX = FRAME_SIZE / naturalW;
+        const scaleY = FRAME_SIZE / naturalH;
+        minScaleLimit = Math.max(scaleX, scaleY);
+
+        // שימוש בלוגיקה המרכזית
+        applyDefaultPositioning(naturalW, naturalH);
+        
+        clampPosition();
+        applyEffect('original');
+    }
+
+    function saveAndClose() {
+        // שמירת ערכים יחסיים (באחוזים/יחס) כדי שיתאימו לכל גודל בגריד
+        updateMagnetTransform(magnetId, {
+            zoom: bgScale / minScaleLimit,
+            x: bgTranslateX / FRAME_SIZE,
+            y: bgTranslateY / FRAME_SIZE
+        });
+        goto('/uploader');
+    }
+
+    function applyEffect(effectId) {
+        updateMagnetActiveEffect(magnetId, effectId);
+        if (effectId !== 'original' && !magnet.processed[effectId]) {
+            updateMagnetProcessedSrc(magnetId, effectId, 'processing');
+            effectsWorker.postMessage({ magnetId, effectId, originalSrc: magnet.originalSrc });
+        }
+    }
+    
+    function deleteMagnet() {
+        if (confirm('למחוק את התמונה?')) {
+            magnets.update(list => list.filter(m => m.id !== magnetId));
+            goto('/uploader');
+        }
+    }
+</script>
+
+<svelte:window 
+    on:mousemove={onDrag} on:mouseup={handleGlobalEnd}
+    on:touchmove|preventDefault={onDrag} on:touchend={handleGlobalEnd}
+/>
+
+<div class="brand-loader-bar" style="display: {isLoadingEffect ? 'block' : 'none'};">
+    <div class="loader-progress"></div>
+</div>
+
+{#if magnet}
+<div class="editor-page" class:is-interacting={isInteracting}>
+    
+    <div class="image-layer">
+        <div 
+            class="movable-content"
+            style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
+        >
+            <img 
+                src={displaySrc} 
+                bind:this={bgImageEl}
+                on:load={onBgImageLoad}
+                style="{activeFilterCss}" 
+                alt="editing source"
+            />
+        </div>
+    </div>
+
+    <div 
+        class="mask-layer"
+        on:mousedown={startDrag}
+        on:touchstart|preventDefault={startDrag}
+    >
+        <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
+    </div>
+
+    <div class="zoom-controls" on:mousedown={startInteraction} on:touchstart={startInteraction}>
+        <input type="range" min="1" max="3" step="0.01" value={bgScale / (minScaleLimit || 1)} on:input={handleZoomInput}>
+        <span class="hint">צבוט או גרור לזום ומיקום</span>
+    </div>
+
+    {#if isLoadingEffect}
+        <div class="center-loader"><div class="loader-spinner"></div></div>
+    {/if}
+</div>
+
+<footer id="bottom-toolbar-edit" class="glass-dock">
+    <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
+    <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
+    <div class="dock-divider"></div>
+    <button class="dock-btn-circle danger" on:click={deleteMagnet}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+    <button class="dock-btn-circle primary" on:click={saveAndClose}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
+</footer>
+
+<FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
+    <div class="effects-list theme-scroll">
+        {#each effectsList as effect (effect.id)}
+            <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
+                <div class="thumbnail-wrapper theme-shadow">
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
+                </div>
+                <span class="theme-text">{effect.name}</span>
+            </button>
+        {/each}
+    </div>
+</FloatingPanel>
+{/if}
+
+<style>
+    .editor-page {
+        position: relative;
+        width: 100%; flex-grow: 1;
+        background-color: var(--color-canvas-bg);
+        overflow: hidden; 
+        display: flex; justify-content: center; align-items: center;
+    }
+
+    .image-layer {
+        position: absolute;
+        width: 100%; height: 100%;
+        display: flex; justify-content: center; align-items: center;
+        /* 🔥 שינוי קריטי: ביטול overflow hidden מאפשר לראות את התמונה מחוץ למסכה */
+        overflow: visible; 
+        z-index: 1;
+    }
+
+    .movable-content {
+        transform-origin: center center;
+        will-change: transform;
+        display: flex; justify-content: center; align-items: center;
+    }
+
+    .movable-content img {
+        max-width: none; max-height: none;
+        display: block; user-select: none; pointer-events: none;
+    }
+
+    .mask-layer {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        z-index: 10;
+        display: flex; justify-content: center; align-items: center;
+        cursor: grab;
+    }
+    .mask-layer:active { cursor: grabbing; }
+
+    .mask-hole {
+        /* 🔥 שינוי קריטי: צל חצי שקוף כדי לראות את הקונטקסט */
+        box-shadow: 0 0 0 9999px rgba(242, 240, 236, 0.85); 
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        background: transparent; 
+        pointer-events: none;
+        transition: box-shadow 0.3s ease-in-out;
+    }
+    
+    /* בעת אינטראקציה, מכהים מעט את הרקע כדי להבליט את אזור העריכה */
+    .editor-page.is-interacting .mask-hole {
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+    }
+    
+    /* שאר ה-CSS ללא שינוי */
+    .zoom-controls { position: absolute; bottom: 120px; z-index: 20; width: 80%; max-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: opacity 0.3s; opacity: 0.7; }
+    .zoom-controls:hover, .editor-page.is-interacting .zoom-controls { opacity: 1; }
+    .zoom-controls input { width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; -webkit-appearance: none; }
+    .zoom-controls input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--color-pink); border: 2px solid white; border-radius: 50%; cursor: pointer; }
+    .hint { color: var(--color-medium-blue-gray); font-size: 14px; font-weight: 600; text-shadow: none; }
+    .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
+    .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
+    .center-loader { position: absolute; z-index: 30; }
+    .glass-dock { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 15px; padding: 10px 25px; border-radius: 50px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); transition: opacity 0.3s; }
+    .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }
+    .dock-divider { width: 1px; height: 20px; background: #ccc; }
+    .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
+    .dock-btn-circle.primary { background: var(--color-pink); color: white; }
+    .dock-btn-circle.danger { background: #eee; color: #d32f2f; }
+    .effects-list { display: flex; gap: 15px; padding: 10px; overflow-x: auto; }
+    .thumbnail-wrapper { width: 60px; height: 60px; border-radius: 8px; overflow: hidden; margin-bottom: 5px; }
+    .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+    .effect-select-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
+    .effect-select-btn.active .thumbnail-wrapper { border: 2px solid var(--color-pink); }
+    
+    /* 🔥 מוביל: הסרת גלילה מיותרת באפקטים */
+    @media (max-width: 768px) {
+        .effects-list {
+            overflow-x: visible !important; /* ללא גלילה אופקית במוביל */
+            justify-content: space-between; /* פיזור אחיד של האפקטים */
+            gap: 10px;
+            padding: 5px 0;
+        }
+        
+        /* הסרת theme-scroll במוביל */
+        .effects-list.theme-scroll {
+            overflow-y: visible !important;
+        }
+    }
+</style>
+</file>
+
+<file path="src/routes/+layout.svelte">
+<script>
+    import '../app.css'; 
+    import Header from '$lib/components/Header.svelte';
+    import SideMenu from '$lib/components/SideMenu.svelte';
+    import { onMount } from 'svelte';
+    import { initApp, isGlobalLoading } from '$lib/stores.js'; // הוספת הייבוא של isGlobalLoading
+ 
+    let isMenuOpen = false;
+    function toggleMenu() {
+        isMenuOpen = !isMenuOpen;
+    }
+
+    onMount(() => {
+        initApp();
+    });
+</script>
+
+<div class="page-container" dir="rtl">
+    
+    {#if $isGlobalLoading}
+        <div class="global-loader-overlay">
+            <div class="brand-loader-bar">
+                <div class="loader-progress"></div>
+            </div>
+        </div>
+    {/if}
+
+    <Header on:toggleMenu={toggleMenu} />
+    <SideMenu bind:isOpen={isMenuOpen} />
+    
+    <slot />
+
+</div>
+
+<style>
+    /* 🔥 עיצוב הלאודר הגלובלי */
+    .global-loader-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(255, 255, 255, 0.5); /* רקע חצי שקוף */
+        z-index: 10000; /* מעל הכל, כולל סל הקניות */
+        pointer-events: none; /* כדי לא לחסום לחיצות אם זה נתקע, או auto כדי לחסום */
+        cursor: wait;
+    }
+
+    .brand-loader-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 6px;
+        background-color: transparent;
+        overflow: hidden;
+    }
+
+    .loader-progress {
+        width: 100%;
+        height: 100%;
+        /* אותו גרדיאנט יפה שביקשת */
+        background: linear-gradient(90deg, #3F524F, #846349, #475160, #3F524F);
+        background-size: 200% 100%;
+        animation: brandLoading 1.5s infinite linear;
+    }
+
+    @keyframes brandLoading {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+    }
+</style>
+</file>
+
+<file path="src/routes/select/+page.svelte">
+<script>
+    import { scrollAnimation } from '$lib/actions/scrollAnimation.js';
+    import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
+
+    function handleSelectMagnets() {
+        resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
+        goto('/uploader');
+    }
+
+    function handleSelectMosaic() {
+        resetSystem(PRODUCT_TYPES.MOSAIC);
+        goto('/uploader');
+    }
+</script>
+
+<div class="selection-content">
+    
+    <div class="header-section fade-in-up" use:scrollAnimation>
+        <h2>מה ניצור היום?</h2>
+        <p class="subtitle">בחר את הסגנון שמתאים לזיכרונות שלך</p>
+    </div>
+
+    <div class="info-cards-grid selection-grid">
+        
+        <button 
+            class="info-card selection-card fade-in-up" 
+            use:scrollAnimation 
+            style="--delay: 100ms;"
+            on:click={handleSelectMagnets}
+        >
+            <h4>
+                <svg class="card-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M487.938,162.108l-224-128a16,16,0,0,0-15.876,0l-224,128a16,16,0,0,0,.382,28l224,120a16,16,0,0,0,15.112,0l224-120a16,16,0,0,0,.382-28ZM256,277.849,65.039,175.548,256,66.428l190.961,109.12Z"/>
+                    <path d="M263.711,394.02,480,275.061V238.539L256,361.74,32,238.539v36.522L248.289,394.02a16.005,16.005,0,0,0,15.422,0Z"/>
+                    <path d="M32,362.667,248.471,478.118a16,16,0,0,0,15.058,0L480,362.667V326.4L256,445.867,32,326.4Z"/>
+                </svg>
+                <span>קולקציית תמונות</span>
+            </h4>
+
+            <div class="card-visual">
+                <img src="/magnets-pack.png" alt="מגנטים בודדים" />
+                
+                <div class="hover-indicate">
+                    <span>התחל לעצב</span>
+                </div>
+            </div>
+        </button>
+
+        <button 
+            class="info-card selection-card fade-in-up" 
+            use:scrollAnimation 
+            style="--delay: 200ms;"
+            on:click={handleSelectMosaic}
+        >
+            <h4>
+                <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 13v8h8v-8h-8zm6 6h-4v-4h4v4z"/>
+                </svg>
+                <span>תמונת פסיפס</span>
+            </h4>
+
+            <div class="card-visual">
+                <img src="/mosaic-pack.png" alt="תמונת פסיפס" />
+
+                <div class="hover-indicate">
+                    <span>התחל לעצב</span>
+                </div>
+            </div>
+        </button>
+
+    </div>
+</div>
+
+<style>
+    /* --- הגדרות כלליות לעמוד --- */
+    .selection-content {
+        min-height: calc(100vh - 70px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-top: 50px; /* רווח עליון זהה לדף הבית */
+        padding-bottom: 60px;
+        box-sizing: border-box;
+        flex: 1; /* 🔥 ממלא את כל הגובה הזמין */
+    }
+
+    .header-section { 
+        text-align: center; 
+        margin-bottom: 50px; 
+        padding: 0 20px;
+    }
+    
+    /* כותרת ראשית - זהה במדויק ל-Info Title בדף הבית */
+    .header-section h2 {
+        font-family: 'Assistant', sans-serif;
+        font-size: 2.5rem;
+        color: var(--color-medium-blue-gray);
+        margin: 0 0 15px 0;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+
+    .subtitle {
+        font-family: 'Assistant', sans-serif;
+        font-size: 1.2rem;
+        color: var(--color-dark-gray);
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    /* --- הגדרות גריד --- */
+    .selection-grid {
+        max-width: 950px;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+        padding: 0 20px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* --- תיקון ועיצוב הכרטיסייה --- */
+    .selection-card {
+        /* איפוס מלא של הגדרות כפתור דפדפן */
+        appearance: none;
+        -webkit-appearance: none;
+        border: 1px solid rgba(0,0,0,0.05); /* מסגרת עדינה כמו בדף הבית */
+        background: var(--color-light-gray);
+        font-family: 'Assistant', sans-serif; /* חובה! */
+        
+        display: flex;
+        flex-direction: column;
+        padding: 30px;
+        height: 450px; /* גובה קבוע */
+        justify-content: flex-start;
+        align-items: center;
+        gap: 25px;
+        
+        border-radius: 24px; /* עיגול פינות */
+        box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+        
+        text-align: center;
+        cursor: pointer;
+        transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    /* טיפול בכותרת בתוך הכרטיס */
+    .selection-card h4 {
+        font-family: 'Assistant', sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--color-gold);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        width: 100%;
+        transition: transform 0.3s ease;
+    }
+
+    /* --- עיצוב אזור התמונה --- */
+    .card-visual {
+        width: 100%;
+        flex-grow: 1; /* ממלא את כל הגובה הנותר */
+        border-radius: 16px;
+        overflow: hidden;
+        position: relative;
+        background: #f5f5f5; /* רקע גיבוי */
+    }
+
+    .card-visual img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+
+    /* אפקט Hover - שכבה כהה */
+    .hover-indicate {
+        position: absolute;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(63, 82, 79, 0.85); /* צבע המותג בכהות */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    /* כפתור דמה בתוך ה-Hover */
+    .hover-indicate span {
+        color: white;
+        font-family: 'Assistant', sans-serif;
+        font-weight: 700;
+        font-size: 1.1rem;
+        border: 2px solid white;
+        padding: 12px 24px;
+        border-radius: 50px;
+        transform: translateY(15px);
+        transition: transform 0.3s ease;
+    }
+
+    /* --- אינטראקציות --- */
+    .selection-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 15px 40px rgba(0,0,0,0.1);
+        border-color: var(--color-gold);
+    }
+
+    .selection-card:hover h4 { 
+        transform: translateY(-3px); 
+        color: var(--color-medium-blue-gray); /* שינוי צבע כותרת בהובר */
+    }
+
+    .selection-card:hover .card-visual img { 
+        transform: scale(1.08); 
+    }
+    
+    .selection-card:hover .hover-indicate { 
+        opacity: 1; 
+    }
+    
+    .selection-card:hover .hover-indicate span { 
+        transform: translateY(0); 
+    }
+
+    /* --- רספונסיביות למובייל --- */
+    @media (max-width: 768px) {
+        /* 🔥 תיקון פס שחור - רקע בהיר לכל הדף */
+        :global(.page-container) {
+            background-color: var(--color-canvas-bg) !important;
+            min-height: 100vh;
+            height: auto;
+        }
+        
+        .selection-content {
+            padding-top: 20px;
+            padding-bottom: 40px;
+            min-height: calc(100vh - 70px);
+            height: auto;
+            flex: 1;
+        }
+
+        .header-section {
+            margin-bottom: 30px; /* הקטנת margin */
+        }
+
+        .header-section h2 {
+            font-size: 1.75rem; /* הקטנת גודל כותרת */
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1rem; /* הקטנת גודל תת-כותרת */
+        }
+
+        .selection-grid {
+            grid-template-columns: 1fr;
+            gap: 20px; /* הקטנת gap */
+            padding: 0 16px; /* הקטנת padding */
+        }
+        
+        .selection-card {
+            height: auto; /* גובה אוטומטי */
+            min-height: 260px; /* גובה מינימלי */
+            max-height: 300px; /* גובה מקסימלי כדי למנוע גלילה */
+            padding: 14px; /* הקטנת padding */
+            gap: 14px; /* הקטנת gap פנימי */
+        }
+        
+        .selection-card h4 {
+            font-size: 1.25rem; /* הקטנת גודל כותרת כרטיס */
+            gap: 8px;
+        }
+        
+        .card-icon {
+            width: 20px !important; /* הקטנת אייקון */
+            height: 20px !important;
+        }
+    }
+</style>
+</file>
+
+<file path="src/lib/stores.js">
+// src/lib/stores.js
+
+import { writable, get, derived } from 'svelte/store';
+import { goto } from '$app/navigation';
+import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl } from '$lib/utils/storage.js';
+import { setItem, getItem } from '$lib/utils/idb.js'; 
+
+// 🔥 Store לניהול הטעינה הגלובלית
+export const isGlobalLoading = writable(false);
+
+// קבועים ומחירים
+export const EXTRA_MAGNET_PRICE = 10;
+export const BASE_MAGNET_SIZE = 150; 
+export const SCALE_MIN = 1.35;      
+export const SCALE_MAX = 2.16;        
+export const SCALE_DEFAULT = 1.44; 
+export const SPLIT_MAGNET_SIZE = BASE_MAGNET_SIZE * 1.15;
+export const MULTI_MARGIN_PERCENT = 0.1; 
+export const SPLIT_MARGIN_PERCENT = 0.015; 
+export const MIN_GRID_BASE = 3; 
+
+export const PRODUCT_TYPES = {
+    MAGNETS_PACK: 'magnets_pack',
+    MOSAIC: 'mosaic',
+    GIFT: 'gift' 
+};
+
+export const PACKAGES = [
+    { count: 9, price: 119, name: 'FEEL Moments' },
+    { count: 12, price: 139, name: 'FEEL Story' },
+    { count: 15, price: 159, name: 'FEEL Collection', recommended: true },
+    { count: 24, price: 239, name: 'FEEL Gallery' },
+    { count: 30, price: 289, name: 'FEEL Life' }
+];
+
+// IsMobile ו-Filters
+const checkIsMobile = () => typeof window !== 'undefined' ? window.innerWidth <= 768 : false;
+export const isMobile = writable(false);
+if (typeof window !== 'undefined') {
+    isMobile.set(checkIsMobile());
+    window.addEventListener('resize', () => isMobile.set(checkIsMobile()));
+}
+
+export function getFilterStyle(effectId) {
+    switch (effectId) {
+        case 'silver': return 'filter: url(#filter-silver);';
+        case 'noir': return 'filter: url(#filter-noir);';
+        case 'vivid': return 'filter: url(#filter-vivid);';
+        case 'dramatic': return 'filter: url(#filter-dramatic);';
+        case 'original': default: return 'filter: none;';
+    }
+}
+
+// Workspace Stores
+export const magnets = writable([]); 
+export const editingItemId = writable(null);
+
+export const editorSettings = writable({
+    currentProductType: PRODUCT_TYPES.MAGNETS_PACK,
+    currentDisplayScale: SCALE_DEFAULT, 
+    isSurfaceDark: false,
+    currentEffect: 'original',
+    surfaceMinHeight: '100%',
+    splitImageSrc: null,
+    splitImageRatio: 1,
+    gridBaseSize: 3,
+    splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
+    splitImageCache: {},
+    giftImage: null 
+});
+
+// Cart Store
+export const cart = writable([]);
+const CART_DB_KEY = 'feel_cart_db_v1';
+
+if (typeof window !== 'undefined') {
+    localStorage.removeItem('feel_cart');
+    localStorage.removeItem('feel_cart_v2');
+    localStorage.removeItem('feel_cart_v3');
+    
+    getItem(CART_DB_KEY).then(savedCart => {
+        if (savedCart && Array.isArray(savedCart)) {
+            cart.set(savedCart);
+        }
+    });
+    
+    cart.subscribe(async (val) => {
+        try {
+            await setItem(CART_DB_KEY, val);
+        } catch (e) {
+            console.error('DB Save Error:', e);
+        }
+    });
+}
+
+export const cartTotal = derived(cart, ($cart) => $cart.reduce((total, item) => total + item.price, 0));
+export const cartCount = derived(cart, ($cart) => $cart.length);
+
+// Auto Save + Init
+let saveTimeout;
+function triggerAutoSave() {
+    if (typeof window === 'undefined') return;
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(async () => {
+        const currentMagnets = get(magnets);
+        if (currentMagnets.length > 0 || get(editorSettings).splitImageSrc) {
+            await saveStateToStorage(currentMagnets, get(editorSettings), get(editingItemId));
+        }
+    }, 1000);
+}
+magnets.subscribe(() => triggerAutoSave());
+editorSettings.subscribe(() => triggerAutoSave());
+
+export async function initApp() {
+    if (typeof window === 'undefined') return;
+    if (window.location.pathname.includes('/uploader')) {
+        const state = await loadStateFromStorage();
+        if (state) {
+            const unsub1 = magnets.subscribe(()=>{});
+            const unsub2 = editorSettings.subscribe(()=>{});
+            magnets.set(state.magnets);
+            editorSettings.set(state.settings);
+            if (state.editingItemId) editingItemId.set(state.editingItemId);
+            unsub1(); unsub2();
+        }
+    }
+}
+
+export function calculatePrice(type, count) {
+    if (type === PRODUCT_TYPES.MAGNETS_PACK) {
+        if (count < 9) return 0;
+        const reversed = [...PACKAGES].reverse();
+        const base = reversed.find(p => count >= p.count) || PACKAGES[0];
+        return base.price + ((count - base.count) * EXTRA_MAGNET_PRICE);
+    } 
+    else if (type === PRODUCT_TYPES.MOSAIC) {
+        return PACKAGES[0].price + (Math.max(0, count - 9) * EXTRA_MAGNET_PRICE);
+    }
+    return 0;
+}
+
+// 🔥 פונקציית שמירה מעודכנת - אוכפת מתנה אחת בלבד
+export async function saveWorkspaceToCart() {
+    const currentMagnets = get(magnets);
+    const settings = get(editorSettings);
+    const editId = get(editingItemId);
+    const type = settings.currentProductType;
+    const count = currentMagnets.filter(m => !m.hidden).length;
+    
+    // בדיקת תקינות (רק אם זה לא מתנה בודדת)
+    if (type !== PRODUCT_TYPES.GIFT && !editId && type === PRODUCT_TYPES.MAGNETS_PACK && count < 9) return false;
+
+    isGlobalLoading.set(true);
+
+    try {
+        const serializeImg = async (src) => {
+            if (src && src.startsWith('blob:')) {
+                try {
+                    const blob = await fetch(src).then(r => r.blob());
+                    return await fileToBase64(blob);
+                } catch (e) { return src; }
+            }
+            return src;
+        };
+
+        const serializeMagnets = async (list) => { 
+             return Promise.all(list.map(async (m) => {
+                if (type === PRODUCT_TYPES.MOSAIC) return { ...m, originalSrc: null, src: null, processed: {} };
+                let safeSrc = m.originalSrc || m.src;
+                if (safeSrc && safeSrc.startsWith('blob:')) {
+                    try { const blob = await fetch(safeSrc).then(r => r.blob()); safeSrc = await fileToBase64(blob); } catch (e) {}
+                }
+                return { ...m, originalSrc: safeSrc, src: safeSrc, processed: {} };
+            }));
+        };
+
+        // 1. שמירת המוצר הראשי (אם זה לא מצב עריכת מתנה בלבד)
+        if (type !== PRODUCT_TYPES.GIFT) {
+            const price = calculatePrice(type, count);
+            const magnetsForCart = await serializeMagnets(currentMagnets);
+            const settingsForCart = JSON.parse(JSON.stringify(settings));
+            
+            if (settingsForCart.splitImageSrc) {
+                settingsForCart.splitImageSrc = await serializeImg(settings.splitImageSrc);
+            }
+
+            const mainItem = {
+                id: editId || crypto.randomUUID(),
+                type: type,
+                timestamp: Date.now(),
+                count: count,
+                price: price,
+                data: { magnets: magnetsForCart, settings: settingsForCart },
+                previewImage: type === PRODUCT_TYPES.MOSAIC ? settingsForCart.splitImageSrc : magnetsForCart[0]?.src,
+                title: type === PRODUCT_TYPES.MOSAIC ? 'פסיפס זכרונות' : 'מגנטים בודדים',
+                subtitle: type === PRODUCT_TYPES.MOSAIC ? `${settings.gridBaseSize}x${Math.round(count/settings.gridBaseSize)} חלקים` : `${count} תמונות`
+            };
+
+            cart.update(items => {
+                if (editId) return items.map(i => i.id === editId ? mainItem : i);
+                return [...items, mainItem];
+            });
+        }
+
+        // 2. שמירת המתנה (Singleton Logic)
+        if (settings.giftImage) {
+            const safeGiftImage = await serializeImg(settings.giftImage);
+            
+            // אם אנחנו במצב עריכה של מתנה ספציפית, נשמור עליה. אחרת ניצור חדשה.
+            const isEditingGift = (type === PRODUCT_TYPES.GIFT && editId);
+            const giftId = isEditingGift ? editId : crypto.randomUUID();
+
+            const giftItem = {
+                id: giftId,
+                type: PRODUCT_TYPES.GIFT,
+                timestamp: Date.now(),
+                count: 1,
+                price: 0,
+                previewImage: safeGiftImage,
+                title: 'מתנה: תמונה מעוצבת',
+                subtitle: 'מגנט בגודל 5x5 מתנה',
+                data: { settings: { ...settings, giftImage: safeGiftImage, currentProductType: PRODUCT_TYPES.GIFT } }
+            };
+
+            cart.update(items => {
+                // 🔥 שלב קריטי: הסרת כל מתנה אחרת שקיימת בסל
+                // אנחנו משאירים רק פריטים שהם לא מתנה, או את המתנה שאנחנו עורכים כרגע
+                const cleanItems = items.filter(i => i.type !== PRODUCT_TYPES.GIFT || i.id === giftId);
+                
+                // הוספה או עדכון
+                const existingIndex = cleanItems.findIndex(i => i.id === giftId);
+                if (existingIndex >= 0) {
+                    cleanItems[existingIndex] = giftItem;
+                    return cleanItems;
+                }
+                return [...cleanItems, giftItem];
+            });
+        }
+
+        resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
+        await clearStorage(); 
+        goto('/select');
+        return true;
+
+    } catch (e) {
+        console.error("Save error:", e);
+        return false;
+    } finally {
+        isGlobalLoading.set(false);
+    }
+}
+
+// 🔥 פונקציית עריכה מעודכנת
+
+export async function editCartItem(itemId) {
+    const cartItems = get(cart);
+    const item = cartItems.find(i => i.id === itemId);
+    if (!item) return;
+
+    // 1. הפעלת מסך טעינה גלובלי
+    isGlobalLoading.set(true);
+
+    // 🔥 תיקון קריטי: איפוס מיידי של התצוגה למניעת "הבהוב" של המוצר הקודם
+    magnets.set([]); 
+    editorSettings.update(s => ({ 
+        ...s, 
+        splitImageSrc: null, // ניקוי רקע פסיפס אם היה
+        splitImageCache: {},
+        currentProductType: item.type // עדכון ראשוני של הסוג כדי שה-UI יתכונן
+    }));
+
+    try {
+        const hydrateMagnetsPack = async (list) => { 
+            return Promise.all(list.map(async (m) => {
+                let validSrc = m.originalSrc;
+                if (validSrc && validSrc.startsWith('data:')) validSrc = await base64ToBlobUrl(validSrc);
+                return { ...m, originalSrc: validSrc, src: validSrc, processed: {} };
+            }));
+        };
+
+        if (item.type === PRODUCT_TYPES.GIFT) {
+            // לוגיקה למתנה
+            // (כאן כבר יש לנו resetSystem בתוך הלוגיקה המקורית, אבל הניקוי למעלה מכסה גם את זה)
+            resetSystem(PRODUCT_TYPES.GIFT);
+            let giftImg = item.data.settings.giftImage;
+            if (giftImg && giftImg.startsWith('data:')) giftImg = await base64ToBlobUrl(giftImg);
+            
+            editorSettings.update(s => ({ 
+                ...s, 
+                giftImage: giftImg,
+                currentProductType: PRODUCT_TYPES.GIFT 
+            }));
+        } else {
+            // לוגיקה רגילה לפסיפס/מגנטים
+            const hydratedSettings = JSON.parse(JSON.stringify(item.data.settings));
+            
+            if (hydratedSettings.splitImageSrc?.startsWith('data:')) {
+                hydratedSettings.splitImageSrc = await base64ToBlobUrl(hydratedSettings.splitImageSrc);
+            }
+
+            // שחזור מתנה ברקע (אם קיימת בסל)
+            const existingGiftInCart = cartItems.find(i => i.type === PRODUCT_TYPES.GIFT);
+            if (existingGiftInCart) {
+                 let gImg = existingGiftInCart.data.settings.giftImage;
+                 if (gImg?.startsWith('data:')) gImg = await base64ToBlobUrl(gImg);
+                 hydratedSettings.giftImage = gImg;
+            }
+
+            // עדכון ההגדרות החדשות
+            editorSettings.set(hydratedSettings);
+            
+            let recoveredMagnets;
+            if (item.type === PRODUCT_TYPES.MOSAIC) {
+                recoveredMagnets = item.data.magnets.map(m => ({
+                    ...m, src: hydratedSettings.splitImageSrc, originalSrc: hydratedSettings.splitImageSrc, processed: {}
+                }));
+            } else {
+                recoveredMagnets = await hydrateMagnetsPack(item.data.magnets);
+            }
+            
+            // עדכון המגנטים החדשים
+            magnets.set(recoveredMagnets);
+        }
+        
+        editingItemId.set(itemId);
+        
+        // שמירה ל-Storage כדי ש-onMount בעמוד הבא יקרא את זה תקין (גיבוי)
+        await saveStateToStorage(get(magnets), get(editorSettings), itemId);
+        
+        // מעבר עמוד
+        await goto('/uploader');
+
+    } catch(e) {
+        console.error("Error editing item", e);
+    } finally {
+        // כיבוי מסך טעינה רק בסוף התהליך
+        isGlobalLoading.set(false);
+    }
+}
+
+export function removeCartItem(itemId) {
+    cart.update(items => items.filter(i => i.id !== itemId));
+    if (get(editingItemId) === itemId) {
+        editingItemId.set(null);
+        resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
+        clearStorage();
+    }
+}
+
+export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
+    const currentList = get(magnets);
+    if (currentList.length > 0) currentList.forEach(m => { if(m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc) });
+    magnets.set([]);
+    editingItemId.set(null);
+    const s = get(editorSettings);
+    if (s.splitImageSrc?.startsWith('blob:')) URL.revokeObjectURL(s.splitImageSrc);
+    
+    editorSettings.set({
+        currentProductType: targetType, currentDisplayScale: SCALE_DEFAULT, surfaceMinHeight: '100%', isSurfaceDark: false,
+        splitImageSrc: null, splitImageRatio: 1, gridBaseSize: 3, currentEffect: 'original',
+        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, splitImageCache: {}, giftImage: null
+    });
+    clearStorage();
+}
+
+export function getFullMagnetSize() { return BASE_MAGNET_SIZE * (get(editorSettings).currentDisplayScale || SCALE_DEFAULT); }
+export function getMargin() { return getFullMagnetSize() * MULTI_MARGIN_PERCENT; }
+export function addUploadedMagnets(files) {
+    const newMags = Array.from(files).map(f => ({
+        id: crypto.randomUUID(), transform: {zoom:1,x:0,y:0}, position:{x:0,y:0}, size: getFullMagnetSize(),
+        originalSrc: URL.createObjectURL(f), src: URL.createObjectURL(f), activeEffectId:'original', isSplitPart:false, hidden:false, processed:{}
+    }));
+    magnets.update(l => [...l, ...newMags]);
+}
+export function updateMagnetProcessedSrc(id, eff, src) { magnets.update(l => l.map(m => m.id===id ? {...m, processed:{...m.processed,[eff]:src}} : m)); }
+export function updateMagnetTransform(id, tr) { magnets.update(l => l.map(m => m.id===id ? {...m, transform:tr} : m)); }
+export function updateMagnetActiveEffect(id, eff) { magnets.update(l => l.map(m => m.id===id ? {...m, activeEffectId:eff} : m)); }
+</file>
+
+<file path="src/routes/+page.svelte">
+<svelte:head>
+    <title>FEEL - דף הבית</title>
+    <meta name="description" content="צור מגנטים אישיים" />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+        }
+        
+        .page-container {
+            height: auto !important;
+            min-height: calc(100vh - 70px); /* גובה מינימלי פחות Header */
+            display: block !important;
+            padding-top: 0; /* דף הבית לא צריך padding-top כי הוא override */
+        }
+    </style>
+</svelte:head>
+
+<script>
+    import { scrollAnimation } from '$lib/actions/scrollAnimation.js';
+    import { onMount, onDestroy, tick } from 'svelte'; 
+    import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
+
+    // --- יצירת פרויקט חדש ---
+    function startNewMagnets() {
+        resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
+        goto('/uploader');
+    }
+
+    function startNewMosaic() {
+        resetSystem(PRODUCT_TYPES.MOSAIC);
+        goto('/uploader');
+    }
+
+    // --- קוד קרוסלה ---
+    let scrollContainerEl;
+    const scrollStep = 300; 
+
+    let isAtStart = true;
+    let isAtEnd = false;
+
+    function checkScroll() {
+        if (!scrollContainerEl) return;
+        const { scrollLeft, scrollWidth, clientWidth } = scrollContainerEl;
+        
+        isAtStart = scrollLeft < 10;
+        isAtEnd = (scrollWidth - scrollLeft - clientWidth) < 10;
+    }
+
+    onMount(async () => {
+        await tick();
+        if (scrollContainerEl) {
+            checkScroll();
+            scrollContainerEl.addEventListener('scroll', checkScroll);
+            setTimeout(checkScroll, 500);
+        }
+    });
+
+    onDestroy(() => {
+        if (scrollContainerEl) {
+            scrollContainerEl.removeEventListener('scroll', checkScroll);
+        }
+    });
+
+    function scrollCommunity(direction) {
+        if (!scrollContainerEl) return;
+        
+        checkScroll(); 
+
+        const currentScroll = scrollContainerEl.scrollLeft;
+        const currentIndex = Math.round(currentScroll / scrollStep);
+        
+        // חישוב מיקום יעד
+        let targetScroll = (currentIndex + direction) * scrollStep;
+
+        // לוגיקה מעגלית (Loop)
+        if (direction === 1) { // ימינה
+            if (isAtEnd) {
+                targetScroll = 0; // חזרה להתחלה
+            }
+        } else { // שמאלה
+            if (isAtStart) {
+                targetScroll = scrollContainerEl.scrollWidth; // קפיצה לסוף
+            }
+        }
+
+        // ביצוע גלילה
+        scrollContainerEl.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
+    }
+
+    // --- קוד להפעלת וידאו בריחוף ---
+    function handleVideoPlay(event) {
+        const video = event.currentTarget.querySelector('.community-video');
+        if (video) {
+            video.play().catch(e => console.log('Video play prevented:', e));
+        }
+    }
+    function handleVideoPause(event) {
+        const video = event.currentTarget.querySelector('.community-video');
+        if (video) {
+            video.pause();
+        }
+    }
+</script>
+
+<div class="home-content">
+    
+    <div class="hero-container">
+        <video class="hero-video" autoplay loop muted playsinline>
+            <source src="/heroImag.mp4" type="video/mp4">
+            הדפדפן שלך לא תומך בווידאו.
+        </video>
+        <div class="hero-text-overlay">
+            <h1 class="hero-headline">לעצור את הזמן.
+            להרגיש את הרגע.</h1>
+            <p class="hero-subheadline">
+                הפכו את הזיכרונות שלכם למתנות מרגשות.
+                <br>
+                חוויה שנוגעת בלב.
+            </p>
+        </div>
+    </div>
+    
+    <a href="/select" id="home-shop-btn">בואו ניצור זיכרון</a>
+
+    <section class="info-section">
+        <h2 class="info-title fade-in-up" use:scrollAnimation>הופכים רגע לרגש, כך זה עובד</h2>
+        <p class="info-description fade-in-up" use:scrollAnimation style="--delay: 100ms;">
+            משלבים את הזכרונות הייחודים והכי יקרים שלכם עם מוצר סנטימינטאלי ונותנים לו גם נגיע טכנולוגית של בינה מלכותית מתקדמת, ליצירת חוויה אישית מדויקת.
+        </p>
+
+        <div class="info-cards-grid">
+            
+            <button 
+                class="info-card fade-in-up" 
+                use:scrollAnimation 
+                style="--delay: 200ms;"
+                on:click={startNewMagnets}
+            >
+                <h4>
+                    <svg class="card-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M487.938,162.108l-224-128a16,16,0,0,0-15.876,0l-224,128a16,16,0,0,0,.382,28l224,120a16,16,0,0,0,15.112,0l224-120a16,16,0,0,0,.382-28ZM256,277.849,65.039,175.548,256,66.428l190.961,109.12Z"/>
+                        <path d="M263.711,394.02,480,275.061V238.539L256,361.74,32,238.539v36.522L248.289,394.02a16.005,16.005,0,0,0,15.422,0Z"/>
+                        <path d="M32,362.667,248.471,478.118a16,16,0,0,0,15.058,0L480,362.667V326.4L256,445.867,32,326.4Z"/>
+                    </svg>
+                    <span>קולקציית תמונות</span>
+                </h4>
+        
+                <p class="card-description">
+                    בחרו את התמונות שמספרות את הסיפור שלכם. הממשק החכם שלנו מאפשר לכם לעצב כל תמונה בנפרד ולהפוך אות לסיפור על מגנט בגודל 5x5 ס"מ. תוכלו להוסיף אפקט שמתאים לרגע או למקד את הפריים בדיוק ברגע הנכון.
+                </p>
+            </button>
+            
+            <button 
+                class="info-card fade-in-up" 
+                use:scrollAnimation 
+                style="--delay: 300ms;"
+                on:click={startNewMosaic}
+            >
+                <h4>
+                    <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 13v8h8v-8h-8zm6 6h-4v-4h4v4z"/>
+                    </svg>
+                    <span>פסיפס זכרונות מתמונה</span>
+                </h4>
+                <p class="card-description">
+                    בחרו תמונה אחת אייקונית – כזו שמכילה עולם שלם. אנחנו נהפוך אותה לפסיפס מרשים המורכב מחלקי 5x5 ס"מ. תוכלו להגדיר את הגודל הכולל, לבחור את כמות החלקים, ולמקם את התמונה כך שכל הפרטים החשובים יקבלו את הבמה.
+                </p>
+            </button>
+
+            <div 
+                class="info-card fade-in-up" 
+                use:scrollAnimation 
+                style="--delay: 400ms;"
+            >
+                <h4>
+                    <svg class="card-icon" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+                        <g transform="translate(64.000000, 64.000000)">
+                            <path d="M320,64 L320,320 L64,320 L64,64 L320,64 Z M171.749388,128 L146.817842,128 L99.4840387,256 L121.976629,256 L130.913039,230.977 L187.575039,230.977 L196.319607,256 L220.167172,256 L171.749388,128 Z M260.093778,128 L237.691519,128 L237.691519,256 L260.093778,256 L260.093778,128 Z M159.094727,149.47526 L181.409039,213.333 L137.135039,213.333 L159.094727,149.47526 Z M341.333333,256 L384,256 L384,298.666667 L341.333333,298.666667 L341.333333,256 Z M85.3333333,341.333333 L128,341.333333 L128,384 L85.3333333,384 L85.3333333,341.333333 Z M170.666667,341.333333 L213.333333,341.333333 L213.333333,384 L170.666667,384 L170.666667,341.333333 Z M85.3333333,0 L128,0 L128,42.6666667 L85.3333333,42.6666667 L85.3333333,0 Z M256,341.333333 L298.666667,341.333333 L298.666667,384 L256,384 L256,341.333333 Z M170.666667,0 L213.333333,0 L213.333333,42.6666667 L170.666667,42.6666667 L170.666667,0 Z M256,0 L298.666667,0 L298.6666667,42.6666667 L256,42.6666667 L256,0 Z M341.333333,170.666667 L384,170.666667 L384,213.333333 L341.333333,213.333333 L341.333333,170.666667 Z M0,256 L42.6666667,256 L42.6666667,298.666667 L0,298.666667 L0,256 Z M341.333333,85.3333333 L384,85.3333333 L384,128 L341.333333,128 L341.333333,85.3333333 Z M0,170.666667 L42.6666667,170.666667 L42.6666667,213.333333 L0,213.333333 L0,170.666667 Z M0,85.3333333 L42.6666667,85.3333333 L42.6666667,128 L0,128 L0,85.3333333 Z"/>
+                        </g>
+                    </svg>
+                    <span>שימוש ב- AI</span>
+                </h4>
+                <p class="card-description">
+                    רוצים להוסיף ברכה? כתבו את הרעיון, וה-AI שלנו ישפר וילטש אותה למסר מדויק ומרגש.
+                    <br><br>
+                    תוכלו לבחור גם תמונה על חשבוננינו ואנחנו, בעזרת טכנולוגיה מתקדמת, נעניק לה טוויסט עיצובי מפתיע. מגע ייחודי שנוצר רק מהרגע שלכם.
+                </p>
+            </div>
+
+        </div>
+    </section>
+
+    <section class="community-section" use:scrollAnimation style="--delay: 300ms;">
+        
+        <div class="community-wrapper">
+            <h2 class="community-title fade-in-up" use:scrollAnimation>מהקהילה שלנו</h2>
+
+            <button class="scroll-btn left" on:click={() => scrollCommunity(-1)}>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            </button>
+            <button class="scroll-btn right" on:click={() => scrollCommunity(1)}>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
+
+            <div class="community-scroll-container" bind:this={scrollContainerEl}>
+                <div class="community-scroll-track">
+                    
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-1.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-2.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-3.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-4.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-5.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
+                        <div class="community-video-placeholder">
+                            <video class="community-video" src="/reels/community-video-6.mp4" playsinline muted loop preload="metadata"></video>
+                        </div>
+                        <div class="community-text-placeholder">
+                            <div class="placeholder-line short"></div>
+                            <div class="placeholder-line long"></div>
+                        </div>
+                    </div>
+
+                </div> 
+            </div>
+        </div> 
+    </section>
+</div>
+</file>
+
+<file path="src/lib/components/Magnet.svelte">
+<script>
+    import { createEventDispatcher } from 'svelte';
+    import { goto } from '$app/navigation'; 
+    import { getFilterStyle, isMobile } from '$lib/stores.js'; 
+    
+    export let id;
+    export let src; 
+    export let size = 150; 
+    export let transform = null;
+    export let isSplitPart = false;
+    export let hidden = false; 
+    export let activeEffectId = 'original';
+    
+    const dispatch = createEventDispatcher();
+    
+    let imgElement;
+    let isLandscape = true; 
+    let isImageLoaded = false;
+    
+    $: hasTransform = transform && (transform.x !== 0 || transform.y !== 0 || transform.zoom !== 1);
+    $: filterCss = getFilterStyle(activeEffectId);
+    
+    $: cssVars = `
+        --magnet-size: ${size}px;
+        --zoom: ${(!isSplitPart && transform) ? transform.zoom : 1};
+        --pos-x: ${(!isSplitPart && transform) ? (transform.x * 100) : 0}%;
+        --pos-y: ${(!isSplitPart && transform) ? (transform.y * 100) : 0}%;
+        --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
+        --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
+        --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
+        --bg-y: ${(isSplitPart && transform) ? transform.bgPosY : 0}px;
+        --bg-url: url('${src}');
+    `;
+
+    function handleImageLoad() {
+        if (!imgElement) return;
+        isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
+        isImageLoaded = true;
+    }
+    
+    // --- אירועים ---
+    // שיפור לוגיקה למניעת התנגשויות טאץ'/קליק
+    function handleInteraction(e) {
+        if (e && e.stopPropagation) e.stopPropagation();
+        
+        // בפסיפס, לחיצה משנה נראות
+        if (isSplitPart) { 
+            // מניעת הפעלת האירוע פעמיים אם המערכת יורה גם touch וגם click
+            if (e.type === 'touchstart') e.preventDefault(); 
+            dispatch('toggleVisibility', { id }); 
+            return; 
+        } 
+        
+        // במובייל (מגנטים רגילים), לחיצה מעבירה לעריכה
+        if ($isMobile) { 
+            // מניעת התנהגות כפולה
+            if (e.type === 'touchstart') {
+                 // בטאץ' אנחנו רוצים למנוע את יצירת ה-click המלאכותי של הדפדפן
+                 // אבל לאפשר את המעבר
+                 // e.preventDefault() כאן עלול לחסום גלילה אם לא נזהרים, 
+                 // אבל מכיוון שזה אירוע על המגנט עצמו ולא גרירה, זה תקין לניווט.
+            }
+            goto(`/uploader/edit/${id}`); 
+            return; 
+        }
+    }
+
+    function handleEditClick(e) {
+        if (e) { e.stopPropagation(); }
+        goto(`/uploader/edit/${id}`);
+    }
+    
+    function handleDeleteClick(e) {
+        if (e) { e.stopPropagation(); }
+        if (isSplitPart) { dispatch('toggleVisibility', { id }); } else { dispatch('delete', { id }); }
+    }
+    
+    function handleImageError(e) { 
+        if (e.target.src !== src) e.target.src = src; 
+        else e.target.style.opacity = 0;
+    }
+</script>
+
+<div 
+    class="magnet magnet-container" 
+    class:split-part={isSplitPart} 
+    class:is-hidden={hidden}
+    class:desktop-mode={!$isMobile}
+    style="{cssVars}"
+    on:click={handleInteraction} 
+>
+    <div 
+        class="image-wrapper" 
+        class:sharp-corners={isSplitPart}
+        class:is-portrait={!isLandscape}
+        class:has-transform={hasTransform}
+    >
+        {#if isSplitPart && transform}
+            <div class="split-image" style="{filterCss}"></div>
+        {:else}
+            <img 
+                src={src} 
+                bind:this={imgElement}
+                on:load={handleImageLoad}
+                alt="" 
+                draggable="false" 
+                class="magnet-image"
+                class:is-landscape={isLandscape}
+                class:is-portrait={!isLandscape}
+                class:loaded={isImageLoaded}
+                style="{filterCss} left: var(--pos-x); top: var(--pos-y); transform: scale(var(--zoom));" 
+                on:error={handleImageError} 
+            />
+        {/if}
+
+        <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden} on:click={handleInteraction}>
+            {#if !$isMobile && !isSplitPart && !hidden}
+                <button class="control-btn edit-btn" on:click={handleEditClick} on:mousedown|stopPropagation>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                </button>
+            {/if}
+            {#if !hidden}
+                {#if isSplitPart || (!$isMobile && !isSplitPart)}
+                    <button class="control-btn delete-btn" on:click={handleDeleteClick} on:mousedown|stopPropagation on:touchstart|stopPropagation>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                {/if}
+            {/if}
+            {#if isSplitPart && hidden}
+                <div class="restore-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </div>
+            {/if}
+        </div>
+    </div>
+</div>
+
+<style>
+    .magnet { width: 100%; height: 100%; position: relative; touch-action: none; user-select: none; cursor: pointer; padding: 0; box-sizing: border-box; }
+    .magnet.is-hidden .image-wrapper { opacity: 0.3; filter: grayscale(100%); border: 1px dashed #ccc; }
+    
+    .image-wrapper { 
+        width: 100%; height: 100%; position: relative; border-radius: 12px; overflow: hidden; background: #fff; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: box-shadow 0.3s, opacity 0.2s; z-index: 1; pointer-events: none; 
+        display: flex; justify-content: center; align-items: center; 
+    }
+    
+    .image-wrapper.is-portrait:not(.has-transform) { align-items: flex-start; }
+    
+    .magnet.split-part .image-wrapper { background: transparent; }
+    .image-wrapper.sharp-corners { border-radius: 0 !important; box-shadow: none; }
+    
+    .magnet-image { 
+        display: block; position: relative; transform-origin: center center; will-change: transform, left, top; opacity: 0; transition: opacity 0.2s;
+    }
+    
+    .magnet-image.loaded { opacity: 1; }
+    .magnet-image.is-landscape { height: 100%; width: auto; }
+    .magnet-image.is-portrait { width: 100%; height: auto; }
+    
+    @media (hover: hover) {
+        .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
+        .magnet.desktop-mode:hover .overlay { opacity: 1; }
+    }
+    
+    .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: -webkit-optimize-contrast; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); backdrop-filter: blur(2px); opacity: 0; transition: opacity 0.2s; z-index: 20; pointer-events: none; }
+    .overlay.force-visible { opacity: 1; background: rgba(255,255,255,0.2); pointer-events: auto; }
+    .magnet:hover .overlay { pointer-events: auto; }
+    
+    .control-btn { position: absolute; top: 8px; width: 32px; height: 32px; border-radius: 50%; background: white; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.2); opacity: 0; transform: scale(0.8); transition: all 0.2s; padding: 0; pointer-events: auto; z-index: 30; }
+    .magnet:hover .control-btn { opacity: 1; transform: scale(1); }
+    .control-btn:hover { transform: scale(1.1); background: #f5f5f7; }
+    .control-btn svg { width: 18px; height: 18px; display: block; color: inherit; }
+    .edit-btn { left: 8px; color: #333; }
+    .delete-btn { right: 8px; color: #e53935; }
+    .restore-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #333; width: 32px; height: 32px; opacity: 0.7; pointer-events: none; }
+</style>
+</file>
+
+<file path="src/routes/uploader/+page.svelte">
+<script>
+    import { onMount, onDestroy, tick } from 'svelte';
+    import { fade } from 'svelte/transition';
+    import Magnet from '$lib/components/Magnet.svelte';
+    import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+    import FileUploader from '$lib/components/FileUploader.svelte';
+    import MosaicEditor from '$lib/components/MosaicEditor.svelte';
+    import GiftButton from '$lib/components/GiftButton.svelte'; 
+    import UpsellWidget from '$lib/components/UpsellWidget.svelte';
+    
+    import { draggable } from '$lib/actions/draggable.js';
+    import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
+    import { resetSystem } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
+    
+    import { 
+        magnets, 
+        editorSettings, 
+        isMobile,
+        addUploadedMagnets,
+        updateMagnetProcessedSrc, 
+        getFullMagnetSize, 
+        getMargin,
+        saveWorkspaceToCart,
+        PRODUCT_TYPES,        
+        BASE_MAGNET_SIZE, 
+        SPLIT_MAGNET_SIZE,        
+        SPLIT_MARGIN_PERCENT, 
+        MIN_GRID_BASE,
+        SCALE_MIN,        
+        SCALE_MAX,          
+        SCALE_DEFAULT,
+        PACKAGES  
+    } from '$lib/stores.js';
+
+    const effectsList = [
+        { id: 'original', name: 'מקורי', filter: 'none' },
+        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
+        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
+        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
+        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
+    ];
+
+    let effectsWorker;
+    let activePanel = null;
+    let loaderEl;
+    let surfaceEl;
+    let resizeObserver;
+    let lastSurfaceWidth = 0;
+    
+    let isSplitEditing = false; 
+    $: isGiftMode = $editorSettings.currentProductType === PRODUCT_TYPES.GIFT;
+    
+    $: splitGridInfo = (() => {
+        const ratio = $editorSettings.splitImageRatio;
+        const base = $editorSettings.gridBaseSize;
+        let c, r;
+        if (ratio > 1) { c = Math.round(base * ratio); r = base; } 
+        else { r = Math.round(base / ratio); c = base; }
+        return { cols: c, rows: r, total: c * r };
+    })();
+    
+    $: canAddToCartMosaic = !!$editorSettings.splitImageSrc;
+
+    onMount(() => {
+        window.addEventListener('dragstart', (e) => e.preventDefault());
+        window.addEventListener('resize', handleResize);
+        
+        // פתיחת מתנה אוטומטית אם צריך
+        setTimeout(() => {
+            if ($editorSettings.currentProductType === PRODUCT_TYPES.GIFT) {
+                const giftBtn = document.querySelector('.gift-btn');
+                if (giftBtn) giftBtn.click();
+            }
+        }, 300);
+
+        let currentScale = $editorSettings.currentDisplayScale;
+        if (!currentScale || currentScale < SCALE_MIN || currentScale > SCALE_MAX) {
+            editorSettings.update(s => ({ ...s, currentDisplayScale: SCALE_DEFAULT }));
+        }
+
+        if (window.Worker) {
+            effectsWorker = new Worker('/effects.worker.js');
+            effectsWorker.onmessage = (event) => {
+                const { status, magnetId, effectId, blob } = event.data;
+                if (status === 'success') {
+                    const newSrc = URL.createObjectURL(blob);
+                    if (magnetId === 'split-master') {
+                        editorSettings.update(s => {
+                            const newCache = { ...s.splitImageCache, [effectId]: newSrc };
+                            return { ...s, splitImageCache: newCache };
+                        });
+                        if (loaderEl) loaderEl.style.display = 'none';
+                    } else {
+                        updateMagnetProcessedSrc(magnetId, effectId, newSrc);
+                    }
+                }
+            };
+        }
+
+        resizeObserver = new ResizeObserver((entries) => {
+            const entry = entries[0];
+            if (!entry) return;
+            const newWidth = entry.contentRect.width;
+            
+            // מניעת חישובים מיותרים אם השינוי זניח (למשל גלילה שמשנה גובה במובייל)
+            if (Math.abs(newWidth - lastSurfaceWidth) < 2) return; 
+            
+            lastSurfaceWidth = newWidth;
+            if ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
+                handleReflow();
+            }
+        });
+
+        if (surfaceEl && surfaceEl.parentElement) {
+            lastSurfaceWidth = surfaceEl.parentElement.clientWidth;
+            resizeObserver.observe(surfaceEl.parentElement);
+        }
+
+        setTimeout(() => {
+            if ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
+                const savedScale = $editorSettings.currentDisplayScale || SCALE_DEFAULT;
+                const newSize = BASE_MAGNET_SIZE * savedScale;
+                magnets.update(list => list.map(m => ({ ...m, size: newSize })));
+                
+                if (!$isMobile && $magnets.length > 0 && (!$magnets[0].position || $magnets[0].position.x === 0)) {
+                    fillEmptySlots();
+                } else {
+                    updateSurfaceHeight();
+                }
+            } else if ($editorSettings.splitImageSrc) { 
+                calculateAndRenderSplitGrid();
+            }
+        }, 100);
+        
+        return () => {
+             window.removeEventListener('resize', handleResize);
+        }
+    });
+
+    onDestroy(() => {
+        if (effectsWorker) effectsWorker.terminate();
+        if (resizeObserver && surfaceEl && surfaceEl.parentElement) resizeObserver.unobserve(surfaceEl.parentElement);
+    });
+    
+    function handleResize() {
+        if ($isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC) {
+            calculateAndRenderSplitGrid();
+        }
+    }
+
+    function handleReflow() {
+        // במובייל אנחנו ב-Grid CSS, אז לא צריך לחשב מיקומים ב-JS
+        if ($isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
+             updateSurfaceHeight();
+             return;
+        }
+        
+        if ($magnets.length === 0 || $editorSettings.currentProductType !== PRODUCT_TYPES.MAGNETS_PACK || !surfaceEl) {
+            updateSurfaceHeight();
+            return;
+        }
+
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        const itemFullSize = getFullMagnetSize();
+        const margin = getMargin();
+        
+        const newLayout = reflowMagnets($magnets, surfaceWidth, itemFullSize, margin);
+        magnets.set(newLayout);
+        
+        setTimeout(updateSurfaceHeight, 0);
+    }
+
+    function fillEmptySlots() {
+        if (!surfaceEl || $isMobile) return;
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        const itemFullSize = getFullMagnetSize(); 
+        const margin = getMargin();
+        
+        const newLayout = placeNewMagnets($magnets, surfaceWidth, itemFullSize, margin);
+        magnets.set(newLayout);
+        
+        setTimeout(updateSurfaceHeight, 0);
+    }
+
+    function updateSurfaceHeight() {
+        if (!surfaceEl) return;
+        let items = $magnets; 
+        let margin = ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) ? getMargin() : 50;
+
+        if (items.length === 0) {
+            editorSettings.update(s => ({ ...s, surfaceMinHeight: '100%' }));
+            return;
+        }
+
+        if ($isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
+            // חישוב גובה משוער לגריד במובייל
+            const rows = Math.ceil(items.length / 2);
+            const approxRowHeight = (window.innerWidth / 2) + 16; 
+            const totalHeight = (rows * approxRowHeight) + 100;
+            editorSettings.update(s => ({ ...s, surfaceMinHeight: `${totalHeight}px` }));
+        } else {
+            let maxBottom = 0;
+            items.forEach(item => {
+                const bottomPosition = item.position.y + item.size;
+                if (bottomPosition > maxBottom) maxBottom = bottomPosition;
+            });
+            const totalHeight = maxBottom + margin;
+            const containerHeight = surfaceEl.parentElement.clientHeight;
+            editorSettings.update(s => ({ ...s, surfaceMinHeight: `${Math.max(totalHeight, containerHeight)}px` }));
+        }
+    }
+
+    function onMagnetDragEnd(event) {
+        if ($isMobile) return; // הגנה נוספת
+        const { x, y, id } = event;
+        const itemFullSize = getFullMagnetSize();
+        const margin = getMargin();
+        const gridStep = itemFullSize + margin; 
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        const cols = Math.floor((surfaceWidth - margin) / gridStep);
+        const numCols = Math.max(1, cols);
+
+        const bestSlot = findBestTargetSlot(x, y, margin, gridStep, numCols);
+        
+        let snapX, snapY;
+        if (bestSlot) {
+            snapX = margin + (bestSlot.col * gridStep);
+            snapY = margin + (bestSlot.row * gridStep);
+        } else {
+            snapX = x; snapY = y;
+        }
+
+        magnets.update(list => list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m));
+        setTimeout(updateSurfaceHeight, 300);
+    }
+
+    function triggerUploadAction() {
+        const elementId = $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK ? 'upload-multi-input' : 'upload-split-input';
+        const el = document.getElementById(elementId);
+        if (el) el.click();
+    }
+
+    async function onMultiFilesSelected(event) {
+        const files = event.detail;
+        if (!files || files.length === 0) return;
+        loaderEl.style.display = 'block'; 
+        
+        await addUploadedMagnets(files);
+        
+        const currentScale = $editorSettings.currentDisplayScale || SCALE_DEFAULT;
+        const targetSize = BASE_MAGNET_SIZE * currentScale;
+        
+        magnets.update(list => list.map(m => ({ ...m, size: targetSize })));
+        loaderEl.style.display = 'none';
+        
+        if (!$isMobile) fillEmptySlots();
+        else updateSurfaceHeight();
+    }
+    
+    function onSplitImageLoaded(event) {
+        const { src, ratio } = event.detail;
+        loaderEl.style.display = 'block';
+        
+        editorSettings.update(s => ({ 
+            ...s, 
+            splitImageSrc: src,
+            splitImageRatio: ratio,
+            gridBaseSize: MIN_GRID_BASE,
+            currentEffect: 'original',
+            splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
+            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null },
+            surfaceMinHeight: '0px' 
+        }));
+
+        setTimeout(() => {
+            calculateAndRenderSplitGrid(); 
+        }, 50); 
+    }
+
+    let splitRenderFrame;
+    function calculateAndRenderSplitGrid() {
+        if (splitRenderFrame) cancelAnimationFrame(splitRenderFrame);
+        if (loaderEl) loaderEl.style.display = 'block';
+
+        splitRenderFrame = requestAnimationFrame(() => {
+            const $settings = $editorSettings;
+            if ($settings.currentProductType !== PRODUCT_TYPES.MOSAIC || !$settings.splitImageSrc) {
+                if (loaderEl) loaderEl.style.display = 'none';
+                return;
+            }
+
+            const imageRatio = $settings.splitImageRatio;
+            const base = $settings.gridBaseSize;
+            let cols, rows;
+
+            if (imageRatio > 1) { cols = Math.round(base * imageRatio); rows = base; } 
+            else { rows = Math.round(base / imageRatio); cols = base; }
+
+            let size, gap;
+            
+            if ($isMobile) {
+                gap = 2; 
+                const totalScreenWidth = window.innerWidth;
+                size = (totalScreenWidth - ((cols - 1) * gap)) / cols;
+            } else {
+                const marginX = 20; 
+                const marginTop = 50; 
+                const marginBottom = 140; 
+                
+                const availableWidth = window.innerWidth - (marginX * 2);
+                const availableHeight = window.innerHeight - (marginTop + marginBottom);
+                
+                const gapRatio = SPLIT_MARGIN_PERCENT;
+                const safetyFactor = 0.96; 
+                const sizeByWidth = (availableWidth * safetyFactor) / (cols + ((cols - 1) * gapRatio));
+                const sizeByHeight = (availableHeight * safetyFactor) / (rows + ((rows - 1) * gapRatio));
+                
+                size = Math.min(SPLIT_MAGNET_SIZE, sizeByWidth, sizeByHeight);
+                gap = size * gapRatio;
+            }
+
+            const step = size + gap;
+            const count = cols * rows;
+            const totalGridWidth = (cols * size) + ((cols - 1) * gap);
+            const totalGridHeight = (rows * size) + ((rows - 1) * gap);
+            
+            if (surfaceEl) {
+                if (!$isMobile) {
+                    surfaceEl.style.width = `${totalGridWidth}px`;
+                    surfaceEl.style.height = `${totalGridHeight}px`;
+                    editorSettings.update(s => ({...s, surfaceMinHeight: '0px'}));
+                } else {
+                    surfaceEl.style.width = '';
+                    surfaceEl.style.height = '';
+                    const h = (rows * step) - gap;
+                    editorSettings.update(s => ({...s, surfaceMinHeight: `${h}px`}));
+                }
+            }
+
+            let bgWidth, bgHeight;
+            if (imageRatio > (totalGridWidth / totalGridHeight)) {
+                bgHeight = Math.ceil(totalGridHeight) + 2; bgWidth = Math.ceil(bgHeight * imageRatio);
+            } else {
+                bgWidth = Math.ceil(totalGridWidth) + 2; bgHeight = Math.ceil(bgWidth / imageRatio);
+            }
+
+            const userTransform = $settings.splitTransform || { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 };
+            const finalBgWidth = bgWidth * userTransform.zoom;
+            const finalBgHeight = bgHeight * userTransform.zoom;
+            
+            const shiftX = (userTransform.xPct || 0) * finalBgWidth;
+            const shiftY = (userTransform.yPct || 0) * finalBgHeight;
+            
+            const startX = (totalGridWidth - finalBgWidth) / 2 + shiftX;
+            const startY = (totalGridHeight - finalBgHeight) / 2 + shiftY;
+
+            const imageSource = $settings.splitImageSrc;
+            let newMagnets = [];
+
+            for (let i = 0; i < count; i++) {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                const magnetX = col * step;
+                const magnetY = row * step;
+                
+                newMagnets.push({
+                    id: `split-${row}-${col}`, 
+                    src: imageSource, 
+                    originalSrc: $settings.splitImageSrc, 
+                    isSplitPart: true,
+                    hidden: false, 
+                    size: size, 
+                    position: { x: magnetX, y: magnetY },
+                    activeEffectId: $settings.currentEffect || 'original',
+                    transform: { 
+                        bgWidth: finalBgWidth, bgHeight: finalBgHeight, 
+                        bgPosX: startX - magnetX, bgPosY: startY - magnetY 
+                    }
+                });
+            }
+
+            magnets.set(newMagnets);
+            
+            if (loaderEl) loaderEl.style.display = 'none';
+        });
+    }
+
+    function handleSaveMosaic(event) {
+        const newTransform = event.detail;
+        if (loaderEl) loaderEl.style.display = 'block';
+        editorSettings.update(s => ({ ...s, splitTransform: newTransform }));
+        isSplitEditing = false;
+        setTimeout(calculateAndRenderSplitGrid, 50);
+    }
+
+    function togglePanel(name) { activePanel = activePanel === name ? null : name; }
+
+    function handleSizeChange(event) {
+        const newScale = parseFloat(event.target.value);
+        editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
+        requestAnimationFrame(() => {
+            const newSize = BASE_MAGNET_SIZE * newScale;
+            magnets.update(list => list.map(m => ({ ...m, size: newSize })));
+            if ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) handleReflow();
+        });
+    }
+
+    function applyEffectToAllMagnets(effectId) {
+        editorSettings.update(s => ({ ...s, currentEffect: effectId }));
+        magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
+        
+        if (effectId === 'original') return;
+
+        if ($editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC) {
+            if (!$editorSettings.splitImageCache || !$editorSettings.splitImageCache[effectId]) {
+                effectsWorker.postMessage({ magnetId: 'split-master', effectId: effectId, originalSrc: $editorSettings.splitImageSrc });
+            }
+        } else {
+            for (const magnet of $magnets) {
+                if (!magnet.processed || !magnet.processed[effectId]) {
+                    updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
+                    effectsWorker.postMessage({ magnetId: magnet.id, effectId: effectId, originalSrc: magnet.originalSrc });
+                }
+            }
+        }
+    }
+
+    function incrementGrid() { 
+        if (loaderEl) loaderEl.style.display = 'block';
+        setTimeout(() => { editorSettings.update(s => ({ ...s, gridBaseSize: s.gridBaseSize + 1 })); calculateAndRenderSplitGrid(); }, 50);
+    }
+    
+    function decrementGrid() { 
+        if ($editorSettings.gridBaseSize > MIN_GRID_BASE) { 
+            if (loaderEl) loaderEl.style.display = 'block';
+            setTimeout(() => { editorSettings.update(s => ({ ...s, gridBaseSize: s.gridBaseSize - 1 })); calculateAndRenderSplitGrid(); }, 50);
+        } 
+    }
+
+    function handleDeleteRequest(event) {
+        const id = event.detail.id;
+        magnets.update(list => list.filter(m => m.id !== id));
+        setTimeout(handleReflow, 0);
+    }
+
+    function handleToggleVisibility(event) {
+        const id = event.detail.id;
+        magnets.update(list => list.map(m => {
+            if (m.id === id) return { ...m, hidden: !m.hidden };
+            return m;
+        }));
+    }
+
+    function handleAddToCartMosaic() {
+        if (canAddToCartMosaic) {
+            saveWorkspaceToCart();
+        }
+    }
+</script>
+
+<div class="canvas-container" 
+     class:container-dark={$editorSettings.isSurfaceDark} 
+     class:split-center={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
+     class:mobile-grid-active={$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK}>
+    
+    <div 
+        id="configurator-surface" 
+        bind:this={surfaceEl} 
+        style="min-height: {$editorSettings.surfaceMinHeight};"
+        class:surface-dark={$editorSettings.isSurfaceDark}
+    >
+        {#each $magnets as magnet (magnet.id)}
+            <div 
+                class="magnet-wrapper"
+                style="left: {magnet.position.x}px; top: {magnet.position.y}px; width: {magnet.size}px; height: {magnet.size}px;"
+                use:draggable={{
+                    enabled: $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK && !$isMobile,
+                    onDragEnd: (e) => onMagnetDragEnd({ ...e, id: magnet.id })
+                }}
+            >
+                <Magnet 
+                    {...magnet}
+                    position={{x:0, y:0}} 
+                    isSplitPart={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
+                    hidden={magnet.hidden} 
+                    on:delete={handleDeleteRequest}
+                    on:toggleVisibility={handleToggleVisibility} 
+                    on:dblclick={(e) => e.preventDefault()} 
+                />
+            </div>
+        {/each}
+    </div>
+        
+    {#if $magnets.length === 0 && !$editorSettings.splitImageSrc && !isGiftMode}
+    <div id="initial-upload-prompt">
+        <button id="initial-upload-btn" on:click={triggerUploadAction}>
+            {#if $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK}
+                הוסף תמונות
+            {:else}
+                <div class="mosaic-icon">
+                    <span></span><span></span><span></span>
+                    <span></span><span></span><span></span>
+                    <span></span><span></span><span></span>
+                </div>
+            {/if}
+        </button>
+        {#if $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
+            <span id="initial-upload-text">בחר תמונה לפיצול</span>
+        {/if}
+    </div>
+    {/if}
+    
+    {#if isGiftMode && !$editorSettings.giftImage}
+        <div class="gift-only-mode-msg">
+            <h3>עריכת מתנה</h3>
+            <p>לחץ על כפתור המתנה למטה כדי להחליף תמונה</p>
+        </div>
+    {/if}
+</div>
+
+{#if isGiftMode}
+    <footer class="glass-dock" transition:fade>
+        <button class="dock-btn-text" on:click={() => { resetSystem(); goto('/select'); }}>ביטול</button>
+        <div class="dock-divider"></div>
+        <GiftButton /> 
+    </footer>
+{:else}
+    {#if $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK && $magnets.length > 0}
+        <footer class="glass-dock" transition:fade>
+            <button class="dock-btn-text mobile-hidden" on:click={() => { handleReflow(); activePanel = null; }}>סדר מחדש</button>
+            <div class="dock-divider mobile-hidden"></div>
+            <button class="dock-btn-text mobile-hidden" on:click={() => togglePanel('size')}>גודל</button>
+            <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button>
+            <button class="dock-btn-text" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
+            
+            <div class="dock-divider"></div>
+            <GiftButton />
+            <UpsellWidget />
+            <button class="dock-btn-circle secondary" on:click={() => { triggerUploadAction(); activePanel = null; }} title="הוסף עוד תמונות">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+        </footer>
+    {/if}
+    {#if $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC && $editorSettings.splitImageSrc}
+    <footer class="glass-dock" transition:fade>
+         <button class="dock-btn-text" on:click={() => { triggerUploadAction(); activePanel = null; }}>החלפה</button>
+         
+         <button class="dock-btn-text mobile-hidden" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
+         
+         <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button> 
+         
+         <div class="dock-divider"></div>
+         <GiftButton />
+         <UpsellWidget />
+         
+         <button class="dock-btn-circle secondary" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+                <line x1="3" y1="15" x2="21" y2="15"></line>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+                <line x1="15" y1="3" x2="15" y2="21"></line>
+             </svg>
+         </button>
+         <button class="dock-btn-circle secondary" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
+                <path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
+             </svg>
+         </button>
+    </footer>
+{/if}
+{/if}
+
+<FileUploader 
+    uploadId="upload-multi-input" 
+    mode="multi" 
+    on:uploadStart={() => loaderEl.style.display = 'block'}
+    on:filesSelected={onMultiFilesSelected} 
+/>
+<FileUploader 
+    uploadId="upload-split-input" 
+    mode="split" 
+    on:uploadStart={() => loaderEl.style.display = 'block'}
+    on:splitImageLoaded={onSplitImageLoaded} 
+/>
+
+<div class="brand-loader-bar" id="loader" bind:this={loaderEl} style="display: none;">
+    <div class="loader-progress"></div>
+</div>
+
+<FloatingPanel title="גודל תצוגה" isOpen={activePanel === 'size'} on:close={() => activePanel = null}>
+    <div class="size-slider-container">
+        <span>-</span>
+        <input type="range" min={SCALE_MIN} max={SCALE_MAX} step="0.01" value={$editorSettings.currentDisplayScale} on:input={handleSizeChange}>
+        <span>+</span>
+    </div>
+</FloatingPanel>
+
+<FloatingPanel title="גודל הרשת" isOpen={activePanel === 'grid'} on:close={() => activePanel = null}>
+    <div class="grid-control-panel">
+        <button class="round-control-btn" on:click={decrementGrid} disabled={$editorSettings.gridBaseSize <= MIN_GRID_BASE}>-</button>
+        <div class="grid-info">
+            <span class="grid-dim" dir="ltr">{splitGridInfo.cols} x {splitGridInfo.rows}</span>
+            <span class="grid-total">({splitGridInfo.total} יחידות)</span>
+        </div>
+        <button class="round-control-btn" on:click={incrementGrid}>+</button>
+    </div>
+</FloatingPanel>
+
+<FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
+    <div class="effects-list">
+        {#each effectsList as effect (effect.id)}
+            <button class="effect-select-btn" class:active={effect.id === $editorSettings.currentEffect} on:click={() => applyEffectToAllMagnets(effect.id)}>
+                <div class="thumbnail-wrapper">
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
+                </div>
+                <span>{effect.name}</span>
+            </button>
+        {/each}
+    </div>
+</FloatingPanel>
+
+{#if isSplitEditing && $editorSettings.splitImageSrc}
+    <MosaicEditor 
+        imageSrc={$editorSettings.splitImageSrc}
+        transform={$editorSettings.splitTransform}
+        gridSettings={{ cols: splitGridInfo.cols, rows: splitGridInfo.rows }}
+        on:save={handleSaveMosaic}
+        on:close={() => isSplitEditing = false}
+    />
+{/if}
+
+<style>
+    .magnet-wrapper { position: absolute; touch-action: none; z-index: 10; }
+    .magnet-wrapper.draggable-active { z-index: 1000; cursor: grabbing; }
+    #configurator-surface { background-color: #F2F0EC; transition: background-color 0.3s ease; position: relative; }
+    #configurator-surface.surface-dark { background-color: #1E1E1E; }
+    
+    .mosaic-icon { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; width: 24px; height: 24px; }
+    .mosaic-icon span { background-color: currentColor; border-radius: 1px; width: 100%; height: 100%; }
+    
+    .canvas-container.split-center #configurator-surface { display: flex; justify-content: center; align-items: center; }
+    
+    .brand-loader-bar { position: fixed; bottom: 0; left: 0; width: 100%; height: 6px; background-color: #F2F0EC; z-index: 9999; overflow: hidden; }
+    .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, #3F524F, #846349, #475160, #3F524F); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
+    @keyframes brandLoading { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+    
+    .grid-control-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; padding: 10px; }
+    .round-control-btn { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--color-pink); background: white; color: var(--color-pink); font-size: 24px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; padding-bottom: 4px; }
+    .round-control-btn:disabled { border-color: #ccc; color: #ccc; cursor: not-allowed; }
+    
+    .grid-info { display: flex; flex-direction: column; align-items: center; }
+    .grid-dim { font-size: 20px; font-weight: 700; color: var(--color-medium-blue-gray); }
+    .grid-total { font-size: 14px; color: #666; }
+    
+    .size-slider-container { display: flex; align-items: center; gap: 15px; }
+    .size-slider-container span { font-size: 16px; color: var(--color-medium-blue-gray); }
+    
+    .effects-list { display: flex; gap: 15px; justify-content: center; padding: 5px 0; overflow-x: auto; }
+    .effect-select-btn { background: none; border: none; cursor: pointer; padding: 0; font-family: 'Assistant', sans-serif; font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .effect-select-btn .thumbnail-wrapper { width: 80px; height: 80px; border-radius: 8px; border: 3px solid transparent; overflow: hidden; }
+    .effect-select-btn .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+    .effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
+    
+    .dock-btn-circle.disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.7; }
+    .dock-btn-circle.disabled:hover { transform: none; }
+    
+    .gift-only-mode-msg { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--color-medium-blue-gray); pointer-events: none; }
+    
+    /* Mobile Grid Override */
+    @media (max-width: 768px) {
+        .canvas-container.mobile-grid-active {
+            overflow-y: auto !important; /* גלילה אנכית רק כשיש תוכן */
+            overflow-x: hidden !important; /* ללא גלילה אופקית */
+        }
+        
+        .mobile-grid-active #configurator-surface {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            grid-auto-rows: min-content;
+            gap: 16px !important;
+            padding: 16px !important;
+            
+            height: auto !important;
+            min-height: 100% !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            align-content: start !important;
+            direction: ltr !important;
+        }
+        .mobile-grid-active .magnet-wrapper {
+            position: relative !important;
+            inset: auto !important;
+            width: 100% !important;
+            height: auto !important;
+            aspect-ratio: 1 / 1 !important;
+            margin: 0 !important;
+            transform: none !important;
+            z-index: 1 !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
+        }
+        .mobile-grid-active .magnet,
+        .mobile-grid-active .image-wrapper {
+            width: 100% !important;
+            height: 100% !important;
+            position: static !important;
+            border-radius: 0 !important;
+            transform: none !important;
+            pointer-events: auto !important;
+        }
+        .mobile-grid-active img {
+            display: block !important;
+            image-rendering: -webkit-optimize-contrast; 
+            pointer-events: auto !important;
+        }
+        .mobile-grid-active .overlay,
+        .mobile-grid-active .control-btn {
+            display: none !important;
+        }
+        .mobile-hidden {
+            display: none !important;
+        }
+    }
+    
+    /* Desktop Mosaic Final Fix */
+    @media (min-width: 769px) {
+        .canvas-container.split-center {
+            direction: ltr !important;
+            display: grid !important;
+            justify-items: center; 
+            align-items: start; 
+            align-content: start;
+            padding-top: 50px;
+            padding-bottom: 120px;
+            width: 100%;
+            height: 100%;
+            overflow: hidden !important;
+            box-sizing: border-box;
+        }
+        
+        .canvas-container.split-center #configurator-surface {
+            background-color: transparent !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+            position: relative;
+            max-width: none !important;
+            max-height: none !important;
+            overflow: visible !important;
+            transition: width 0.3s ease-out, height 0.3s ease-out;
+        }
+    }
+    
+    /* Mobile Mosaic Full Width Fix */
+    @media (max-width: 768px) {
+        .canvas-container.split-center {
+            padding: 0 !important;
+            background-color: var(--color-dark-blue);
+            overflow-y: auto !important; /* גלילה אנכית רק כשיש תוכן */
+            overflow-x: hidden !important; /* ללא גלילה אופקית */
+        }
+        .canvas-container.split-center #configurator-surface {
+            width: 100% !important;
+            padding: 0 !important;
+            display: block !important; /* block כדי לאפשר position absolute */
+            position: relative !important;
+            overflow-x: hidden !important;
+            overflow-y: visible !important;
+        }
+        
+        body {
+            overflow-x: hidden;
+        }
+    }
+</style>
+</file>
+
+<file path="src/app.css">
+:root {
+    /* --- פלטת צבעים --- */
+    --color-dark-blue: #1E1E1E; /* Ink */
+    --color-header-blue: rgb(63, 82, 79); /* Teal */
+    --color-medium-blue-gray: #1E1E1E; /* Ink */
+    --color-dark-gray: rgb(71, 81, 96); /* Navy */
+    --color-light-gray: #FFFFFF; /* White */
+    --color-gold: #C6B29A; /* Tan */
+    --color-pink: rgb(63, 82, 79); /* Teal (Brand Accent) */
+    --color-light-pink: rgb(63, 82, 79); 
+    --color-canvas-bg: #F2F0EC; /* Sand */
+    --color-card-dark: #2D2D2D; /* Slate */
+}
+
+/* --- איפוס גלובלי ופונטים --- */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+body {
+    background-color: var(--color-dark-blue); 
+    font-family: 'Assistant', sans-serif; 
+    -webkit-font-smoothing: antialiased; 
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden; /* מניעת גלילה רוחבית */
+}
+
+/* כפיית הפונט על כל האלמנטים */
+button, input, textarea, select, span, div, a, h1, h2, h3, h4, h5, h6, p {
+    font-family: 'Assistant', sans-serif !important;
+}
+
+.page-container { 
+    height: 100vh; 
+    width: 100vw; 
+    display: flex; 
+    flex-direction: column;
+    padding-top: 70px; /* גובה Header קבוע */
+    box-sizing: border-box;
+}
+
+/* --- 🔥 עיצוב גלילה (Scrollbar) מינימליסטי ואחיד --- */
+
+/* הגדרה כללית ל-Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-gold) transparent;
+}
+
+/* הגדרה ל-Webkit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+    width: 6px;  /* רוחב ברירת מחדל דק */
+    height: 6px; /* גובה לגלילה אופקית */
+}
+
+::-webkit-scrollbar-track {
+    background: transparent; /* מסלול שקוף לחלוטין */
+    margin: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: rgba(198, 178, 154, 0.5); /* זהב חצי שקוף */
+    border-radius: 10px;
+    border: 2px solid transparent; /* טריק ליצירת רווח מהדפנות */
+    background-clip: content-box;
+    transition: background-color 0.2s, width 0.2s;
+}
+
+/* מצב Hover על הגלילה - הופך לברור ונוח לגרירה */
+::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-gold); /* צבע מלא */
+    border-width: 0; /* ביטול הרווח כדי שיראה עבה יותר */
+}
+
+/* מחלקת עזר לאזורים עם גלילה פנימית */
+.theme-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* --- 🔥 עיצוב Tooltip אחיד (Global) --- */
+[data-tooltip] {
+    position: relative;
+}
+
+/* הבועה */
+[data-tooltip]::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(0px);
+    
+    background-color: var(--color-dark-blue);
+    color: var(--color-gold);
+    border: 1px solid var(--color-gold);
+    
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 10000;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    
+    transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+/* המשולש */
+[data-tooltip]::after {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(0px);
+    
+    border-width: 6px;
+    border-style: solid;
+    border-color: var(--color-gold) transparent transparent transparent;
+    
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    z-index: 10000;
+}
+
+/* אינטראקציה */
+[data-tooltip]:hover::before {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(-10px);
+}
+[data-tooltip]:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(-4px);
+}
+
+/* --- אנימציות --- */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.fade-in-up { 
+    opacity: 0; 
+    transform: translateY(30px); 
+    transition: opacity 0.6s ease-out, transform 0.6s ease-out; 
+    transition-delay: var(--delay, 0ms); 
+}
+.fade-in-up.visible { 
+    opacity: 1; 
+    transform: translateY(0); 
+}
+
+/* --- עמוד הבית (Home Styles) --- */
+.home-content { 
+    background-color: var(--color-canvas-bg); 
+    display: flex; 
+    flex-direction: column; 
+    justify-content: flex-start; 
+    align-items: center; 
+    padding: 0; 
+    box-sizing: border-box; 
+    min-height: calc(100vh - 70px); 
+}
+
+.hero-container { 
+    position: relative; 
+    width: 100%; 
+    height: 75vh; 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    overflow: hidden; 
+}
+
+.hero-video { 
+    width: 100%; 
+    height: 100%; 
+    object-fit: cover; 
+    object-position: center center; 
+    position: absolute; 
+    top: 0; left: 0; 
+    z-index: 1; 
+}
+
+.hero-text-overlay { 
+    position: relative; 
+    z-index: 2; 
+    display: flex; 
+    flex-direction: column; 
+    align-items: center; 
+    justify-content: center; 
+    text-align: center; 
+    color: white; 
+    padding: 0 20px; 
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); 
+}
+
+.hero-headline { font-size: 3.5rem; font-weight: 700; margin: 0; line-height: 1.2; }
+.hero-subheadline { font-size: 1.5rem; font-weight: 400; margin-top: 20px; max-width: 600px; line-height: 1.5; }
+
+#home-shop-btn { 
+    font-size: 24px; 
+    padding: 20px 40px; 
+    border-radius: 12px; 
+    border: 2px solid var(--color-pink); 
+    color: var(--color-pink); 
+    background-color: transparent; 
+    cursor: pointer; 
+    transition: all 0.3s; 
+    margin-top: 40px; 
+    text-decoration: none; 
+}
+#home-shop-btn:hover { background-color: var(--color-pink); color: var(--color-light-gray); }
+
+/* --- כרטיסי מידע (Info Cards) --- */
+.info-section { width: 100%; max-width: 1300px; margin: 40px auto; padding: 0 40px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+.info-title { font-size: 2.5rem; font-weight: 700; color: var(--color-medium-blue-gray); margin: 0; text-align: center; }
+.info-description { font-size: 1.1rem; color: var(--color-dark-gray); text-align: center; max-width: 650px; line-height: 1.6; margin: 0; }
+
+.info-cards-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; width: 100%; margin-top: 30px; }
+
+.info-card { 
+    background: var(--color-light-gray); 
+    border-radius: 20px; 
+    padding: 30px; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
+    border: 1px solid rgba(0,0,0,0.05); 
+    text-align: center; 
+    text-decoration: none; 
+    cursor: default; 
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s ease, border-color 0.3s ease; 
+}
+.info-card:hover { transform: translateY(-10px) scale(1.02); box-shadow: 0 20px 40px rgba(198, 178, 154, 0.2); border-color: var(--color-gold); }
+a.info-card, button.info-card { cursor: pointer; }
+
+.info-card h4 { font-size: 1.5rem; font-weight: 700; color: var(--color-gold); margin: 0; display: flex; align-items: center; justify-content: center; gap: 10px; transition: transform 0.3s ease; }
+.info-card:hover h4 { transform: translateY(-3px); }
+
+.card-icon { width: 28px; height: 28px; fill: var(--color-gold); flex-shrink: 0; transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.3s; }
+.info-card:hover .card-icon { transform: scale(1.2) rotate(-8deg); filter: drop-shadow(0 4px 6px rgba(198, 178, 154, 0.4)); }
+
+.info-card .card-description { font-size: 1rem; color: var(--color-dark-gray); line-height: 1.6; margin-top: 15px; margin-bottom: 0; text-align: start; transition: color 0.3s; }
+.info-card:hover .card-description { color: var(--color-medium-blue-gray); }
+
+/* --- קהילה (Community) --- */
+.community-section { width: 100%; background-color: var(--color-canvas-bg); padding: 60px 0; box-sizing: border-box; overflow: hidden; position: relative; border-top: 1px solid #e0e0e0; }
+.community-wrapper { position: relative; width: 100%; max-width: 1300px; margin: 0 auto; padding: 0 60px; box-sizing: border-box; }
+.community-title { font-size: 2.5rem; font-weight: 700; color: var(--color-medium-blue-gray); margin: 0 0 30px 0; text-align: center; }
+
+.scroll-btn { position: absolute; top: 50%; transform: translateY(-50%); z-index: 10; background-color: var(--color-light-gray); color: var(--color-dark-gray); border: 1px solid #eee; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-radius: 50%; width: 44px; height: 44px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; opacity: 0.9; }
+.scroll-btn:hover { opacity: 1; transform: translateY(-50%) scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.scroll-btn.left { left: 0px; } .scroll-btn.right { right: 0px; }
+
+.community-scroll-container { overflow-x: auto; overflow-y: hidden; direction: ltr !important; scroll-snap-type: x proximity; -ms-overflow-style: none; scrollbar-width: none; }
+.community-scroll-container::-webkit-scrollbar { display: none; } /* הסתרת גלילה בכוונה כאן */
+.community-scroll-track { display: flex; gap: 20px; }
+.community-card { width: 280px; flex-shrink: 0; scroll-snap-align: start; }
+.community-video-placeholder { width: 100%; aspect-ratio: 9 / 16; background-color: var(--color-light-gray); border-radius: 12px; border: 1px solid #eee; overflow: hidden; position: relative; }
+.community-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
+.community-text-placeholder { padding: 15px 5px; display: flex; flex-direction: column; gap: 8px; }
+.placeholder-line { height: 14px; border-radius: 4px; background-color: var(--color-canvas-bg); }
+.placeholder-line.short { width: 40%; }
+.placeholder-line.long { width: 60%; }
+
+/* --- עמוד בחירה (Selection) --- */
+.selection-content { background-color: var(--color-canvas-bg); flex-grow: 1; overflow-y: visible; padding: 40px 20px; text-align: center; }
+.selection-content h2 { font-size: 28px; color: var(--color-medium-blue-gray); margin-bottom: 30px; font-weight: 600; }
+
+/* --- אלמנטים כלליים (Header Icons, Canvas, etc.) --- */
+.header-icon-btn { border: none; background: none; color: var(--color-gold); font-size: 26px; font-weight: 600; cursor: pointer; transition: color 0.2s; padding: 5px; line-height: 1; text-decoration: none; }
+.header-icon-btn:hover { color: #ffffff; }
+
+.canvas-container { 
+    flex-grow: 1; 
+    position: relative; 
+    overflow: auto; 
+    background: var(--color-canvas-bg); 
+    transition: background-color 0.3s; 
+    display: flex; 
+    flex-direction: column;
+    height: calc(100vh - 70px); /* גובה פחות Header קבוע */
+    box-sizing: border-box;
+}
+.canvas-container.container-dark { background: var(--color-dark-blue); }
+#configurator-surface { width: 100%; min-height: 100%; flex-grow: 1; border: none; background-color: var(--color-canvas-bg); position: relative; transition: background-color 0.3s; box-sizing: border-box; }
+#configurator-surface.surface-dark { background-color: var(--color-dark-blue); }
+
+#initial-upload-prompt { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 15px; }
+#initial-upload-btn { font-size: 20px; padding: 15px 30px; border-radius: 12px; background-color: var(--color-pink); color: white; border: none; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(63, 82, 79, 0.3); transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+#initial-upload-btn:hover { transform: scale(1.05); }
+
+/* --- 🔥 Glass Dock (תפריט עריכה תחתון) --- */
+.glass-dock {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; /* 🔥 z-index נמוך מהעגלה (5001) */
+    display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 25px;
+    width: fit-content; max-width: 90vw; border-radius: 50px;
+    background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+/* 🔥 הבטחה שהעגלה תמיד תהיה מעל glass-dock */
+.cart-drawer {
+    z-index: 5001 !important;
+}
+.backdrop {
+    z-index: 5000 !important;
+}
+.dock-btn-text { background: none; border: none; cursor: pointer; font-size: 16px; font-weight: 700; color: var(--color-medium-blue-gray); padding: 8px 12px; border-radius: 20px; transition: all 0.2s; white-space: nowrap; }
+.dock-btn-text:hover { background-color: rgba(63, 82, 79, 0.1); color: var(--color-pink); }
+
+.dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.2s, background-color 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.dock-btn-circle.primary { background-color: var(--color-pink); color: #ffffff; }
+.dock-btn-circle.secondary { background-color: var(--color-canvas-bg); color: var(--color-medium-blue-gray); border: 1px solid rgba(0,0,0,0.05); }
+.dock-btn-circle.danger { background-color: var(--color-canvas-bg); color: #e53935; border: 1px solid rgba(0,0,0,0.05); }
+.dock-btn-circle:hover { transform: scale(1.1); }
+.dock-btn-circle.disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.7; }
+.dock-btn-circle.disabled:hover { transform: none; }
+
+.dock-divider { width: 1px; height: 20px; background-color: rgba(0,0,0,0.1); margin: 0 5px; }
+
+/* --- Panels & Inputs --- */
+.floating-panel { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) scale(0.9); background: var(--color-light-gray); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); padding: 20px; z-index: 1000; visibility: hidden; opacity: 0; transition: all 0.3s ease-out; width: auto; min-width: 300px; }
+.floating-panel.active { visibility: visible; opacity: 1; transform: translateX(-50%) scale(1); }
+.floating-panel-header h4 { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-medium-blue-gray); }
+
+input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: var(--color-dark-gray); outline: none; border-radius: 5px; }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--color-pink); cursor: pointer; }
+
+/* Effects List */
+.effects-list { display: flex; gap: 15px; justify-content: center; padding: 5px 0; overflow-x: auto; }
+.effect-select-btn { background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.effect-select-btn .thumbnail-wrapper { width: 80px; height: 80px; border-radius: 8px; border: 3px solid transparent; overflow: hidden; display: flex; justify-content: center; align-items: center; transition: border-color 0.2s; }
+.effect-select-btn.active { color: var(--color-pink); }
+.effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
+
+/* --- Magnet Preview (עבור דף העריכה) --- */
+.magnet-preview { background-color: transparent; border: none; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); border-radius: 12px; padding: 0; position:absolute; user-select:none; transition: left 0.5s ease, top 0.5s ease, width 0.2s ease, height 0.2s ease, filter 0.3s ease, box-shadow 0.3s; overflow: hidden; box-sizing: border-box; }
+.magnet-preview:hover { box-shadow: 0 4px 18px rgba(0, 0, 0, 0.15); }
+.magnet-preview img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; border-radius: 12px; transform-origin: center center; transition: transform 0.1s ease-out, filter 0.3s; }
+.magnet-preview.draggable { cursor:grab; transition: none; z-index: 10; }
+.magnet-preview.draggable:active { cursor:grabbing; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.12); z-index: 100; } 
+
+.gift-only-mode-msg { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--color-medium-blue-gray); pointer-events: none; }
+
+/* --- Media Queries --- */
+@media (max-width: 900px) { 
+    .products-grid, .info-cards-grid { grid-template-columns: 1fr; } 
+}
+@media (max-width: 768px) {
+    .glass-dock { bottom: 20px; padding: 8px 15px; gap: 10px; }
+    .effects-list { justify-content: space-between !important; gap: 10px !important; padding: 0 !important; overflow-x: visible !important; width: 100%; }
+    .effects-list .thumbnail-wrapper { width: 17vw !important; height: 17vw !important; max-width: 65px !important; max-height: 65px !important; }
+    .hero-headline { font-size: 2.5rem; } 
+    .hero-subheadline { font-size: 1.1rem; } 
+    .info-section { margin: 40px auto; padding: 0 20px; }
+}
+</file>
+
+</files>
