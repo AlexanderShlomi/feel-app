@@ -63,6 +63,27 @@
     $: canAddToCartMosaic = !!$editorSettings.splitImageSrc;
 
     onMount(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7673/ingest/3221cbc6-40ae-4c77-a825-a11fe005892b', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Debug-Session-Id': '06a31e'
+            },
+            body: JSON.stringify({
+                sessionId: '06a31e',
+                runId: 'initial',
+                hypothesisId: 'LOG1',
+                location: 'src/routes/uploader/+page.svelte:onMount',
+                message: 'uploader page mounted',
+                data: {
+                    path: typeof window !== 'undefined' ? window.location.pathname : null
+                },
+                timestamp: Date.now()
+            })
+        }).catch(() => {});
+        // #endregion agent log
+
         window.addEventListener('dragstart', (e) => e.preventDefault());
         window.addEventListener('resize', handleResize);
         
@@ -396,6 +417,34 @@
 
     function togglePanel(name) { activePanel = activePanel === name ? null : name; }
 
+    function handleEffectsDockClick(context) {
+        // #region agent log
+        fetch('http://127.0.0.1:7673/ingest/3221cbc6-40ae-4c77-a825-a11fe005892b', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Debug-Session-Id': '06a31e'
+            },
+            body: JSON.stringify({
+                sessionId: '06a31e',
+                runId: 'initial',
+                hypothesisId: 'H0',
+                location: 'src/routes/uploader/+page.svelte:handleEffectsDockClick',
+                message: 'effects dock clicked',
+                data: {
+                    context,
+                    currentProductType: $editorSettings.currentProductType,
+                    magnetsCount: $magnets.length,
+                    activePanel
+                },
+                timestamp: Date.now()
+            })
+        }).catch(() => {});
+        // #endregion agent log
+
+        togglePanel('effects');
+    }
+
     function handleSizeChange(event) {
         const newScale = parseFloat(event.target.value);
         editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
@@ -407,6 +456,31 @@
     }
 
     function applyEffectToAllMagnets(effectId) {
+        // #region agent log
+        fetch('http://127.0.0.1:7673/ingest/3221cbc6-40ae-4c77-a825-a11fe005892b', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Debug-Session-Id': '06a31e'
+            },
+            body: JSON.stringify({
+                sessionId: '06a31e',
+                runId: 'initial',
+                hypothesisId: 'H1',
+                location: 'src/routes/uploader/+page.svelte:applyEffectToAllMagnets',
+                message: 'applyEffectToAllMagnets invoked',
+                data: {
+                    effectId,
+                    currentProductType: $editorSettings.currentProductType,
+                    magnetsCount: $magnets.length,
+                    hasWorker: !!effectsWorker,
+                    hasSplitImage: !!$editorSettings.splitImageSrc
+                },
+                timestamp: Date.now()
+            })
+        }).catch(() => {});
+        // #endregion agent log
+
         editorSettings.update(s => ({ ...s, currentEffect: effectId }));
         magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
         
@@ -531,7 +605,7 @@
             <button class="dock-btn-text mobile-hidden" on:click={() => { handleReflow(); activePanel = null; }}>סדר מחדש</button>
             <div class="dock-divider mobile-hidden"></div>
             <button class="dock-btn-text mobile-hidden" on:click={() => togglePanel('size')}>גודל</button>
-            <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button>
+            <button class="dock-btn-text" on:click={() => handleEffectsDockClick('pack-dock')}>אפקטים</button>
             <button class="dock-btn-text" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
             
             <div class="dock-divider"></div>
@@ -548,7 +622,7 @@
          
          <button class="dock-btn-text mobile-hidden" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
          
-         <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button> 
+         <button class="dock-btn-text" on:click={() => handleEffectsDockClick('mosaic-dock')}>אפקטים</button> 
          
          <div class="dock-divider"></div>
          <GiftButton />
