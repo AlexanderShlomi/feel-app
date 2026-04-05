@@ -261,8 +261,8 @@
     <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
     <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
     <div class="dock-divider"></div>
-    <button class="dock-btn-circle danger" on:click={deleteMagnet}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
-    <button class="dock-btn-circle primary" on:click={saveAndClose}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
+    <button class="dock-btn-circle danger" on:click={deleteMagnet}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+    <button class="dock-btn-circle primary" on:click={saveAndClose}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
@@ -331,7 +331,7 @@
     }
     
     /* שאר ה-CSS ללא שינוי */
-    .zoom-controls { position: absolute; bottom: 120px; z-index: 20; width: 80%; max-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: opacity 0.3s; opacity: 0.7; }
+    .zoom-controls { position: absolute; bottom: calc(120px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)); z-index: 20; width: 80%; max-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: opacity 0.3s; opacity: 0.7; }
     .zoom-controls:hover, .editor-page.is-interacting .zoom-controls { opacity: 1; }
     .zoom-controls input { width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; -webkit-appearance: none; }
     .zoom-controls input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--color-pink); border: 2px solid white; border-radius: 50%; cursor: pointer; }
@@ -339,7 +339,7 @@
     .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
     .center-loader { position: absolute; z-index: 30; }
-    .glass-dock { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 15px; padding: 10px 25px; border-radius: 50px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); transition: opacity 0.3s; }
+    .glass-dock { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)); left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 14px; padding: 10px 20px; border-radius: 50px; max-width: min(96vw, 520px); background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); transition: opacity 0.3s; }
     .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }
     .dock-divider { width: 1px; height: 20px; background: #ccc; }
     .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }

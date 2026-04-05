@@ -29,6 +29,18 @@
         showCookiePolicy = true;
     }
 
+    /** iOS Safari: סרגל כתובות/כלי ניווט תחתון דינמי — מרחיק את ה-dock מעל האזור הנסתר */
+    function updateVisualViewportChrome() {
+        if (typeof document === 'undefined') return;
+        const vv = window.visualViewport;
+        if (!vv) {
+            document.documentElement.style.setProperty('--vv-bottom-chrome', '0px');
+            return;
+        }
+        const bottomObstruction = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+        document.documentElement.style.setProperty('--vv-bottom-chrome', `${bottomObstruction}px`);
+    }
+
     onMount(() => {
         initApp();
         initAuth();
@@ -36,6 +48,13 @@
         if (typeof window !== 'undefined') {
             window.addEventListener(OPEN_PRIVACY_EVENT, onOpenPrivacyEvent);
             window.addEventListener(OPEN_COOKIE_POLICY_EVENT, onOpenCookiePolicyEvent);
+
+            updateVisualViewportChrome();
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', updateVisualViewportChrome);
+                window.visualViewport.addEventListener('scroll', updateVisualViewportChrome);
+            }
+            window.addEventListener('resize', updateVisualViewportChrome);
         }
     });
 
@@ -43,6 +62,11 @@
         if (typeof window !== 'undefined') {
             window.removeEventListener(OPEN_PRIVACY_EVENT, onOpenPrivacyEvent);
             window.removeEventListener(OPEN_COOKIE_POLICY_EVENT, onOpenCookiePolicyEvent);
+            if (window.visualViewport) {
+                window.visualViewport.removeEventListener('resize', updateVisualViewportChrome);
+                window.visualViewport.removeEventListener('scroll', updateVisualViewportChrome);
+            }
+            window.removeEventListener('resize', updateVisualViewportChrome);
         }
     });
 </script>

@@ -1,4 +1,7 @@
 :root {
+    /* Safari iOS: סרגל כתובות/כלי תחתון דינמי — מעודכן מ-+layout דרך visualViewport */
+    --vv-bottom-chrome: 0px;
+
     /* --- פלטת צבעים --- */
     --color-dark-blue: #1E1E1E; /* Ink */
     --color-header-blue: rgb(63, 82, 79); /* Teal */
@@ -321,6 +324,8 @@ a.info-card, button.info-card { cursor: pointer; }
     min-height: calc(100vh - 70px);
     min-height: calc(100dvh - 70px);
     box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
 }
 .canvas-container.container-dark { background: var(--color-dark-blue); }
 #configurator-surface { width: 100%; min-height: 100%; flex-grow: 1; border: none; background-color: var(--color-canvas-bg); position: relative; transition: background-color 0.3s; box-sizing: border-box; }
@@ -332,11 +337,43 @@ a.info-card, button.info-card { cursor: pointer; }
 
 /* --- 🔥 Glass Dock (תפריט עריכה תחתון) --- */
 .glass-dock {
-    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; /* 🔥 z-index נמוך מהעגלה (5001) */
-    display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 25px;
-    width: fit-content; max-width: 90vw; border-radius: 50px;
-    background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000; /* 🔥 z-index נמוך מהעגלה (5001) */
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px 14px;
+    padding: 10px 20px;
+    width: fit-content;
+    max-width: min(96vw, 520px);
+    border-radius: 50px;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+.glass-dock .dock-divider,
+.glass-dock .dock-btn-circle,
+.glass-dock .widget-wrapper {
+    flex-shrink: 0;
+}
+
+.glass-dock .dock-btn-circle svg,
+.glass-dock .gift-btn svg {
+    width: 22px;
+    height: 22px;
+    display: block;
+    flex-shrink: 0;
+}
+
+.glass-dock .trigger-circle {
+    flex-shrink: 0;
 }
 
 /* 🔥 הבטחה שהעגלה תמיד תהיה מעל glass-dock */
@@ -388,7 +425,12 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance
     .products-grid, .info-cards-grid { grid-template-columns: 1fr; } 
 }
 @media (max-width: 768px) {
-    .glass-dock { bottom: 20px; padding: 8px 15px; gap: 10px; }
+    .glass-dock {
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+        padding: 8px 12px;
+        gap: 8px 10px;
+        max-width: 96vw;
+    }
     .effects-list { justify-content: space-between !important; gap: 10px !important; padding: 0 !important; overflow-x: visible !important; width: 100%; }
     .effects-list .thumbnail-wrapper { width: 17vw !important; height: 17vw !important; max-width: 65px !important; max-height: 65px !important; }
     .hero-headline { font-size: 2.5rem; } 

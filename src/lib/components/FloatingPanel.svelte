@@ -1,5 +1,5 @@
 <script>
-    import { createEventDispatcher } from 'svelte';
+    import { createEventDispatcher, onMount } from 'svelte';
     import { fly } from 'svelte/transition'; // הסרנו את fade לרקע כי הוא שקוף
     
     export let title = 'Panel';
@@ -7,6 +7,18 @@
     
     const dispatch = createEventDispatcher();
     let openedAt = 0;
+    /** במובייל הפאנל למעלה כדי שלא יכסה את התמונה; אנימציית fly תואמת כיוון */
+    let panelFlyY = 20;
+
+    onMount(() => {
+        const mq = window.matchMedia('(max-width: 768px)');
+        const sync = () => {
+            panelFlyY = mq.matches ? -28 : 20;
+        };
+        sync();
+        mq.addEventListener('change', sync);
+        return () => mq.removeEventListener('change', sync);
+    });
     
     $: if (isOpen) {
         if (openedAt === 0) openedAt = Date.now();
@@ -48,7 +60,7 @@
     <div 
         class="floating-panel active" 
         use:portal 
-        transition:fly={{ y: 20, duration: 300, opacity: 1 }}
+        transition:fly={{ y: panelFlyY, duration: 300, opacity: 1 }}
         on:click|stopPropagation
     >
         <div class="floating-panel-header">
@@ -136,12 +148,22 @@
         background: rgba(63, 82, 79, 0.1);
     }
 
-    /* --- התאמות למובייל --- */
+    /* --- התאמות למובייל: פאנל מתחת ל-header — לא מכסה את אזור התצוגה המרכזי --- */
     @media (max-width: 768px) {
         .floating-panel {
-            bottom: 90px; 
+            top: calc(70px + env(safe-area-inset-top, 0px) + 12px);
+            bottom: auto;
             width: 90vw; 
             min-width: unset;
+            max-height: min(45vh, 360px);
+        }
+
+        .floating-panel .panel-content {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
         }
     }
 </style>

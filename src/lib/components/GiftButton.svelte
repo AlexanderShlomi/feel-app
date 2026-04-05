@@ -59,7 +59,7 @@
     on:click={toggleGift}
     data-tooltip="מתנה מאיתנו"
 >
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="20 12 20 22 4 22 4 12"></polyline>
         <rect x="2" y="7" width="20" height="5"></rect>
         <line x1="12" y1="22" x2="12" y2="7"></line>
