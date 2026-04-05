@@ -189,31 +189,6 @@
     }
 
     function applyEffect(effectId) {
-        // #region agent log
-        fetch('http://127.0.0.1:7673/ingest/3221cbc6-40ae-4c77-a825-a11fe005892b', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Debug-Session-Id': '06a31e'
-            },
-            body: JSON.stringify({
-                sessionId: '06a31e',
-                runId: 'initial',
-                hypothesisId: 'H2',
-                location: 'src/routes/uploader/edit/[magnetId]/+page.svelte:applyEffect',
-                message: 'applyEffect invoked',
-                data: {
-                    effectId,
-                    magnetId,
-                    hasWorker: !!effectsWorker,
-                    hasMagnet: !!magnet,
-                    hasProcessedEntry: magnet?.processed ? !!magnet.processed?.[effectId] : false
-                },
-                timestamp: Date.now()
-            })
-        }).catch(() => {});
-        // #endregion agent log
-        
         // עדכון האפקט הנוכחי במגנט עצמו (לוגיקה ויזואלית תמיד תרוץ)
         updateMagnetActiveEffect(magnetId, effectId);
 

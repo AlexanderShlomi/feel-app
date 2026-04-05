@@ -4,11 +4,14 @@
     export let imageSrc;
     export let transform = { zoom: 1, x: 0, y: 0 };
     export let gridSettings = { cols: 3, rows: 3 };
+    export let imageRatio = 1; // יחס רוחב:גובה של התמונה – לקביעת כיוון התצוגה (אופקי/אנכי)
     
     const dispatch = createEventDispatcher();
     
     let containerEl;
+    let viewportEl;
     let imageEl;
+    let resizeObserver;
     
     // משתני עריכה
     let scale = 1; 
@@ -26,33 +29,42 @@
     let startX = 0, startY = 0;
     let startTransX = 0, startTransY = 0;
 
-    // אתחול
+    // אתחול – שימוש ב-ResizeObserver להתאמה למרחב הזמין בפועל
     onMount(() => {
         calculateLayout();
+        requestAnimationFrame(() => calculateLayout());
+        if (viewportEl && window.ResizeObserver) {
+            resizeObserver = new ResizeObserver(() => calculateLayout());
+            resizeObserver.observe(viewportEl);
+        }
         window.addEventListener('resize', calculateLayout);
-        return () => window.removeEventListener('resize', calculateLayout);
+        return () => {
+            window.removeEventListener('resize', calculateLayout);
+            if (resizeObserver && viewportEl) resizeObserver.unobserve(viewportEl);
+        };
     });
 
-    // 1. חישוב גודל מסגרת החיתוך (Container)
-    // המסגרת חייבת להיות ביחס מדויק של העמודות/שורות כדי שהתאים יהיו ריבועים.
+    // 1. חישוב גודל מסגרת החיתוך – מותאם לכיוון התמונה (אופקי/אנכי)
     function calculateLayout() {
         if (!containerEl) return;
 
-        // שטח מקסימלי במסך
-        const maxWidth = window.innerWidth * 0.9;
-        const maxHeight = window.innerHeight * 0.55;
-
         const cols = gridSettings.cols;
         const rows = gridSettings.rows;
-
-        // היחס של הגריד כולו (בהנחה שכל תא הוא ריבוע 1:1)
         const gridRatio = cols / rows;
 
-        // ניסיון להתאים לפי רוחב
+        // שימוש במרחב הזמין ב-viewport אם קיים, אחרת חלון
+        let maxWidth = window.innerWidth * 0.9;
+        let maxHeight = window.innerHeight * 0.55;
+        if (viewportEl) {
+            const rect = viewportEl.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                maxWidth = rect.width;
+                maxHeight = rect.height;
+            }
+        }
+
         let finalW = maxWidth;
         let finalH = finalW / gridRatio;
-
-        // אם הגובה חורג, מתאימים לפי גובה
         if (finalH > maxHeight) {
             finalH = maxHeight;
             finalW = finalH * gridRatio;
@@ -61,7 +73,6 @@
         containerWidth = finalW;
         containerHeight = finalH;
         
-        // לאחר קביעת המסגרת, טוענים את התמונה
         if (imageEl) {
             if (imageEl.complete) setupImage();
             else imageEl.onload = setupImage;
@@ -198,13 +209,13 @@
 </script>
 
 <div class="mosaic-editor-overlay">
-    <div class="mosaic-editor-card">
+    <div class="mosaic-editor-card" class:landscape={imageRatio > 1} class:portrait={imageRatio <= 1}>
         <div class="header">
             <h3>הזז והגדל את התמונה</h3>
             <button class="close-btn" on:click={() => dispatch('close')}>✕</button>
         </div>
 
-        <div class="viewport-area">
+        <div class="viewport-area" bind:this={viewportEl}>
             <div 
                 class="crop-box" 
                 bind:this={containerEl}
@@ -268,11 +279,21 @@
 
     .mosaic-editor-card {
         background: white;
-        width: 95%; max-width: 500px;
+        width: 95%;
         border-radius: 16px;
         display: flex; flex-direction: column;
         overflow: hidden;
         box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    /* תמונה אופקית – כרטיס רחב לחיתוך אופקי */
+    .mosaic-editor-card.landscape {
+        max-width: min(850px, 92vw);
+        max-height: 85vh;
+    }
+    /* תמונה אנכית – כרטיס צר לחיתוך אנכי */
+    .mosaic-editor-card.portrait {
+        max-width: min(450px, 92vw);
+        max-height: 90vh;
     }
 
     .header {
