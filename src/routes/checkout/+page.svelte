@@ -309,14 +309,41 @@
         document.getElementById('checkout-form-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    /** מונע UI תקוע כש-fetch ל-Supabase לא חוזר (ללא timeout ברירת מחדל) */
-    function withNetworkTimeout(promise, ms, message) {
-        return Promise.race([
-            promise,
-            new Promise((_, reject) => {
-                setTimeout(() => reject(new Error(message)), ms);
-            })
-        ]);
+    async function scrollToCheckoutPayment() {
+        await tick();
+        document.getElementById('checkout-payment-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    /**
+     * אחרי שההזמנה נשמרה — מעלה thumbnails ומעדכן שורות (לא חוסם את מסך התשלום).
+     * @param {string} userId
+     * @param {string} orderId
+     * @param {unknown[]} cartSnapshot
+     * @param {string[]} itemRowIds
+     */
+    function backfillOrderThumbnailsInBackground(userId, orderId, cartSnapshot, itemRowIds) {
+        if (!userId || !orderId || !itemRowIds?.length || !cartSnapshot?.length) return;
+        void (async () => {
+            try {
+                const thumbnailUrls = await uploadOrderItemThumbnails(
+                    supabase,
+                    userId,
+                    orderId,
+                    /** @type {Array<{ previewImage?: string | null }>} */ (cartSnapshot)
+                );
+                for (let i = 0; i < itemRowIds.length && i < thumbnailUrls.length; i++) {
+                    const url = thumbnailUrls[i];
+                    if (!url) continue;
+                    const { error: patchErr } = await supabase.rpc('patch_order_item_thumbnail', {
+                        p_item_id: itemRowIds[i],
+                        p_thumbnail_url: url
+                    });
+                    if (patchErr) console.warn('patch_order_item_thumbnail', i, patchErr);
+                }
+            } catch (e) {
+                console.warn('Order thumbnails backfill:', e);
+            }
+        })();
     }
 
     async function handlePlaceOrder() {
@@ -359,7 +386,6 @@
         }
 
         placeOrderLoading = true;
-        const RPC_TIMEOUT_MS = 45000;
         try {
             const subtotalAmount = Number($cartTotal || 0);
             const totalAmount = subtotalAmount; // כרגע בלי הנחות/משלוח
@@ -371,6 +397,8 @@
                 typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
                     ? crypto.randomUUID()
                     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+            const cartSnapshot = [...($cart || [])];
 
             const shippingPayload = {
                 firstName: shippingFirstName.trim(),
@@ -390,20 +418,7 @@
                 senderPhone: giftEnabled && giftSenderPhone.trim() ? giftSenderPhone.trim() : ''
             };
 
-            let thumbnailUrls = /** @type {(string | null)[]} */ ([]);
-            try {
-                thumbnailUrls = await uploadOrderItemThumbnails(
-                    supabase,
-                    $user.id,
-                    newOrderId,
-                    $cart || []
-                );
-            } catch (thumbErr) {
-                console.warn('Order thumbnails upload:', thumbErr);
-                thumbnailUrls = ($cart || []).map(() => null);
-            }
-
-            const itemsPayload = ($cart || []).map((item, index) => {
+            const itemsPayload = cartSnapshot.map((item) => {
                 const raw = Number(item.price);
                 const price = Number.isFinite(raw) && raw >= 0 ? raw : 0;
                 return {
@@ -412,12 +427,12 @@
                     subtitle: item.subtitle ?? null,
                     price,
                     quantity: 1,
-                    thumbnail_url: thumbnailUrls[index] ?? null,
+                    thumbnail_url: null,
                     configuration: buildOrderItemConfiguration(item)
                 };
             });
 
-            const rpcPromise = supabase.rpc('create_complete_order', {
+            const { data: rpcData, error: rpcError } = await supabase.rpc('create_complete_order', {
                 p_order_id: newOrderId,
                 p_shipping_data: shippingPayload,
                 p_gift_data: giftPayload,
@@ -425,16 +440,22 @@
                 p_subtotal: subtotalAmount,
                 p_total: totalAmount
             });
-
-            const { data: createdOrderId, error: rpcError } = await withNetworkTimeout(
-                rpcPromise,
-                RPC_TIMEOUT_MS,
-                'פג הזמן ביצירת ההזמנה. בדקו חיבור לרשת והגדרות Supabase, ונסו שוב.'
-            );
             if (rpcError) throw rpcError;
 
+            let resolvedOrderId = newOrderId;
+            let itemRowIds = /** @type {string[]} */ ([]);
+            if (rpcData != null && typeof rpcData === 'object' && !Array.isArray(rpcData)) {
+                const o = /** @type {{ order_id?: string; item_ids?: unknown }} */ (rpcData);
+                if (o.order_id) resolvedOrderId = String(o.order_id);
+                if (Array.isArray(o.item_ids)) {
+                    itemRowIds = o.item_ids.map((id) => String(id));
+                }
+            } else if (typeof rpcData === 'string' && rpcData) {
+                resolvedOrderId = rpcData;
+            }
+
             // רק אחרי ששני ה-insert הצליחו: מציגים את מסך התשלום
-            paymentOrderId = createdOrderId || newOrderId;
+            paymentOrderId = resolvedOrderId;
             paymentAmount = totalAmount;
             paymentOrderNumber = null;
             if (paymentOrderId) {
@@ -447,7 +468,11 @@
                     paymentOrderNumber = Number(ordRow.order_number);
                 }
             }
-            await tick();
+            await scrollToCheckoutPayment();
+
+            if ($user?.id && itemRowIds.length > 0) {
+                backfillOrderThumbnailsInBackground($user.id, paymentOrderId, cartSnapshot, itemRowIds);
+            }
         } catch (e) {
             console.error('Place order failed:', e);
             errorMessage = supabaseErrorMessage(e);
@@ -616,6 +641,7 @@
                         </div>
                     </div>
                 {:else if paymentOrderId}
+                    <div id="checkout-payment-panel" class="checkout-payment-panel">
                     <PaymentMock
                         orderId={paymentOrderId}
                         orderNumber={paymentOrderNumber}
@@ -629,6 +655,7 @@
                             <div class="inline-loader"></div>
                         </div>
                     {/if}
+                    </div>
                 {:else}
                     <div class="form-grid">
                         <div class="input-group">
@@ -1151,6 +1178,10 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
+    }
+
+    .checkout-payment-panel {
+        scroll-margin-top: 88px;
     }
 
     .forms-title {

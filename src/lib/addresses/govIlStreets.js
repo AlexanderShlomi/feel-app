@@ -2,7 +2,7 @@ import { GOV_IL_STREETS_RESOURCE_ID } from '$lib/addresses/constants.js';
 
 export { GOV_IL_STREETS_RESOURCE_ID };
 
-/** קריאה ישירה ל-data.gov.il — עובד ב-adapter-static (בלי /api בשרת) */
+/** קריאה ישירה ל-data.gov.il — גיבוי כשאין פרוקסי /api (למשל סטטי בלבד) */
 const DATASTORE_SEARCH = 'https://data.gov.il/api/3/action/datastore_search';
 
 const FIELD_SYMBOL = 'סמל_ישוב';

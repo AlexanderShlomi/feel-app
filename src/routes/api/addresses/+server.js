@@ -1,7 +1,5 @@
 /**
- * פרוקסי אופציונלי (dev / adapter עם Node).
- * בפרודקשן עם adapter-static אין נתיב /api — הלקוח קורא ישירות ל-data.gov.il
- * דרך `src/lib/addresses/govIlStreets.js` (CORS: Access-Control-Allow-Origin: *).
+ * פרוקסי ל-data.gov.il (dev, Vercel וכו'). בלי שרת — הלקוח קורא ישירות דרך govIlStreets.js.
  */
 import { json } from '@sveltejs/kit';
 import { GOV_IL_STREETS_RESOURCE_ID } from '$lib/addresses/constants.js';
