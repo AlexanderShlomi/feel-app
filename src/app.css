@@ -343,13 +343,18 @@ a.info-card, button.info-card { cursor: pointer; }
     z-index: 1000; /* 🔥 z-index נמוך מהעגלה (5001) */
     bottom: calc(16px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: center;
-    gap: 10px 14px;
-    padding: 10px 20px;
-    width: fit-content;
-    max-width: min(96vw, 520px);
+    gap: 10px 12px;
+    padding: 10px 16px;
+    width: max-content;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
     border-radius: 50px;
     background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(12px) saturate(180%);
@@ -358,8 +363,13 @@ a.info-card, button.info-card { cursor: pointer; }
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
 
+.glass-dock::-webkit-scrollbar {
+    display: none;
+}
+
 .glass-dock .dock-divider,
 .glass-dock .dock-btn-circle,
+.glass-dock .dock-btn-text,
 .glass-dock .widget-wrapper {
     flex-shrink: 0;
 }
@@ -428,8 +438,13 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance
     .glass-dock {
         bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
         padding: 8px 12px;
-        gap: 8px 10px;
-        max-width: 96vw;
+        gap: 6px 8px;
+        max-width: calc(100vw - 12px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    }
+
+    .glass-dock .trigger-circle {
+        width: 46px;
+        height: 46px;
     }
     .effects-list { justify-content: space-between !important; gap: 10px !important; padding: 0 !important; overflow-x: visible !important; width: 100%; }
     .effects-list .thumbnail-wrapper { width: 17vw !important; height: 17vw !important; max-width: 65px !important; max-height: 65px !important; }

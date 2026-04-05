@@ -714,6 +714,7 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
             touch-action: pan-y !important;
         }
+        /* Magnet.svelte: touch-action: none חוסם גלילה; ברשת מובייל מאפשרים pan-y */
         .mobile-grid-active .magnet,
         .mobile-grid-active .image-wrapper {
             width: 100% !important;
@@ -723,10 +724,14 @@
             transform: none !important;
             pointer-events: auto !important;
         }
+        .mobile-grid-active .magnet {
+            touch-action: pan-y !important;
+        }
         .mobile-grid-active img {
             display: block !important;
             image-rendering: -webkit-optimize-contrast; 
             pointer-events: auto !important;
+            touch-action: pan-y !important;
         }
         .mobile-grid-active .overlay,
         .mobile-grid-active .control-btn {
