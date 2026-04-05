@@ -6,9 +6,22 @@
     export let isOpen = false;
     
     const dispatch = createEventDispatcher();
+    let openedAt = 0;
+    
+    $: if (isOpen) {
+        if (openedAt === 0) openedAt = Date.now();
+    } else {
+        openedAt = 0;
+    }
     
     function close() {
         dispatch('close');
+    }
+    
+    /** מונע סגירה מיידית מכפתור "אפקטים" במובייל – ה-ghost click אחרי tap */
+    function handleBackdropClick() {
+        if (openedAt && (Date.now() - openedAt) < 400) return;
+        close();
     }
 
     // פונקציית ה-Portal להוצאת הפאנל לגוף המסמך
@@ -30,12 +43,13 @@
 </script>
 
 {#if isOpen}
-    <div class="backdrop" on:click={close} use:portal />
+    <div class="panel-backdrop" on:click={handleBackdropClick} use:portal />
     
     <div 
         class="floating-panel active" 
         use:portal 
         transition:fly={{ y: 20, duration: 300, opacity: 1 }}
+        on:click|stopPropagation
     >
         <div class="floating-panel-header">
             <h4>{title}</h4>
@@ -49,8 +63,8 @@
 {/if}
 
 <style>
-    /* --- רקע (Backdrop) --- */
-    .backdrop {
+    /* --- רקע (Backdrop) - panel-backdrop כדי לא להיות מושפע מ-.backdrop הגלובלי (z-index: 5000) --- */
+    .panel-backdrop {
         position: fixed;
         top: 0; left: 0;
         width: 100%; height: 100%;

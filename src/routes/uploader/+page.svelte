@@ -396,6 +396,10 @@
 
     function togglePanel(name) { activePanel = activePanel === name ? null : name; }
 
+    function handleEffectsDockClick(context) {
+        togglePanel('effects');
+    }
+
     function handleSizeChange(event) {
         const newScale = parseFloat(event.target.value);
         editorSettings.update(s => ({ ...s, currentDisplayScale: newScale }));
@@ -531,7 +535,7 @@
             <button class="dock-btn-text mobile-hidden" on:click={() => { handleReflow(); activePanel = null; }}>סדר מחדש</button>
             <div class="dock-divider mobile-hidden"></div>
             <button class="dock-btn-text mobile-hidden" on:click={() => togglePanel('size')}>גודל</button>
-            <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button>
+            <button class="dock-btn-text" on:click={() => handleEffectsDockClick('pack-dock')}>אפקטים</button>
             <button class="dock-btn-text" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
             
             <div class="dock-divider"></div>
@@ -548,7 +552,7 @@
          
          <button class="dock-btn-text mobile-hidden" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
          
-         <button class="dock-btn-text" on:click={() => togglePanel('effects')}>אפקטים</button> 
+         <button class="dock-btn-text" on:click={() => handleEffectsDockClick('mosaic-dock')}>אפקטים</button> 
          
          <div class="dock-divider"></div>
          <GiftButton />
@@ -627,6 +631,7 @@
         imageSrc={$editorSettings.splitImageSrc}
         transform={$editorSettings.splitTransform}
         gridSettings={{ cols: splitGridInfo.cols, rows: splitGridInfo.rows }}
+        imageRatio={$editorSettings.splitImageRatio}
         on:save={handleSaveMosaic}
         on:close={() => isSplitEditing = false}
     />
@@ -634,6 +639,8 @@
 
 <style>
     .magnet-wrapper { position: absolute; touch-action: none; z-index: 10; }
+    /* בפסיפס – תאים תמיד ריבועיים (גם בתמונות אופקיות) */
+    .canvas-container.split-center .magnet-wrapper { aspect-ratio: 1 / 1; box-sizing: border-box; }
     .magnet-wrapper.draggable-active { z-index: 1000; cursor: grabbing; }
     #configurator-surface { background-color: #F2F0EC; transition: background-color 0.3s ease; position: relative; }
     #configurator-surface.surface-dark { background-color: #1E1E1E; }

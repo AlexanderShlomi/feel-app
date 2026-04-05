@@ -13,20 +13,29 @@
 }
 
 /* --- איפוס גלובלי ופונטים --- */
-html, body {
-    height: 100%;
+html {
     margin: 0;
     padding: 0;
     width: 100%;
+    max-width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
 }
 
 body {
-    background-color: var(--color-dark-blue); 
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    /* רקע ברירת מחדל לגלילה — לא שחור, כדי שלא יופיע “פס” שחור מתחת לתוכן */
+    background-color: var(--color-canvas-bg);
     font-family: 'Assistant', sans-serif; 
     -webkit-font-smoothing: antialiased; 
     -moz-osx-font-smoothing: grayscale;
     -webkit-text-size-adjust: 100%;
-    overflow-x: hidden; /* מניעת גלילה רוחבית */
+    overflow-x: hidden;
 }
 
 /* כפיית הפונט על כל האלמנטים */
@@ -35,13 +44,33 @@ button, input, textarea, select, span, div, a, h1, h2, h3, h4, h5, h6, p {
 }
 
 .page-container { 
-    height: 100vh; 
-    width: 100vw; 
+    min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    max-width: 100%;
     display: flex; 
     flex-direction: column;
     padding-top: 70px; /* גובה Header קבוע */
     box-sizing: border-box;
+    background-color: var(--color-canvas-bg);
+    overflow-x: clip;
 }
+
+/* --- רכיב Header משותף (ראשי + תפריט צד) - אחיד בדסקטופ ובמובייל --- */
+.app-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    align-items: center;
+    padding: 10px 30px;
+    background: var(--color-dark-blue);
+    height: 70px;
+    box-sizing: border-box;
+}
+.app-header .header-right { justify-self: start; display: flex; align-items: center; }
+.app-header .header-center { justify-self: center; display: flex; justify-content: center; align-items: center; height: 100%; }
+.app-header .header-left { justify-self: end; display: flex; align-items: center; gap: 10px; }
+.app-header .logo { display: flex; align-items: center; cursor: pointer; text-decoration: none; height: 50px; }
+.app-header .logo .logo-img { height: 100%; width: auto; }
 
 /* --- 🔥 עיצוב גלילה (Scrollbar) מינימליסטי ואחיד --- */
 
@@ -167,7 +196,8 @@ button, input, textarea, select, span, div, a, h1, h2, h3, h4, h5, h6, p {
     align-items: center; 
     padding: 0; 
     box-sizing: border-box; 
-    min-height: calc(100vh - 70px); 
+    min-height: calc(100vh - 70px);
+    min-height: calc(100dvh - 70px);
 }
 
 .hero-container { 
@@ -286,7 +316,10 @@ a.info-card, button.info-card { cursor: pointer; }
     transition: background-color 0.3s; 
     display: flex; 
     flex-direction: column;
-    height: calc(100vh - 70px); /* גובה פחות Header קבוע */
+    height: calc(100vh - 70px);
+    height: calc(100dvh - 70px);
+    min-height: calc(100vh - 70px);
+    min-height: calc(100dvh - 70px);
     box-sizing: border-box;
 }
 .canvas-container.container-dark { background: var(--color-dark-blue); }

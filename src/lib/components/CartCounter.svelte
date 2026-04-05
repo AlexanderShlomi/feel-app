@@ -5,6 +5,31 @@
     import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES } from '$lib/stores.js';
     import { goto } from '$app/navigation';
     import { fly, fade, slide } from 'svelte/transition';
+    import {
+        setCheckoutPrivacyConsent,
+        clearCheckoutPrivacyConsent,
+        requestOpenPrivacyPolicy,
+        requestOpenCookiePolicy
+    } from '$lib/privacyCheckoutConsent.js';
+    import { user, profile, authLoading, refreshProfile } from '$lib/authStore';
+    import {
+        currentPrivacyPolicy,
+        recordPrivacyConsent,
+        privacyNeedsReaccept
+    } from '$lib/privacyPolicyStore.js';
+
+    /** אורח: חובה לסמן. מחובר: רק אם חסרה חתימה לגרסה העדכנית ב-DB */
+    let privacyReadChecked = false;
+
+    $: showPrivacyRowInCart =
+        !$user || ($user && !$authLoading && privacyNeedsReaccept($profile, $currentPrivacyPolicy));
+
+    /** מחובר וכבר חתם על הגרסה הנוכחית — בלי בוי ובלי חסימה */
+    $: checkoutPrivacyOk =
+        !$authLoading &&
+        ($user
+            ? !privacyNeedsReaccept($profile, $currentPrivacyPolicy) || privacyReadChecked
+            : privacyReadChecked);
 
     $: items = $cart;
     $: count = items.length;
@@ -12,8 +37,9 @@
 
     let isOpen = false; 
 
-    function toggleCart() { 
-        isOpen = !isOpen; 
+    function toggleCart() {
+        isOpen = !isOpen;
+        if (isOpen) privacyReadChecked = false;
     }
     
     function closeCart() { isOpen = false; }
@@ -33,6 +59,41 @@
     function goCreate() {
         closeCart();
         goto('/select');
+    }
+
+    async function onPrivacyCheckboxChange(/** @type {Event & { currentTarget: HTMLInputElement }} */ e) {
+        const checked = e.currentTarget.checked;
+        privacyReadChecked = checked;
+        if (!$user) {
+            if (checked) setCheckoutPrivacyConsent();
+            else clearCheckoutPrivacyConsent();
+            return;
+        }
+        if (!checked) return;
+        if (!privacyNeedsReaccept($profile, $currentPrivacyPolicy)) return;
+        const err = await recordPrivacyConsent();
+        if (err) {
+            privacyReadChecked = false;
+            e.currentTarget.checked = false;
+            console.error('recordPrivacyConsent:', err);
+            return;
+        }
+        if ($user?.id) await refreshProfile($user.id);
+    }
+
+    function openPrivacyModal() {
+        requestOpenPrivacyPolicy();
+    }
+
+    function openCookiePolicyModal() {
+        requestOpenCookiePolicy();
+    }
+
+    function goCheckout() {
+        if (!checkoutPrivacyOk) return;
+        if (!$user) setCheckoutPrivacyConsent();
+        closeCart();
+        goto('/checkout');
     }
 </script>
 
@@ -169,9 +230,43 @@
                     <span>סה"כ לתשלום</span>
                     <span class="leather-total">₪{total}</span>
                 </div>
-                
-                <button class="checkout-btn-full">
-                        מעבר לתשלום מאובטח
+
+                {#if showPrivacyRowInCart}
+                    <div class="privacy-checkout-row">
+                        <label class="privacy-label">
+                            <input
+                                type="checkbox"
+                                checked={privacyReadChecked}
+                                disabled={$authLoading}
+                                on:change={onPrivacyCheckboxChange}
+                            />
+                            <span class="privacy-label-text">
+                                קראתי והסכמתי ל־
+                                <button type="button" class="privacy-link" on:click|stopPropagation={openPrivacyModal}>
+                                    מדיניות הפרטיות
+                                </button>
+                                לפני מעבר לתשלום.
+                                מידע על אחסון מקומי:
+                                <button
+                                    type="button"
+                                    class="privacy-link"
+                                    on:click|stopPropagation={openCookiePolicyModal}
+                                >
+                                    מדיניות קובצי Cookie
+                                </button>
+                            </span>
+                        </label>
+                    </div>
+                {/if}
+
+                <button
+                    type="button"
+                    class="checkout-btn-full"
+                    class:checkout-disabled={!checkoutPrivacyOk}
+                    disabled={!checkoutPrivacyOk}
+                    on:click={goCheckout}
+                >
+                    מעבר לתשלום מאובטח
                 </button>
             </div>
         {/if}
@@ -298,6 +393,50 @@
     .summary-line { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
     .green-text { color: #3F524F; font-weight: bold; }
     .summary-line.total { font-size: 18px; font-weight: 800; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
+    .privacy-checkout-row {
+        margin-top: 14px;
+        padding: 12px 10px;
+        background: #f5f2ed;
+        border: 1px solid rgba(198, 178, 154, 0.35);
+        border-radius: 10px;
+    }
+    .privacy-label {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        color: #1e1e1e;
+        line-height: 1.45;
+        text-align: right;
+    }
+    .privacy-label input {
+        margin-top: 3px;
+        flex-shrink: 0;
+        width: 18px;
+        height: 18px;
+        accent-color: var(--color-teal, #3f524f);
+    }
+    .privacy-label-text { flex: 1; min-width: 0; }
+    .privacy-link {
+        background: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        font: inherit;
+        font-weight: 800;
+        color: #846349;
+        text-decoration: underline;
+        cursor: pointer;
+    }
+    .privacy-link:hover { color: #1e1e1e; }
+
     .checkout-btn-full { width: 100%; padding: 14px; background: #1E1E1E; color: white; border: none; border-radius: 6px; font-weight: 700; font-size: 16px; margin-top: 15px; cursor: pointer; transition: background 0.2s; }
-    .checkout-btn-full:hover { background: black; }
+    .checkout-btn-full:hover:not(:disabled) { background: black; }
+    .checkout-btn-full.checkout-disabled,
+    .checkout-btn-full:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+    }
 </style>

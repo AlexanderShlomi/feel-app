@@ -14,7 +14,8 @@
         
         .page-container {
             height: auto !important;
-            min-height: calc(100vh - 70px); /* גובה מינימלי פחות Header */
+            min-height: calc(100vh - 70px);
+            min-height: calc(100dvh - 70px);
             display: block !important;
             padding-top: 0; /* דף הבית לא צריך padding-top כי הוא override */
         }

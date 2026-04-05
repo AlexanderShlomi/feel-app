@@ -2,16 +2,48 @@
     import '../app.css'; 
     import Header from '$lib/components/Header.svelte';
     import SideMenu from '$lib/components/SideMenu.svelte';
-    import { onMount } from 'svelte';
+    import AuthModal from '$lib/components/AuthModal.svelte';
+    import PrivacyPolicy from '$lib/components/PrivacyPolicy.svelte';
+    import CookiePolicy from '$lib/components/CookiePolicy.svelte';
+    import { onMount, onDestroy } from 'svelte';
+    import { OPEN_PRIVACY_EVENT, OPEN_COOKIE_POLICY_EVENT } from '$lib/privacyCheckoutConsent.js';
     import { initApp, isGlobalLoading } from '$lib/stores.js'; // הוספת הייבוא של isGlobalLoading
+    import { initAuth } from '$lib/authStore';
+    import { fetchCurrentPrivacyPolicy } from '$lib/privacyPolicyStore.js';
  
     let isMenuOpen = false;
+    let showPrivacy = false;
+    let showCookiePolicy = false;
+    let showAuth = false;
+
     function toggleMenu() {
         isMenuOpen = !isMenuOpen;
     }
 
+    /** פתיחת מדיניות פרטיות מסל / checkout */
+    function onOpenPrivacyEvent() {
+        showPrivacy = true;
+    }
+
+    function onOpenCookiePolicyEvent() {
+        showCookiePolicy = true;
+    }
+
     onMount(() => {
         initApp();
+        initAuth();
+        fetchCurrentPrivacyPolicy();
+        if (typeof window !== 'undefined') {
+            window.addEventListener(OPEN_PRIVACY_EVENT, onOpenPrivacyEvent);
+            window.addEventListener(OPEN_COOKIE_POLICY_EVENT, onOpenCookiePolicyEvent);
+        }
+    });
+
+    onDestroy(() => {
+        if (typeof window !== 'undefined') {
+            window.removeEventListener(OPEN_PRIVACY_EVENT, onOpenPrivacyEvent);
+            window.removeEventListener(OPEN_COOKIE_POLICY_EVENT, onOpenCookiePolicyEvent);
+        }
     });
 </script>
 
@@ -26,7 +58,15 @@
     {/if}
 
     <Header on:toggleMenu={toggleMenu} />
-    <SideMenu bind:isOpen={isMenuOpen} />
+    <SideMenu 
+        bind:isOpen={isMenuOpen} 
+        on:openPrivacy={() => showPrivacy = true}
+        on:openCookies={() => showCookiePolicy = true}
+        on:openAuth={() => showAuth = true}
+    />
+    <PrivacyPolicy isOpen={showPrivacy} close={() => showPrivacy = false} />
+    <CookiePolicy isOpen={showCookiePolicy} close={() => showCookiePolicy = false} />
+    <AuthModal isOpen={showAuth} close={() => showAuth = false} />
     
     <slot />
 

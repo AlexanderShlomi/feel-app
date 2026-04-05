@@ -189,8 +189,16 @@
     }
 
     function applyEffect(effectId) {
+        // עדכון האפקט הנוכחי במגנט עצמו (לוגיקה ויזואלית תמיד תרוץ)
         updateMagnetActiveEffect(magnetId, effectId);
-        if (effectId !== 'original' && !magnet.processed[effectId]) {
+
+        // אם אין מגנט, או שהאפקט הוא "מקורי", או שאין Worker פעיל – אין צורך בעיבוד נוסף
+        if (!magnet || effectId === 'original' || !effectsWorker) {
+            return;
+        }
+
+        const isAlreadyProcessed = magnet.processed && magnet.processed[effectId];
+        if (!isAlreadyProcessed) {
             updateMagnetProcessedSrc(magnetId, effectId, 'processing');
             effectsWorker.postMessage({ magnetId, effectId, originalSrc: magnet.originalSrc });
         }
