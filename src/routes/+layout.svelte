@@ -15,7 +15,7 @@
     /** @type {{ siteUrl: string }} */
     export let data;
 
-    const siteTitle = 'feel - LUXURY MEMORIES';
+    const siteTitle = 'FEEL - LUXURY MEMORIES';
     const siteDescription = 'לעצור את הזמן – להרגיש את הרגע';
 
     $: siteBase = (data?.siteUrl ?? '').replace(/\/$/, '');
