@@ -1,12 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
-import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
+import { env } from '$env/dynamic/public';
 
-if (!PUBLIC_SUPABASE_URL || !PUBLIC_SUPABASE_ANON_KEY) {
+/** dynamic: מאפשר בנייה ב-Vercel גם לפני שמילאו env; בפרודקשן חובה להגדיר את שני המשתנים ב-Vercel */
+const supabaseUrl = env.PUBLIC_SUPABASE_URL ?? '';
+const supabaseAnonKey = env.PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+if (!supabaseUrl || !supabaseAnonKey) {
     console.warn('Supabase environment variables are missing. Check PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY.');
 }
 
 /** OAuth (Google וכו׳) משתמש ב-PKCE; ברירת המחדל implicit גורמת לכשל שקט כשיש ?code= בכתובת החזרה */
-export const supabase = createClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
         flowType: 'pkce',
         autoRefreshToken: true,
