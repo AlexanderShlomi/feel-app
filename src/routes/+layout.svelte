@@ -1,4 +1,5 @@
 <script>
+    import { page } from '$app/stores';
     import '../app.css'; 
     import Header from '$lib/components/Header.svelte';
     import SideMenu from '$lib/components/SideMenu.svelte';
@@ -10,7 +11,18 @@
     import { initApp, isGlobalLoading } from '$lib/stores.js'; // הוספת הייבוא של isGlobalLoading
     import { initAuth } from '$lib/authStore';
     import { fetchCurrentPrivacyPolicy } from '$lib/privacyPolicyStore.js';
- 
+
+    /** @type {{ siteUrl: string }} */
+    export let data;
+
+    const siteTitle = 'FEEL - LUXURY MEMORIES';
+    const siteDescription = 'לעצור את הזמן – להרגיש את הרגע';
+
+    $: siteBase = (data?.siteUrl ?? '').replace(/\/$/, '');
+    $: ogImageAbsolute = siteBase ? `${siteBase}/og-share.svg` : '';
+    $: canonicalUrl =
+        siteBase && $page?.url ? `${siteBase}${$page.url.pathname}${$page.url.search}` : '';
+
     let isMenuOpen = false;
     let showPrivacy = false;
     let showCookiePolicy = false;
@@ -70,6 +82,33 @@
         }
     });
 </script>
+
+<svelte:head>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#1E1E1E" />
+
+    <meta property="og:site_name" content="feel" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="he_IL" />
+    <meta property="og:title" content={siteTitle} />
+    <meta property="og:description" content={siteDescription} />
+    {#if ogImageAbsolute}
+        <meta property="og:image" content={ogImageAbsolute} />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="feel – LUXURY MEMORIES · לעצור את הזמן – להרגיש את הרגע" />
+    {/if}
+    {#if canonicalUrl}
+        <meta property="og:url" content={canonicalUrl} />
+    {/if}
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={siteTitle} />
+    <meta name="twitter:description" content={siteDescription} />
+    {#if ogImageAbsolute}
+        <meta name="twitter:image" content={ogImageAbsolute} />
+    {/if}
+</svelte:head>
 
 <div class="page-container" dir="rtl">
     

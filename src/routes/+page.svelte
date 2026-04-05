@@ -1,6 +1,6 @@
 <svelte:head>
-    <title>FEEL - דף הבית</title>
-    <meta name="description" content="צור מגנטים אישיים" />
+    <title>feel - LUXURY MEMORIES</title>
+    <meta name="description" content="לעצור את הזמן – להרגיש את הרגע" />
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,6 +24,7 @@
 
 <script>
     import { scrollAnimation } from '$lib/actions/scrollAnimation.js';
+    import { communityVideoInView } from '$lib/actions/communityVideoInView.js';
     import { onMount, onDestroy, tick } from 'svelte'; 
     import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
     import { goto } from '$app/navigation';
@@ -98,19 +99,10 @@
         });
     }
 
-    // --- קוד להפעלת וידאו בריחוף ---
-    function handleVideoPlay(event) {
-        const video = event.currentTarget.querySelector('.community-video');
-        if (video) {
-            video.play().catch(e => console.log('Video play prevented:', e));
-        }
-    }
-    function handleVideoPause(event) {
-        const video = event.currentTarget.querySelector('.community-video');
-        if (video) {
-            video.pause();
-        }
-    }
+    /** רילים בקהילה — אותו נתיב כמו ב-static/reels */
+    const communityReelSrcs = [1, 2, 3, 4, 5, 6].map(
+        (n) => `/reels/community-video-${n}.mp4`
+    );
 </script>
 
 <div class="home-content">
@@ -215,67 +207,25 @@
 
             <div class="community-scroll-container" bind:this={scrollContainerEl}>
                 <div class="community-scroll-track">
-                    
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-1.mp4" playsinline muted loop preload="metadata"></video>
+                    {#each communityReelSrcs as src (src)}
+                        <div class="community-card" use:communityVideoInView>
+                            <div class="community-video-placeholder">
+                                <video
+                                    class="community-video"
+                                    {src}
+                                    playsinline
+                                    webkit-playsinline
+                                    muted
+                                    loop
+                                    preload="metadata"
+                                ></video>
+                            </div>
+                            <div class="community-text-placeholder">
+                                <div class="placeholder-line short"></div>
+                                <div class="placeholder-line long"></div>
+                            </div>
                         </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-2.mp4" playsinline muted loop preload="metadata"></video>
-                        </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-3.mp4" playsinline muted loop preload="metadata"></video>
-                        </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-4.mp4" playsinline muted loop preload="metadata"></video>
-                        </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-5.mp4" playsinline muted loop preload="metadata"></video>
-                        </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
-                    <div class="community-card" on:mouseenter={handleVideoPlay} on:mouseleave={handleVideoPause}>
-                        <div class="community-video-placeholder">
-                            <video class="community-video" src="/reels/community-video-6.mp4" playsinline muted loop preload="metadata"></video>
-                        </div>
-                        <div class="community-text-placeholder">
-                            <div class="placeholder-line short"></div>
-                            <div class="placeholder-line long"></div>
-                        </div>
-                    </div>
-
+                    {/each}
                 </div> 
             </div>
         </div> 

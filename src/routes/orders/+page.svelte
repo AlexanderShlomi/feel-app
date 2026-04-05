@@ -542,7 +542,7 @@
 </script>
 
 <svelte:head>
-    <title>ההזמנות שלי | FEEL</title>
+    <title>ההזמנות שלי | feel</title>
 </svelte:head>
 
 <div class="orders-page" dir="rtl" lang="he">

@@ -297,7 +297,17 @@ a.info-card, button.info-card { cursor: pointer; }
 .community-scroll-track { display: flex; gap: 20px; }
 .community-card { width: 280px; flex-shrink: 0; scroll-snap-align: start; }
 .community-video-placeholder { width: 100%; aspect-ratio: 9 / 16; background-color: var(--color-light-gray); border-radius: 12px; border: 1px solid #eee; overflow: hidden; position: relative; }
-.community-video { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; }
+.community-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* שכבת ציור ב-WebKit (לעיתים מסך שחור ב-iOS בלי זה) */
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+}
 .community-text-placeholder { padding: 15px 5px; display: flex; flex-direction: column; gap: 8px; }
 .placeholder-line { height: 14px; border-radius: 4px; background-color: var(--color-canvas-bg); }
 .placeholder-line.short { width: 40%; }
