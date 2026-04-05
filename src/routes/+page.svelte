@@ -1,6 +1,6 @@
 <svelte:head>
-    <title>FEEL - דף הבית</title>
-    <meta name="description" content="צור מגנטים אישיים" />
+    <title>feel - LUXURY MEMORIES</title>
+    <meta name="description" content="לעצור את הזמן – להרגיש את הרגע" />
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
