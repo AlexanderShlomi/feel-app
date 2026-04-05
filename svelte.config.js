@@ -1,19 +1,13 @@
-import adapter from '@sveltejs/adapter-static'; // שים לב: static במקום netlify
+import adapter from '@sveltejs/adapter-vercel';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	kit: {
-		adapter: adapter({
-			// הגדרות אלו קריטיות לגרירה ידנית ל-Netlify
-			pages: 'build',
-			assets: 'build',
-			fallback: 'index.html', // זה הטריק שמונע שגיאות 404 ברענון עמוד
-			precompress: false,
-			strict: true
-		})
+		// מפורש כדי שבנייה מקומית תעבוד גם על Node 24+; ב-Vercel ירוץ nodejs22.x
+		adapter: adapter({ runtime: 'nodejs22.x' })
 	},
-    preprocess: vitePreprocess()
+	preprocess: vitePreprocess()
 };
 
 export default config;

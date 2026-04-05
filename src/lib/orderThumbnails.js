@@ -94,13 +94,9 @@ export async function uploadOrderItemThumbnails(supabase, userId, orderId, cartI
         return [];
     }
 
-    const out = /** @type {(string | null)[]} */ ([]);
-
-    for (let i = 0; i < cartItems.length; i++) {
-        const item = cartItems[i];
+    const tasks = cartItems.map(async (item, i) => {
         const raw = item?.previewImage;
         let publicUrl = null;
-
         try {
             const rawBlob = await blobFromPreviewSource(typeof raw === 'string' ? raw : '');
             if (rawBlob && rawBlob.size > 0) {
@@ -119,9 +115,10 @@ export async function uploadOrderItemThumbnails(supabase, userId, orderId, cartI
         } catch {
             publicUrl = null;
         }
+        return [i, publicUrl];
+    });
 
-        out.push(publicUrl);
-    }
-
-    return out;
+    const pairs = await Promise.all(tasks);
+    pairs.sort((a, b) => a[0] - b[0]);
+    return pairs.map(([, url]) => url);
 }
