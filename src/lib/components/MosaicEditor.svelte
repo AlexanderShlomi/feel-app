@@ -289,11 +289,13 @@
     .mosaic-editor-card.landscape {
         max-width: min(850px, 92vw);
         max-height: 85vh;
+        max-height: 85dvh;
     }
     /* תמונה אנכית – כרטיס צר לחיתוך אנכי */
     .mosaic-editor-card.portrait {
         max-width: min(450px, 92vw);
         max-height: 90vh;
+        max-height: 90dvh;
     }
 
     .header {

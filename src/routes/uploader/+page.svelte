@@ -542,7 +542,7 @@
             <GiftButton />
             <UpsellWidget />
             <button class="dock-btn-circle secondary" on:click={() => { triggerUploadAction(); activePanel = null; }} title="הוסף עוד תמונות">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             </button>
         </footer>
     {/if}
@@ -559,7 +559,7 @@
          <UpsellWidget />
          
          <button class="dock-btn-circle secondary" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <line x1="3" y1="9" x2="21" y2="9"></line>
                 <line x1="3" y1="15" x2="21" y2="15"></line>
@@ -568,7 +568,7 @@
              </svg>
          </button>
          <button class="dock-btn-circle secondary" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
                 <path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
              </svg>
@@ -681,6 +681,9 @@
         .canvas-container.mobile-grid-active {
             overflow-y: auto !important; /* גלילה אנכית רק כשיש תוכן */
             overflow-x: hidden !important; /* ללא גלילה אופקית */
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
         }
         
         .mobile-grid-active #configurator-surface {
@@ -709,6 +712,7 @@
             border-radius: 12px !important;
             overflow: hidden !important;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
+            touch-action: pan-y !important;
         }
         .mobile-grid-active .magnet,
         .mobile-grid-active .image-wrapper {
@@ -768,6 +772,9 @@
             background-color: var(--color-dark-blue);
             overflow-y: auto !important; /* גלילה אנכית רק כשיש תוכן */
             overflow-x: hidden !important; /* ללא גלילה אופקית */
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
         }
         .canvas-container.split-center #configurator-surface {
             width: 100% !important;
