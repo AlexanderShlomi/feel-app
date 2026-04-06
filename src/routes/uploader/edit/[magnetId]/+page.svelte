@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter } from '$lib/stores.js';
+    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter } from '$lib/stores.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
 
     const FRAME_SIZE = 300; 
@@ -39,27 +39,20 @@
     let bgImageEl; 
     let effectsWorker;
     let activePanel = null;
-    let workerUnsupported = false;
-    let failedEffectIds = new Set();
 
     let isImageDecoded = false;
     let renderSrc = null; // never show a blank frame: swap only after decode
     let lastResolvedSrc = null;
     let preloadToken = 0;
 
+    let previewSrc = null;
+    let previewSrcToRevoke = null;
+
     $: currentEffectId = magnet?.activeEffectId || 'original';
-    $: displaySrc = magnet?.originalSrc || magnet?.src; 
-    $: activeFilterCss = getFilterStyle(currentEffectId);
-    $: processedSrc = magnet?.processed?.[currentEffectId];
-    $: isLoadingEffect = processedSrc === 'processing' && !failedEffectIds.has(currentEffectId) && !workerUnsupported;
-    $: resolvedEffectSrc =
-        processedSrc && processedSrc !== 'processing'
-            ? processedSrc
-            : displaySrc;
-    // Prefer processed bitmap when available; otherwise fall back to CSS filter (GPU).
-    $: resolvedFilterCss = processedSrc && processedSrc !== 'processing'
-        ? 'filter: none; -webkit-filter: none;'
-        : getFilterStyle(currentEffectId);
+    $: displaySrc = magnet?.originalSrc || magnet?.src;
+    $: resolvedEffectSrc = previewSrc || displaySrc;
+    $: resolvedFilterCss = getFilterStyle(currentEffectId);
+    $: isLoadingEffect = false;
 
     $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
@@ -89,36 +82,67 @@
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
         
-        if (window.Worker) {
-            effectsWorker = new Worker('/effects.worker.js');
-            effectsWorker.onmessage = (event) => {
-                const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
-                if (processedMagnetId !== magnetId) return;
-                if (status === 'success') {
-                    const newSrc = URL.createObjectURL(blob);
-                    updateMagnetProcessedSrc(magnetId, effectId, newSrc);
-                    return;
-                }
-                if (status === 'unsupported') {
-                    workerUnsupported = true;
-                    updateMagnetProcessedSrc(magnetId, effectId, null);
-                    return;
-                }
-                if (status === 'error') {
-                    failedEffectIds = new Set([...failedEffectIds, effectId]);
-                    updateMagnetProcessedSrc(magnetId, effectId, null);
-                }
-            };
-        } else {
-            workerUnsupported = true;
-        }
+        // Worker effects are intentionally NOT used for live preview in mobile editor.
+        // CSS filters provide immediate, native-feeling feedback without crashes.
+        if (window.Worker) effectsWorker = new Worker('/effects.worker.js');
+
+        // Build a smaller preview bitmap to keep mobile editing smooth and avoid memory spikes.
+        // This does not affect the stored original (used elsewhere).
+        createPreview(displaySrc).then((url) => {
+            if (!url) return;
+            previewSrcToRevoke = url;
+            previewSrc = url;
+        });
     });
 
     onDestroy(() => {
         if (effectsWorker) effectsWorker.terminate();
         if (dragRafId) cancelAnimationFrame(dragRafId);
         if (zoomRafId) cancelAnimationFrame(zoomRafId);
+        if (previewSrcToRevoke && previewSrcToRevoke.startsWith('blob:')) {
+            try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
+        }
     });
+
+    async function createPreview(src) {
+        try {
+            if (!src) return null;
+            const resp = await fetch(src);
+            const blob = await resp.blob();
+
+            const img = await (async () => {
+                if (window.createImageBitmap) return await createImageBitmap(blob);
+                const el = new Image();
+                el.decoding = 'async';
+                el.src = URL.createObjectURL(blob);
+                await new Promise((res, rej) => { el.onload = res; el.onerror = rej; });
+                return el;
+            })();
+
+            const w = img.width || img.naturalWidth;
+            const h = img.height || img.naturalHeight;
+            if (!w || !h) return null;
+
+            const MAX_DIM = 1600;
+            const scale = Math.min(1, MAX_DIM / Math.max(w, h));
+            const outW = Math.max(1, Math.round(w * scale));
+            const outH = Math.max(1, Math.round(h * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = outW;
+            canvas.height = outH;
+            const ctx = canvas.getContext('2d', { alpha: false });
+            ctx.drawImage(img, 0, 0, outW, outH);
+
+            if (img.close) { try { img.close(); } catch {} }
+
+            const outBlob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+            if (!outBlob) return null;
+            return URL.createObjectURL(outBlob);
+        } catch {
+            return null;
+        }
+    }
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
 
@@ -311,17 +335,6 @@
     function applyEffect(effectId) {
         // עדכון האפקט הנוכחי במגנט עצמו (לוגיקה ויזואלית תמיד תרוץ)
         updateMagnetActiveEffect(magnetId, effectId);
-
-        // אם אין מגנט, או שהאפקט הוא "מקורי", או שאין Worker פעיל – אין צורך בעיבוד נוסף
-        if (!magnet || effectId === 'original' || !effectsWorker || workerUnsupported) {
-            return;
-        }
-
-        const isAlreadyProcessed = magnet.processed && magnet.processed[effectId];
-        if (!isAlreadyProcessed) {
-            updateMagnetProcessedSrc(magnetId, effectId, 'processing');
-            effectsWorker.postMessage({ magnetId, effectId, originalSrc: magnet.originalSrc });
-        }
     }
     
     function deleteMagnet() {
