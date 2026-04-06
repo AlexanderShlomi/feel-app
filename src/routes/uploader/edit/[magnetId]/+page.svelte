@@ -44,6 +44,16 @@
     $: activeFilterCss = getFilterStyle(currentEffectId);
     $: processedSrc = magnet?.processed?.[currentEffectId];
     $: isLoadingEffect = processedSrc === 'processing';
+    $: resolvedEffectSrc =
+        processedSrc && processedSrc !== 'processing'
+            ? processedSrc
+            : displaySrc;
+    // SVG/CSS filters are expensive while transforming on mobile. Suppress during interaction
+    // and rely on processed image when available.
+    $: resolvedFilterCss =
+        resolvedEffectSrc !== displaySrc
+            ? 'filter: none;'
+            : (isInteracting ? 'filter: none;' : activeFilterCss);
 
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
@@ -277,10 +287,10 @@
                     style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
                 >
                     <img
-                        src={displaySrc}
+                        src={resolvedEffectSrc}
                         bind:this={bgImageEl}
                         on:load={onBgImageLoad}
-                        style="{activeFilterCss}"
+                        style="{resolvedFilterCss}"
                         alt="editing source"
                     />
                 </div>
@@ -430,19 +440,22 @@
         flex-shrink: 0;
         z-index: 25;
         width: 100%;
-        max-width: 360px;
-        margin: 0 auto;
+        max-width: 420px;
+        margin: 10px auto 0;
         box-sizing: border-box;
-        padding: 10px 20px 14px;
+        padding: 10px 14px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 10px;
+        gap: 6px;
         transition: opacity 0.3s;
         opacity: 0.85;
-        background: rgba(255, 255, 255, 0.94);
-        border-top: 1px solid rgba(0, 0, 0, 0.06);
-        box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.10);
         touch-action: manipulation;
     }
     .zoom-controls:hover,
@@ -451,30 +464,9 @@
     }
     .zoom-controls input {
         width: 100%;
-        height: 8px;
-        background: rgba(0, 0, 0, 0.12);
-        border-radius: 4px;
-        -webkit-appearance: none;
-        appearance: none;
-    }
-    .zoom-controls input::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 24px;
-        height: 24px;
-        background: var(--color-pink);
-        border: 2px solid white;
-        border-radius: 50%;
-        cursor: pointer;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    }
-    .zoom-controls input::-moz-range-thumb {
-        width: 24px;
-        height: 24px;
-        background: var(--color-pink);
-        border: 2px solid white;
-        border-radius: 50%;
-        cursor: pointer;
+        accent-color: var(--color-pink);
+        height: 32px;
+        -webkit-tap-highlight-color: transparent;
     }
     .hint {
         color: var(--color-medium-blue-gray);
