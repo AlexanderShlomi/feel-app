@@ -103,7 +103,9 @@
                 bind:this={imgElement}
                 on:load={handleImageLoad}
                 alt="" 
-                draggable="false" 
+                draggable="false"
+                loading="lazy"
+                decoding="async"
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}

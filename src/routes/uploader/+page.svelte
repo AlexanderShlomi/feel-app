@@ -699,11 +699,20 @@
 </FloatingPanel>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
-    <div class="effects-list">
+    <div class="effects-list effects-panel-grid">
         {#each effectsList as effect (effect.id)}
             <button class="effect-select-btn" class:active={effect.id === $editorSettings.currentEffect} on:click={() => applyEffectToAllMagnets(effect.id)}>
                 <div class="thumbnail-wrapper">
-                    <img src="/effects.png" alt={effect.name} style="filter: {effect.css};">
+                    <img
+                        src="/effects.png"
+                        alt=""
+                        style="filter: {effect.css};"
+                        loading="lazy"
+                        decoding="async"
+                        fetchpriority="low"
+                        width="80"
+                        height="80"
+                    >
                 </div>
                 <span>{effect.name}</span>
             </button>
@@ -750,7 +759,16 @@
     .size-slider-container { display: flex; align-items: center; gap: 15px; }
     .size-slider-container span { font-size: 16px; color: var(--color-medium-blue-gray); }
     
-    .effects-list { display: flex; gap: 15px; justify-content: center; padding: 5px 0; overflow-x: auto; }
+    @media (min-width: 769px) {
+        .effects-list.effects-panel-grid {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 15px;
+            justify-content: center;
+            padding: 5px 0;
+            overflow-x: auto;
+        }
+    }
     .effect-select-btn { background: none; border: none; cursor: pointer; padding: 0; font-family: 'Assistant', sans-serif; font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; }
     .effect-select-btn .thumbnail-wrapper { width: 80px; height: 80px; border-radius: 8px; border: 3px solid transparent; overflow: hidden; }
     .effect-select-btn .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }

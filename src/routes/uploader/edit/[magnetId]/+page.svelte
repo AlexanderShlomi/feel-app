@@ -37,7 +37,6 @@
     let hasInitializedImage = false;
     
     let bgImageEl; 
-    let effectsWorker;
     let activePanel = null;
 
     let isImageDecoded = false;
@@ -82,10 +81,6 @@
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
         
-        // Worker effects are intentionally NOT used for live preview in mobile editor.
-        // CSS filters provide immediate, native-feeling feedback without crashes.
-        if (window.Worker) effectsWorker = new Worker('/effects.worker.js');
-
         // Build a smaller preview bitmap to keep mobile editing smooth and avoid memory spikes.
         // This does not affect the stored original (used elsewhere).
         createPreview(displaySrc).then((url) => {
@@ -96,7 +91,6 @@
     });
 
     onDestroy(() => {
-        if (effectsWorker) effectsWorker.terminate();
         if (dragRafId) cancelAnimationFrame(dragRafId);
         if (zoomRafId) cancelAnimationFrame(zoomRafId);
         if (previewSrcToRevoke && previewSrcToRevoke.startsWith('blob:')) {
@@ -420,11 +414,20 @@
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
-    <div class="effects-list theme-scroll">
+    <div class="effects-list theme-scroll effects-panel-grid">
         {#each effectsList as effect (effect.id)}
             <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
                 <div class="thumbnail-wrapper theme-shadow">
-                    <img src="/effects.png" alt={effect.name} style="filter: {effect.css};">
+                    <img
+                        src="/effects.png"
+                        alt=""
+                        style="filter: {effect.css};"
+                        loading="lazy"
+                        decoding="async"
+                        fetchpriority="low"
+                        width="80"
+                        height="80"
+                    >
                 </div>
                 <span class="theme-text">{effect.name}</span>
             </button>
@@ -657,24 +660,17 @@
     .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
     .dock-btn-circle.primary { background: var(--color-pink); color: white; }
     .dock-btn-circle.danger { background: #eee; color: #d32f2f; }
-    .effects-list { display: flex; gap: 15px; padding: 10px; overflow-x: auto; }
+    @media (min-width: 769px) {
+        .effects-list.effects-panel-grid {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 15px;
+            padding: 10px;
+            overflow-x: auto;
+        }
+    }
     .thumbnail-wrapper { width: 60px; height: 60px; border-radius: 8px; overflow: hidden; margin-bottom: 5px; }
     .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
     .effect-select-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
     .effect-select-btn.active .thumbnail-wrapper { border: 2px solid var(--color-pink); }
-    
-    /* 🔥 מוביל: הסרת גלילה מיותרת באפקטים */
-    @media (max-width: 768px) {
-        .effects-list {
-            overflow-x: visible !important; /* ללא גלילה אופקית במוביל */
-            justify-content: space-between; /* פיזור אחיד של האפקטים */
-            gap: 10px;
-            padding: 5px 0;
-        }
-        
-        /* הסרת theme-scroll במוביל */
-        .effects-list.theme-scroll {
-            overflow-y: visible !important;
-        }
-    }
 </style>
