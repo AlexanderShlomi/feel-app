@@ -28,6 +28,12 @@
     let isInteracting = false; 
     let dragStartX = 0;
     let dragStartY = 0;
+    let activePointerId = null;
+    let pendingDeltaX = 0;
+    let pendingDeltaY = 0;
+    let dragRafId = 0;
+    let zoomRafId = 0;
+    let pendingZoomMultiplier = null;
     
     let bgImageEl; 
     let effectsWorker;
@@ -52,7 +58,11 @@
         };
     });
 
-    onDestroy(() => { if (effectsWorker) effectsWorker.terminate(); });
+    onDestroy(() => {
+        if (effectsWorker) effectsWorker.terminate();
+        if (dragRafId) cancelAnimationFrame(dragRafId);
+        if (zoomRafId) cancelAnimationFrame(zoomRafId);
+    });
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
 
@@ -127,38 +137,79 @@
     function endInteraction() { isDragging = false; isInteracting = false; }
 
     function startDrag(e) {
-        e.preventDefault();
+        // Pointer events unify mouse/touch and avoid global touchmove listeners.
+        if (e.cancelable) e.preventDefault();
+        if (activePointerId !== null) return;
+
+        activePointerId = e.pointerId ?? null;
         isDragging = true;
         startInteraction();
-        const pos = getEventPosition(e);
-        dragStartX = pos.clientX;
-        dragStartY = pos.clientY;
+
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (e.currentTarget?.setPointerCapture && activePointerId !== null) {
+            try { e.currentTarget.setPointerCapture(activePointerId); } catch {}
+        }
+    }
+
+    function flushPendingDrag() {
+        dragRafId = 0;
+        if (!isDragging) return;
+
+        bgTranslateX += pendingDeltaX;
+        bgTranslateY += pendingDeltaY;
+        pendingDeltaX = 0;
+        pendingDeltaY = 0;
+        clampPosition();
     }
 
     function onDrag(e) {
         if (!isDragging) return;
-        e.preventDefault();
-        const pos = getEventPosition(e);
-        
-        const deltaX = pos.clientX - dragStartX;
-        const deltaY = pos.clientY - dragStartY;
+        if (activePointerId !== null && e.pointerId !== activePointerId) return;
+        if (e.cancelable) e.preventDefault();
 
-        bgTranslateX += deltaX;
-        bgTranslateY += deltaY;
-        
-        dragStartX = pos.clientX;
-        dragStartY = pos.clientY;
+        const deltaX = e.clientX - dragStartX;
+        const deltaY = e.clientY - dragStartY;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
 
-        clampPosition();
+        pendingDeltaX += deltaX;
+        pendingDeltaY += deltaY;
+
+        if (!dragRafId) dragRafId = requestAnimationFrame(flushPendingDrag);
     }
 
-    function handleGlobalEnd() { if (isInteracting) endInteraction(); }
+    function handleGlobalEnd(e) {
+        if (activePointerId !== null && e?.pointerId !== activePointerId) return;
+        activePointerId = null;
+        pendingDeltaX = 0;
+        pendingDeltaY = 0;
+        if (dragRafId) {
+            cancelAnimationFrame(dragRafId);
+            dragRafId = 0;
+        }
+        if (isInteracting) endInteraction();
+    }
+
     function handleZoomInput(e) {
-        const multiplier = parseFloat(e.target.value);
-        bgScale = multiplier * minScaleLimit;
-        clampPosition();
+        // Throttle updates to 60fps to keep slider responsive on mobile.
+        pendingZoomMultiplier = parseFloat(e.target.value);
+        startInteraction();
+        if (!zoomRafId) {
+            zoomRafId = requestAnimationFrame(() => {
+                zoomRafId = 0;
+                if (pendingZoomMultiplier === null) return;
+                bgScale = pendingZoomMultiplier * minScaleLimit;
+                pendingZoomMultiplier = null;
+                clampPosition();
+            });
+        }
     }
-    function getEventPosition(e) { return e.touches ? e.touches[0] : e; }
+    function endZoomInteraction() {
+        if (!isInteracting) return;
+        handleGlobalEnd({ pointerId: activePointerId });
+    }
 
     // --- שמירה ואיפוס ---
 
@@ -212,11 +263,6 @@
     }
 </script>
 
-<svelte:window 
-    on:mousemove={onDrag} on:mouseup={handleGlobalEnd}
-    on:touchmove|preventDefault={onDrag} on:touchend={handleGlobalEnd}
-/>
-
 <div class="brand-loader-bar" style="display: {isLoadingEffect ? 'block' : 'none'};">
     <div class="loader-progress"></div>
 </div>
@@ -242,8 +288,10 @@
 
             <div
                 class="mask-layer"
-                on:mousedown={startDrag}
-                on:touchstart|preventDefault={startDrag}
+                on:pointerdown={startDrag}
+                on:pointermove={onDrag}
+                on:pointerup={handleGlobalEnd}
+                on:pointercancel={handleGlobalEnd}
             >
                 <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
             </div>
@@ -255,10 +303,17 @@
 
         <div
             class="zoom-controls"
-            on:mousedown={startInteraction}
-            on:touchstart={startInteraction}
+            on:pointerdown={startInteraction}
         >
-            <input type="range" min="1" max="3" step="0.01" value={bgScale / (minScaleLimit || 1)} on:input={handleZoomInput}>
+            <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.01"
+                value={bgScale / (minScaleLimit || 1)}
+                on:input={handleZoomInput}
+                on:change={endZoomInteraction}
+            >
             <span class="hint">צבוט או גרור לזום ומיקום</span>
         </div>
     </div>
@@ -267,8 +322,8 @@
     <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
     <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
     <div class="dock-divider"></div>
-    <button class="dock-btn-circle danger" on:click={deleteMagnet}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
-    <button class="dock-btn-circle primary" on:click={saveAndClose}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
+    <button class="dock-btn-circle danger" aria-label="מחק תמונה" on:click={deleteMagnet}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+    <button class="dock-btn-circle primary" aria-label="שמור וסגור" on:click={saveAndClose}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
