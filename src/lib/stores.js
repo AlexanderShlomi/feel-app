@@ -349,11 +349,24 @@ export function removeCartItem(itemId) {
 
 export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
     const currentList = get(magnets);
-    if (currentList.length > 0) currentList.forEach(m => { if(m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc) });
+    if (currentList.length > 0) currentList.forEach(m => {
+        if (m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc);
+        if (m.src?.startsWith('blob:')) URL.revokeObjectURL(m.src);
+        if (m.processed) {
+            Object.values(m.processed).forEach(v => {
+                if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
+            });
+        }
+    });
     magnets.set([]);
     editingItemId.set(null);
     const s = get(editorSettings);
     if (s.splitImageSrc?.startsWith('blob:')) URL.revokeObjectURL(s.splitImageSrc);
+    if (s.splitImageCache) {
+        Object.values(s.splitImageCache).forEach(v => {
+            if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
+        });
+    }
     
     editorSettings.set({
         currentProductType: targetType, currentDisplayScale: SCALE_DEFAULT, surfaceMinHeight: '100%', isSurfaceDark: false,
@@ -372,6 +385,15 @@ export function addUploadedMagnets(files) {
     }));
     magnets.update(l => [...l, ...newMags]);
 }
-export function updateMagnetProcessedSrc(id, eff, src) { magnets.update(l => l.map(m => m.id===id ? {...m, processed:{...m.processed,[eff]:src}} : m)); }
+export function updateMagnetProcessedSrc(id, eff, src) {
+    magnets.update(l => l.map(m => {
+        if (m.id !== id) return m;
+        const prev = m.processed?.[eff];
+        if (prev && prev !== src && typeof prev === 'string' && prev.startsWith('blob:')) {
+            try { URL.revokeObjectURL(prev); } catch {}
+        }
+        return { ...m, processed: { ...m.processed, [eff]: src } };
+    }));
+}
 export function updateMagnetTransform(id, tr) { magnets.update(l => l.map(m => m.id===id ? {...m, transform:tr} : m)); }
 export function updateMagnetActiveEffect(id, eff) { magnets.update(l => l.map(m => m.id===id ? {...m, activeEffectId:eff} : m)); }
