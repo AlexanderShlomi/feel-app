@@ -157,7 +157,7 @@
             width: min(92vw, 400px);
             min-width: unset;
             max-width: 92vw;
-            max-height: min(52vh, 400px);
+            max-height: min(62vh, 460px);
         }
 
         .floating-panel .panel-content {

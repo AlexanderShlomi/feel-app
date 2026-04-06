@@ -442,6 +442,41 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance
 .effect-select-btn.active { color: var(--color-pink); }
 .effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
 
+/* Mobile / narrow: wrap effects into 2 rows, no horizontal pan (Photos-like) */
+@media (max-width: 768px) {
+    .effects-panel-grid.effects-list,
+    .effects-panel-grid {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        justify-content: center !important;
+        align-content: flex-start !important;
+        gap: clamp(6px, 2vw, 10px) !important;
+        overflow-x: hidden !important;
+        overflow-y: visible !important;
+        padding: 4px 2px !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        -webkit-overflow-scrolling: touch;
+    }
+    .effects-panel-grid .effect-select-btn {
+        flex: 0 1 calc(33.333% - 8px) !important;
+        min-width: 0 !important;
+        max-width: calc(33.333% - 6px) !important;
+    }
+    .effects-panel-grid .effect-select-btn .thumbnail-wrapper {
+        width: min(72px, 24vw) !important;
+        height: min(72px, 24vw) !important;
+        max-width: 100% !important;
+    }
+    .effects-panel-grid .effect-select-btn .theme-text,
+    .effects-panel-grid .effect-select-btn span {
+        font-size: clamp(11px, 3.2vw, 13px) !important;
+        text-align: center;
+        line-height: 1.2;
+    }
+}
+
 /* --- Magnet Preview (עבור דף העריכה) --- */
 .magnet-preview { background-color: transparent; border: none; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); border-radius: 12px; padding: 0; position:absolute; user-select:none; transition: left 0.5s ease, top 0.5s ease, width 0.2s ease, height 0.2s ease, filter 0.3s ease, box-shadow 0.3s; overflow: hidden; box-sizing: border-box; }
 .magnet-preview:hover { box-shadow: 0 4px 18px rgba(0, 0, 0, 0.15); }
