@@ -48,12 +48,9 @@
         processedSrc && processedSrc !== 'processing'
             ? processedSrc
             : displaySrc;
-    // SVG/CSS filters are expensive while transforming on mobile. Suppress during interaction
-    // and rely on processed image when available.
-    $: resolvedFilterCss =
-        resolvedEffectSrc !== displaySrc
-            ? 'filter: none;'
-            : (isInteracting ? 'filter: none;' : activeFilterCss);
+    // iPhone Safari struggles with SVG/CSS filters + transforms; in this editor we rely
+    // on the processed bitmap when available (and show original while processing).
+    $: resolvedFilterCss = 'filter: none;';
 
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
@@ -315,16 +312,20 @@
             class="zoom-controls"
             on:pointerdown={startInteraction}
         >
-            <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.01"
-                value={bgScale / (minScaleLimit || 1)}
-                on:input={handleZoomInput}
-                on:change={endZoomInteraction}
-            >
-            <span class="hint">צבוט או גרור לזום ומיקום</span>
+            <div class="slider-wrapper">
+                <span class="icon">-</span>
+                <input
+                    type="range"
+                    min="1"
+                    max="3"
+                    step="0.01"
+                    value={bgScale / (minScaleLimit || 1)}
+                    on:input={handleZoomInput}
+                    on:change={endZoomInteraction}
+                >
+                <span class="icon">+</span>
+            </div>
+            <span class="hint">הזז והגדל את התמונה</span>
         </div>
     </div>
 
@@ -440,33 +441,68 @@
         flex-shrink: 0;
         z-index: 25;
         width: 100%;
-        max-width: 420px;
-        margin: 10px auto 0;
+        max-width: 360px;
+        margin: 0 auto;
         box-sizing: border-box;
-        padding: 10px 14px;
+        padding: 10px 20px 14px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
+        gap: 10px;
         transition: opacity 0.3s;
         opacity: 0.85;
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.72);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(0, 0, 0, 0.08);
-        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.10);
+        background: rgba(255, 255, 255, 0.94);
+        border-top: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06);
         touch-action: manipulation;
     }
     .zoom-controls:hover,
     .editor-page.is-interacting .zoom-controls {
         opacity: 1;
     }
+    .slider-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .icon {
+        font-weight: 800;
+        color: #666;
+        font-size: 18px;
+        width: 18px;
+        text-align: center;
+        user-select: none;
+    }
     .zoom-controls input {
         width: 100%;
-        accent-color: var(--color-pink);
-        height: 32px;
+        height: 6px;
+        background: rgba(0, 0, 0, 0.12);
+        border-radius: 999px;
+        -webkit-appearance: none;
+        appearance: none;
+        outline: none;
         -webkit-tap-highlight-color: transparent;
+    }
+    .zoom-controls input::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--color-pink);
+        border: 2px solid #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
+    .zoom-controls input::-moz-range-thumb {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--color-pink);
+        border: 2px solid #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     }
     .hint {
         color: var(--color-medium-blue-gray);
