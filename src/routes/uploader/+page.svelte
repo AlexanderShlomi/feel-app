@@ -757,6 +757,8 @@
             touch-action: pan-y;
             -webkit-overflow-scrolling: touch;
             overscroll-behavior-y: contain;
+            /* מרחיק את סוף הגלילה מתחת ל-dock כדי שלא יחסום tap על השורה האחרונה */
+            padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)) !important;
         }
         
         .mobile-grid-active #configurator-surface {
@@ -765,6 +767,7 @@
             grid-auto-rows: min-content;
             gap: 16px !important;
             padding: 16px !important;
+            padding-bottom: calc(16px + 120px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)) !important;
             
             height: auto !important;
             min-height: 100% !important;
