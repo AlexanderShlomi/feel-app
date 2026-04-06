@@ -54,15 +54,27 @@
     let isSplitEditing = false; 
     $: isGiftMode = $editorSettings.currentProductType === PRODUCT_TYPES.GIFT;
 
-    /** רשת מגנטים במובייל: גלילה דרך התמונה (pointer-events על השכבה הפנימית none); רק "הקשה" קצרה → עריכה */
+    /** מובייל: ה-tiles עם pointer-events:none כדי שהגלילה תעבור ל-.canvas-container; לחיצה מזוהה לפי קואורדינטות */
+    const MOBILE_TAP_SCROLL_CANCEL_PX = 14;
     let mobileMagnetTap = null;
+
+    function getMagnetIdAtPoint(clientX, clientY) {
+        if (!surfaceEl) return null;
+        const wrappers = surfaceEl.querySelectorAll('.magnet-wrapper');
+        for (const w of wrappers) {
+            const r = w.getBoundingClientRect();
+            if (clientX >= r.left && clientY >= r.top && clientX <= r.right && clientY <= r.bottom) {
+                return w.dataset.magnetId || null;
+            }
+        }
+        return null;
+    }
 
     function onMobilePackPointerDown(e) {
         if (e.pointerType === 'mouse' && e.button !== 0) return;
         if (!get(isMobile) || get(editorSettings).currentProductType !== PRODUCT_TYPES.MAGNETS_PACK) return;
         const wrap = e.target.closest?.('.magnet-wrapper');
-        if (!wrap) return;
-        const id = wrap.dataset.magnetId;
+        const id = wrap?.dataset?.magnetId || getMagnetIdAtPoint(e.clientX, e.clientY);
         if (!id) return;
         mobileMagnetTap = {
             id,
@@ -73,6 +85,15 @@
         };
     }
 
+    function onMobilePackPointerMove(e) {
+        if (!mobileMagnetTap || e.pointerId !== mobileMagnetTap.pointerId) return;
+        const dx = Math.abs(e.clientX - mobileMagnetTap.x);
+        const dy = Math.abs(e.clientY - mobileMagnetTap.y);
+        if (dx > MOBILE_TAP_SCROLL_CANCEL_PX || dy > MOBILE_TAP_SCROLL_CANCEL_PX) {
+            mobileMagnetTap = null;
+        }
+    }
+
     function onMobilePackPointerUp(e) {
         if (!mobileMagnetTap || e.pointerId !== mobileMagnetTap.pointerId) return;
         const dx = Math.abs(e.clientX - mobileMagnetTap.x);
@@ -80,7 +101,7 @@
         const dt = Date.now() - mobileMagnetTap.t;
         const id = mobileMagnetTap.id;
         mobileMagnetTap = null;
-        if (dx <= 14 && dy <= 14 && dt <= 550) {
+        if (dx <= MOBILE_TAP_SCROLL_CANCEL_PX && dy <= MOBILE_TAP_SCROLL_CANCEL_PX && dt <= 550) {
             goto(`/uploader/edit/${id}`);
         }
     }
@@ -521,6 +542,7 @@
         style="min-height: {$editorSettings.surfaceMinHeight};"
         class:surface-dark={$editorSettings.isSurfaceDark}
         on:pointerdown={onMobilePackPointerDown}
+        on:pointermove={onMobilePackPointerMove}
         on:pointerup={onMobilePackPointerUp}
         on:pointercancel={onMobilePackPointerCancel}
     >
@@ -763,8 +785,9 @@
             border-radius: 12px !important;
             overflow: hidden !important;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
-            /* המגע נקלט כאן לגלילה; התמונה לא חוסמת את הקונטיינר המתגלל */
-            touch-action: pan-y !important;
+            /* חיוני: בלי זה iOS/Android חוסמים גלילה כשהמגע על התמונה — הגלילה עוברת ל-.canvas-container */
+            pointer-events: none !important;
+            touch-action: auto !important;
         }
         .mobile-grid-active .magnet,
         .mobile-grid-active .image-wrapper {
