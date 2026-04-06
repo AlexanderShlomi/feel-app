@@ -42,7 +42,9 @@ if (typeof window !== 'undefined') {
 }
 
 export function getFilterStyle(effectId) {
-    return `filter: ${getCssFilter(effectId)};`;
+    const f = getCssFilter(effectId);
+    // iOS Safari still benefits from explicit -webkit-filter.
+    return `filter: ${f}; -webkit-filter: ${f};`;
 }
 
 export function getCssFilter(effectId) {

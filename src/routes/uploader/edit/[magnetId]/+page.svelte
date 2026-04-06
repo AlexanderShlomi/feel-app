@@ -43,7 +43,9 @@
     let failedEffectIds = new Set();
 
     let isImageDecoded = false;
+    let renderSrc = null; // never show a blank frame: swap only after decode
     let lastResolvedSrc = null;
+    let preloadToken = 0;
 
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src; 
@@ -56,12 +58,32 @@
             : displaySrc;
     // Prefer processed bitmap when available; otherwise fall back to CSS filter (GPU).
     $: resolvedFilterCss = processedSrc && processedSrc !== 'processing'
-        ? 'filter: none;'
-        : `filter: ${getCssFilter(currentEffectId)};`;
+        ? 'filter: none; -webkit-filter: none;'
+        : getFilterStyle(currentEffectId);
 
     $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
         isImageDecoded = false;
+        const token = ++preloadToken;
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = resolvedEffectSrc;
+        const done = () => {
+            if (token !== preloadToken) return;
+            renderSrc = resolvedEffectSrc;
+            isImageDecoded = true;
+        };
+        // decode() avoids blank frames on iOS when swapping large images.
+        if (img.decode) {
+            img.decode().then(done).catch(() => {
+                // Fallback to onload in browsers where decode fails for some sources.
+                img.onload = done;
+                img.onerror = done;
+            });
+        } else {
+            img.onload = done;
+            img.onerror = done;
+        }
     }
 
     onMount(() => {
@@ -329,7 +351,7 @@
                     style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
                 >
                     <img
-                        src={resolvedEffectSrc}
+                        src={renderSrc || resolvedEffectSrc}
                         bind:this={bgImageEl}
                         on:load={(e) => { isImageDecoded = true; onBgImageLoad(e); }}
                         style="{resolvedFilterCss}"
