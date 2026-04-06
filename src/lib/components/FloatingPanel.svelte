@@ -78,20 +78,18 @@
     /* --- רקע (Backdrop) - panel-backdrop כדי לא להיות מושפע מ-.backdrop הגלובלי (z-index: 5000) --- */
     .panel-backdrop {
         position: fixed;
-        top: 0; left: 0;
-        width: 100%; height: 100%;
-        
-        /* 🔥 שינוי קריטי: שקוף לחלוטין כדי לראות את התמונה בבירור */
-        background: transparent; 
-        z-index: 2000;
-        
-        /* ביטלנו את האנימציה ואת הטשטוש (Blur) */
+        inset: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+        /* 🔥 שקוף לחלוטין כדי לראות את התמונה בבירור */
+        background: transparent;
+        z-index: 4500;
     }
 
     /* --- עיצוב הפאנל --- */
     .floating-panel {
         position: fixed;
-        z-index: 2001;
+        z-index: 4501;
         
         /* עיצוב Glassmorphism */
         background: rgba(255, 255, 255, 0.95); /* קצת יותר אטום כדי שהטקסט בפאנל יהיה קריא */
@@ -148,14 +146,18 @@
         background: rgba(63, 82, 79, 0.1);
     }
 
-    /* --- התאמות למובייל: פאנל מתחת ל-header — לא מכסה את אזור התצוגה המרכזי --- */
+    /* --- מובייל: מעל ה-dock (לא מתחת ל-header) — fixed + transform בדוק שובר מיקום אם הפאנל בתוךו --- */
     @media (max-width: 768px) {
         .floating-panel {
-            top: calc(70px + env(safe-area-inset-top, 0px) + 12px);
-            bottom: auto;
-            width: 90vw; 
+            top: auto;
+            bottom: calc(100px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+            left: 50%;
+            right: auto;
+            transform: translateX(-50%);
+            width: min(92vw, 400px);
             min-width: unset;
-            max-height: min(45vh, 360px);
+            max-width: 92vw;
+            max-height: min(52vh, 400px);
         }
 
         .floating-panel .panel-content {

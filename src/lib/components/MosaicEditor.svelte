@@ -347,14 +347,42 @@
     }
 
     .controls {
-        padding: 15px 20px; background: #fff; border-top: 1px solid #eee;
-        display: flex; align-items: center; gap: 15px;
+        padding: 15px 20px;
+        padding-bottom: max(15px, env(safe-area-inset-bottom, 0px));
+        background: #fff;
+        border-top: 1px solid #eee;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-shrink: 0;
     }
 
-    .slider-wrapper { flex: 1; display: flex; align-items: center; gap: 10px; }
+    .slider-wrapper {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        touch-action: manipulation;
+    }
     .icon { font-weight: bold; color: #666; font-size: 18px; }
     
-    input[type=range] { width: 100%; cursor: pointer; }
+    input[type='range'] {
+        width: 100%;
+        height: 10px;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+    input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--color-pink, #3f524f);
+        border: 2px solid #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
 
     .text-btn { background: none; border: none; cursor: pointer; font-weight: 600; color: #666; font-size: 14px; }
     .save-btn { background: #1E1E1E; color: white; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 700; cursor: pointer; font-size: 14px; }

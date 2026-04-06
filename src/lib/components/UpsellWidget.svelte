@@ -96,101 +96,112 @@
             if (success) close();
         }
     }
+
+    /** פורטל ל-body — הדוק משתמש ב-transform ולכן fixed בתוכו נשבר במובייל */
+    function portal(node) {
+        const target = document.body;
+        target.appendChild(node);
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            }
+        };
+    }
 </script>
 
 {#if isOpen}
-    <div class="backdrop-click-area" on:click={close} transition:fade={{ duration: 200 }}></div>
+    <div
+        class="backdrop-click-area"
+        use:portal
+        on:click={close}
+        transition:fade={{ duration: 200 }}
+        role="presentation"
+    ></div>
+    <div class="upsell-popover" use:portal transition:fly={{ y: 24, duration: 250 }} on:click|stopPropagation>
+        <div class="popover-header">
+            <div class="header-content">
+                <span class="status-msg">{@html message}</span>
+                <span class="count-display">סה"כ {count} {isMosaic ? 'חלקים' : 'תמונות'}</span>
+            </div>
+        </div>
+
+        <div class="popover-body theme-scroll">
+            {#if !isMosaic}
+                <div class="timeline-wrapper">
+                    <div class="track"></div>
+                    <div class="fill" style="width: {progressPercent}%"></div>
+
+                    {#each PACKAGES as pkg, i}
+                        {@const isPassed = count >= pkg.count}
+                        {@const isCurrentTarget = (nextPackage && nextPackage.count === pkg.count) || (currentPackage.count === pkg.count && extraCount === 0)}
+
+                        <div class="dot-container" style="left: {(i / (PACKAGES.length - 1)) * 100}%">
+                            <div class="dot" class:passed={isPassed} class:target={isCurrentTarget}>
+                                {pkg.count}
+                            </div>
+                            {#if isCurrentTarget}
+                                <div class="price-tag-floating">₪{pkg.price}</div>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+
+            <div class="price-details">
+                {#if isMinReached}
+                    <div class="detail-row">
+                        <span>{isMosaic ? 'מחיר בסיס (9 חלקים)' : `חבילת ${currentPackage.name}`}</span>
+                        <span>₪{currentPackage.price}</span>
+                    </div>
+                    {#if extraCount > 0}
+                        <div class="detail-row extra">
+                            <span>+ {extraCount} {isMosaic ? 'חלקים' : 'תמונות'} (₪{EXTRA_MAGNET_PRICE}/יח')</span>
+                            <span>₪{extraCount * EXTRA_MAGNET_PRICE}</span>
+                        </div>
+                    {/if}
+                {:else}
+                    <div class="detail-row warning">
+                        <span>מינימום להזמנה</span>
+                        <span>{isMosaic ? '9 חלקים' : '9 תמונות'}</span>
+                    </div>
+                {/if}
+            </div>
+        </div>
+
+        <div class="popover-footer">
+            <div class="total-wrapper">
+                <span class="label">סה"כ:</span>
+                <span class="amount">₪{totalPrice}</span>
+            </div>
+
+            <button
+                class="add-to-cart-btn"
+                class:disabled={!isMinReached || isSaving}
+                on:click={handleAddToCart}
+            >
+                {#if isSaving}
+                    <span class="btn-text">שומר...</span>
+                {:else if isMinReached}
+                    {#if isEditing}
+                        <span class="btn-text">עדכן הזמנה</span>
+                        <div class="icon-circle">✓</div>
+                    {:else}
+                        <span class="btn-text">הוסף להזמנה</span>
+                        <div class="icon-circle">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                    {/if}
+                {:else}
+                    השלם למינימום
+                {/if}
+            </button>
+        </div>
+
+        <div class="arrow-down"></div>
+    </div>
 {/if}
 
 <div class="widget-wrapper" data-tooltip={isEditing ? "שמור עדכון להזמנה" : "הוסף לסל"}>
-    
-    {#if isOpen}
-        <div class="upsell-popover" transition:fly={{ y: 20, duration: 250 }}>
-            
-            <div class="popover-header">
-                <div class="header-content">
-                    <span class="status-msg">{@html message}</span>
-                    <span class="count-display">סה"כ {count} {isMosaic ? 'חלקים' : 'תמונות'}</span>
-                </div>
-            </div>
-
-            <div class="popover-body theme-scroll">
-                
-                {#if !isMosaic}
-                    <div class="timeline-wrapper">
-                        <div class="track"></div>
-                        <div class="fill" style="width: {progressPercent}%"></div>
-                        
-                        {#each PACKAGES as pkg, i}
-                            {@const isPassed = count >= pkg.count}
-                            {@const isCurrentTarget = (nextPackage && nextPackage.count === pkg.count) || (currentPackage.count === pkg.count && extraCount === 0)}
-                            
-                            <div class="dot-container" style="left: {(i / (PACKAGES.length - 1)) * 100}%">
-                                <div class="dot" class:passed={isPassed} class:target={isCurrentTarget}>
-                                    {pkg.count}
-                                </div>
-                                {#if isCurrentTarget}
-                                    <div class="price-tag-floating">₪{pkg.price}</div>
-                                {/if}
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-
-                <div class="price-details">
-                    {#if isMinReached}
-                        <div class="detail-row">
-                            <span>{isMosaic ? 'מחיר בסיס (9 חלקים)' : `חבילת ${currentPackage.name}`}</span>
-                            <span>₪{currentPackage.price}</span>
-                        </div>
-                        {#if extraCount > 0}
-                            <div class="detail-row extra">
-                                <span>+ {extraCount} {isMosaic ? 'חלקים' : 'תמונות'} (₪{EXTRA_MAGNET_PRICE}/יח')</span>
-                                <span>₪{extraCount * EXTRA_MAGNET_PRICE}</span>
-                            </div>
-                        {/if}
-                    {:else}
-                        <div class="detail-row warning">
-                            <span>מינימום להזמנה</span>
-                            <span>{isMosaic ? '9 חלקים' : '9 תמונות'}</span>
-                        </div>
-                    {/if}
-                </div>
-            </div>
-
-            <div class="popover-footer">
-                <div class="total-wrapper">
-                    <span class="label">סה"כ:</span>
-                    <span class="amount">₪{totalPrice}</span>
-                </div>
-                
-                <button 
-                    class="add-to-cart-btn" 
-                    class:disabled={!isMinReached || isSaving}
-                    on:click={handleAddToCart}
-                >
-                    {#if isSaving}
-                         <span class="btn-text">שומר...</span>
-                    {:else if isMinReached}
-                        {#if isEditing}
-                             <span class="btn-text">עדכן הזמנה</span>
-                             <div class="icon-circle">✓</div>
-                        {:else}
-                             <span class="btn-text">הוסף להזמנה</span>
-                             <div class="icon-circle">
-                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                             </div>
-                        {/if}
-                    {:else}
-                        השלם למינימום
-                    {/if}
-                </button>
-            </div>
-
-            <div class="arrow-down"></div>
-        </div>
-    {/if}
-
     <button 
         class="trigger-circle" 
         class:active={isOpen}
@@ -234,7 +245,15 @@
 
 <style>
     .widget-wrapper { position: relative; display: flex; justify-content: center; align-items: center; }
-    .backdrop-click-area { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 4999; background: transparent; cursor: default; }
+    .backdrop-click-area {
+        position: fixed;
+        inset: 0;
+        z-index: 4600;
+        background: transparent;
+        cursor: default;
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
     
     .trigger-circle { 
         width: 50px; height: 50px; border-radius: 50%; 
@@ -277,7 +296,25 @@
     .count-badge { background: var(--color-gold); color: var(--color-dark-blue); }
     
     /* שאר ה-CSS נשאר ללא שינוי */
-    .upsell-popover { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); width: 340px; background: white; border-radius: 16px; box-shadow: 0 10px 50px rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.05); z-index: 5000; display: flex; flex-direction: column; font-family: 'Assistant', sans-serif; cursor: default; overflow: hidden; }
+    .upsell-popover {
+        position: fixed;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: calc(100px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+        width: 340px;
+        max-width: calc(100vw - 20px);
+        max-height: min(62vh, 480px);
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 10px 50px rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(0, 0, 0, 0.05);
+        z-index: 4601;
+        display: flex;
+        flex-direction: column;
+        font-family: 'Assistant', sans-serif;
+        cursor: default;
+        overflow: hidden;
+    }
     .arrow-down { position: absolute; bottom: -6px; left: 50%; margin-left: -6px; width: 12px; height: 12px; background: white; transform: rotate(45deg); border-bottom: 1px solid rgba(0,0,0,0.05); border-right: 1px solid rgba(0,0,0,0.05); z-index: 5001; }
     .popover-header { padding: 12px 15px; background: #f8f9fa; border-bottom: 1px solid #eee; }
     .header-content { display: flex; justify-content: space-between; align-items: center; }
@@ -306,5 +343,14 @@
     .add-to-cart-btn:hover { background: #000; }
     .add-to-cart-btn.disabled { background: #e0e0e0; color: #999; cursor: not-allowed; box-shadow: none; }
     .icon-circle { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; }
-    @media (max-width: 768px) { .upsell-popover { width: 94vw; bottom: 90px; } }
+    @media (max-width: 768px) {
+        .upsell-popover {
+            width: min(94vw, 360px);
+            bottom: calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+            max-height: min(58vh, 440px);
+        }
+        .popover-body {
+            max-height: min(38vh, 260px);
+        }
+    }
 </style>
