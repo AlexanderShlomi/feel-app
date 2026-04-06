@@ -59,6 +59,16 @@
     let mobileMagnetTap = null;
 
     function getMagnetIdAtPoint(clientX, clientY) {
+        // Most reliable across iOS/Android, even when tiles use pointer-events:none.
+        const list = document.elementsFromPoint?.(clientX, clientY);
+        if (list && list.length) {
+            for (const el of list) {
+                const wrap = el?.closest?.('.magnet-wrapper');
+                const id = wrap?.dataset?.magnetId;
+                if (id) return id;
+            }
+        }
+        // Fallback for older browsers.
         if (!surfaceEl) return null;
         const wrappers = surfaceEl.querySelectorAll('.magnet-wrapper');
         for (const w of wrappers) {
@@ -81,12 +91,13 @@
             x: e.clientX,
             y: e.clientY,
             t: Date.now(),
-            pointerId: e.pointerId
+            pointerId: e.pointerId ?? null
         };
     }
 
     function onMobilePackPointerMove(e) {
-        if (!mobileMagnetTap || e.pointerId !== mobileMagnetTap.pointerId) return;
+        if (!mobileMagnetTap) return;
+        if (mobileMagnetTap.pointerId !== null && e.pointerId !== mobileMagnetTap.pointerId) return;
         const dx = Math.abs(e.clientX - mobileMagnetTap.x);
         const dy = Math.abs(e.clientY - mobileMagnetTap.y);
         if (dx > MOBILE_TAP_SCROLL_CANCEL_PX || dy > MOBILE_TAP_SCROLL_CANCEL_PX) {
@@ -95,7 +106,8 @@
     }
 
     function onMobilePackPointerUp(e) {
-        if (!mobileMagnetTap || e.pointerId !== mobileMagnetTap.pointerId) return;
+        if (!mobileMagnetTap) return;
+        if (mobileMagnetTap.pointerId !== null && e.pointerId !== mobileMagnetTap.pointerId) return;
         const dx = Math.abs(e.clientX - mobileMagnetTap.x);
         const dy = Math.abs(e.clientY - mobileMagnetTap.y);
         const dt = Date.now() - mobileMagnetTap.t;
@@ -534,17 +546,17 @@
 <div class="canvas-container" 
      class:container-dark={$editorSettings.isSurfaceDark} 
      class:split-center={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
-     class:mobile-grid-active={$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK}>
+     class:mobile-grid-active={$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK}
+     on:pointerdown|capture={onMobilePackPointerDown}
+     on:pointermove|capture={onMobilePackPointerMove}
+     on:pointerup|capture={onMobilePackPointerUp}
+     on:pointercancel|capture={onMobilePackPointerCancel}>
     
     <div 
         id="configurator-surface" 
         bind:this={surfaceEl} 
         style="min-height: {$editorSettings.surfaceMinHeight};"
         class:surface-dark={$editorSettings.isSurfaceDark}
-        on:pointerdown={onMobilePackPointerDown}
-        on:pointermove={onMobilePackPointerMove}
-        on:pointerup={onMobilePackPointerUp}
-        on:pointercancel={onMobilePackPointerCancel}
     >
         {#each $magnets as magnet (magnet.id)}
             <div 
