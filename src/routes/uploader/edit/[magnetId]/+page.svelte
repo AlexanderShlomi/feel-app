@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle } from '$lib/stores.js';
+    import { magnets, updateMagnetProcessedSrc, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter } from '$lib/stores.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
 
     const FRAME_SIZE = 300; 
@@ -12,12 +12,12 @@
     $: magnet = $magnets.find(m => m.id === magnetId);
 
     const effectsList = [
-        { id: 'original', name: 'מקורי', filter: 'none' },
-        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
-        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
-        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
-        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
-    ];
+        { id: 'original', name: 'מקורי' },
+        { id: 'silver', name: 'כסף' },
+        { id: 'noir', name: 'נואר' },
+        { id: 'vivid', name: 'עז' },
+        { id: 'dramatic', name: 'דרמטי' }
+    ].map(e => ({ ...e, css: getCssFilter(e.id) }));
 
     let bgTranslateX = 0;
     let bgTranslateY = 0;
@@ -39,31 +39,57 @@
     let bgImageEl; 
     let effectsWorker;
     let activePanel = null;
+    let workerUnsupported = false;
+    let failedEffectIds = new Set();
+
+    let isImageDecoded = false;
+    let lastResolvedSrc = null;
 
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src; 
     $: activeFilterCss = getFilterStyle(currentEffectId);
     $: processedSrc = magnet?.processed?.[currentEffectId];
-    $: isLoadingEffect = processedSrc === 'processing';
+    $: isLoadingEffect = processedSrc === 'processing' && !failedEffectIds.has(currentEffectId) && !workerUnsupported;
     $: resolvedEffectSrc =
         processedSrc && processedSrc !== 'processing'
             ? processedSrc
             : displaySrc;
-    // iPhone Safari struggles with SVG/CSS filters + transforms; in this editor we rely
-    // on the processed bitmap when available (and show original while processing).
-    $: resolvedFilterCss = 'filter: none;';
+    // Prefer processed bitmap when available; otherwise fall back to CSS filter (GPU).
+    $: resolvedFilterCss = processedSrc && processedSrc !== 'processing'
+        ? 'filter: none;'
+        : `filter: ${getCssFilter(currentEffectId)};`;
+
+    $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
+        lastResolvedSrc = resolvedEffectSrc;
+        isImageDecoded = false;
+    }
 
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
         
-        effectsWorker = new Worker('/effects.worker.js');
-        effectsWorker.onmessage = (event) => {
-            const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
-            if (status === 'success' && processedMagnetId === magnetId) {
-                const newSrc = URL.createObjectURL(blob);
-                updateMagnetProcessedSrc(magnetId, effectId, newSrc);
-            }
-        };
+        if (window.Worker) {
+            effectsWorker = new Worker('/effects.worker.js');
+            effectsWorker.onmessage = (event) => {
+                const { status, magnetId: processedMagnetId, effectId, blob } = event.data;
+                if (processedMagnetId !== magnetId) return;
+                if (status === 'success') {
+                    const newSrc = URL.createObjectURL(blob);
+                    updateMagnetProcessedSrc(magnetId, effectId, newSrc);
+                    return;
+                }
+                if (status === 'unsupported') {
+                    workerUnsupported = true;
+                    updateMagnetProcessedSrc(magnetId, effectId, null);
+                    return;
+                }
+                if (status === 'error') {
+                    failedEffectIds = new Set([...failedEffectIds, effectId]);
+                    updateMagnetProcessedSrc(magnetId, effectId, null);
+                }
+            };
+        } else {
+            workerUnsupported = true;
+        }
     });
 
     onDestroy(() => {
@@ -265,7 +291,7 @@
         updateMagnetActiveEffect(magnetId, effectId);
 
         // אם אין מגנט, או שהאפקט הוא "מקורי", או שאין Worker פעיל – אין צורך בעיבוד נוסף
-        if (!magnet || effectId === 'original' || !effectsWorker) {
+        if (!magnet || effectId === 'original' || !effectsWorker || workerUnsupported) {
             return;
         }
 
@@ -292,6 +318,11 @@
 <div class="magnet-edit-layout">
     <div class="editor-page" class:is-interacting={isInteracting}>
         <div class="editor-stage">
+            {#if !isImageDecoded}
+                <div class="image-placeholder" aria-hidden="true">
+                    <div class="placeholder-shimmer"></div>
+                </div>
+            {/if}
             <div class="image-layer">
                 <div
                     class="movable-content"
@@ -300,7 +331,7 @@
                     <img
                         src={resolvedEffectSrc}
                         bind:this={bgImageEl}
-                        on:load={onBgImageLoad}
+                        on:load={(e) => { isImageDecoded = true; onBgImageLoad(e); }}
                         style="{resolvedFilterCss}"
                         decoding="async"
                         fetchpriority="high"
@@ -358,7 +389,7 @@
         {#each effectsList as effect (effect.id)}
             <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
                 <div class="thumbnail-wrapper theme-shadow">
-                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.css};">
                 </div>
                 <span class="theme-text">{effect.name}</span>
             </button>
@@ -402,6 +433,34 @@
         display: flex;
         align-items: center;
         justify-content: center;
+    }
+
+    .image-placeholder {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-canvas-bg);
+    }
+
+    .placeholder-shimmer {
+        width: min(92vw, 340px);
+        height: min(92vw, 340px);
+        max-width: 340px;
+        max-height: 340px;
+        border-radius: 18px;
+        background: linear-gradient(
+            90deg,
+            rgba(0, 0, 0, 0.04),
+            rgba(0, 0, 0, 0.09),
+            rgba(0, 0, 0, 0.04)
+        );
+        background-size: 200% 100%;
+        animation: brandLoading 1.2s infinite linear;
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow: 0 10px 26px rgba(0, 0, 0, 0.06);
     }
 
     .image-layer {
