@@ -34,6 +34,7 @@
     let dragRafId = 0;
     let zoomRafId = 0;
     let pendingZoomMultiplier = null;
+    let hasInitializedImage = false;
     
     let bgImageEl; 
     let effectsWorker;
@@ -82,16 +83,29 @@
         // חישוב יחס זום כדי לכסות את המסגרת
         const scaleX = FRAME_SIZE / naturalW;
         const scaleY = FRAME_SIZE / naturalH;
-        minScaleLimit = Math.max(scaleX, scaleY);
+        const nextMinScale = Math.max(scaleX, scaleY);
 
-        if (magnet.transform && magnet.transform.zoom) {
-            // שחזור מלא של מצב עריכה קיים
-            bgTranslateX = magnet.transform.x * FRAME_SIZE; 
-            bgTranslateY = magnet.transform.y * FRAME_SIZE;
-            bgScale = magnet.transform.zoom * minScaleLimit;
+        // חשוב: החלפת src בעת שינוי אפקט גורמת ל-onload מחדש.
+        // אסור לאתחל מחדש transform — זה נראה כמו "קופץ חזרה לגודל המקורי".
+        if (!hasInitializedImage) {
+            minScaleLimit = nextMinScale;
+
+            if (magnet.transform && magnet.transform.zoom) {
+                // שחזור מלא של מצב עריכה קיים
+                bgTranslateX = magnet.transform.x * FRAME_SIZE; 
+                bgTranslateY = magnet.transform.y * FRAME_SIZE;
+                bgScale = magnet.transform.zoom * minScaleLimit;
+            } else {
+                // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
+                applyDefaultPositioning(naturalW, naturalH);
+            }
+
+            hasInitializedImage = true;
         } else {
-            // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
-            applyDefaultPositioning(naturalW, naturalH);
+            // Preserve user's current zoom multiplier across image reloads.
+            const zoomMultiplier = minScaleLimit > 0 ? (bgScale / minScaleLimit) : 1;
+            minScaleLimit = nextMinScale;
+            bgScale = zoomMultiplier * minScaleLimit;
         }
         
         clampPosition();
@@ -288,6 +302,8 @@
                         bind:this={bgImageEl}
                         on:load={onBgImageLoad}
                         style="{resolvedFilterCss}"
+                        decoding="async"
+                        fetchpriority="high"
                         alt="editing source"
                     />
                 </div>
