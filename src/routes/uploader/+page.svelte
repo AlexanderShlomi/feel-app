@@ -123,6 +123,10 @@
                     const newSrc = URL.createObjectURL(blob);
                     if (magnetId === 'split-master') {
                         editorSettings.update(s => {
+                            const prev = s.splitImageCache?.[effectId];
+                            if (prev && prev !== newSrc && typeof prev === 'string' && prev.startsWith('blob:')) {
+                                try { URL.revokeObjectURL(prev); } catch {}
+                            }
                             const newCache = { ...s.splitImageCache, [effectId]: newSrc };
                             return { ...s, splitImageCache: newCache };
                         });

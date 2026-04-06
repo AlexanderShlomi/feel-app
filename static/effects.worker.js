@@ -12,15 +12,25 @@ self.onmessage = async (event) => {
         const image = await createImageBitmap(blob);
 
         // 3. הגדרת קנבס
-        const canvas = new OffscreenCanvas(image.width, image.height);
+        // חשוב: עיבוד ברזולוציה מלאה יכול להיות כבד מאוד במובייל (איטי + זיכרון).
+        // אנחנו מצמצמים ל-preview בגודל סביר, תוך שמירה על יחס.
+        const MAX_DIMENSION = 1600;
+        const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
+        const targetW = Math.max(1, Math.round(image.width * scale));
+        const targetH = Math.max(1, Math.round(image.height * scale));
+
+        const canvas = new OffscreenCanvas(targetW, targetH);
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0);
+        ctx.drawImage(image, 0, 0, targetW, targetH);
 
         // 4. החלת הפילטר (הפונקציה המעודכנת למטה)
-        applyEffect(ctx, effectId, image.width, image.height);
+        applyEffect(ctx, effectId, targetW, targetH);
 
         // 5. המרה חזרה ל-Blob
-        const resultBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+        const resultBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.88 });
+
+        // שחרור משאבים
+        try { image.close(); } catch {}
 
         // 6. שליחה חזרה
         self.postMessage({
@@ -32,6 +42,7 @@ self.onmessage = async (event) => {
 
     } catch (error) {
         console.error('Worker error:', error);
+        // שיפור אבחון מהקליינט (לפחות סוג השגיאה)
         self.postMessage({
             status: 'error',
             magnetId,
