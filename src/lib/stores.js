@@ -42,12 +42,24 @@ if (typeof window !== 'undefined') {
 }
 
 export function getFilterStyle(effectId) {
+    return `filter: ${getCssFilter(effectId)};`;
+}
+
+export function getCssFilter(effectId) {
+    // Mobile-first: CSS filters are GPU-accelerated and significantly more reliable
+    // than SVG filter URLs under transforms (especially iOS Safari).
     switch (effectId) {
-        case 'silver': return 'filter: url(#filter-silver);';
-        case 'noir': return 'filter: url(#filter-noir);';
-        case 'vivid': return 'filter: url(#filter-vivid);';
-        case 'dramatic': return 'filter: url(#filter-dramatic);';
-        case 'original': default: return 'filter: none;';
+        case 'silver':
+            return 'grayscale(1) contrast(1.08) brightness(1.05)';
+        case 'noir':
+            return 'grayscale(1) contrast(1.35) brightness(0.95)';
+        case 'vivid':
+            return 'saturate(1.35) contrast(1.12) brightness(1.03)';
+        case 'dramatic':
+            return 'saturate(1.18) contrast(1.22) brightness(0.98)';
+        case 'original':
+        default:
+            return 'none';
     }
 }
 

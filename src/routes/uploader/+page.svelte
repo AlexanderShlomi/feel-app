@@ -20,6 +20,7 @@
         isMobile,
         addUploadedMagnets,
         updateMagnetProcessedSrc, 
+        getCssFilter,
         getFullMagnetSize, 
         getMargin,
         saveWorkspaceToCart,
@@ -35,14 +36,15 @@
     } from '$lib/stores.js';
 
     const effectsList = [
-        { id: 'original', name: 'מקורי', filter: 'none' },
-        { id: 'silver', name: 'כסף', filter: 'url(#filter-silver)' },
-        { id: 'noir', name: 'נואר', filter: 'url(#filter-noir)' },
-        { id: 'vivid', name: 'עז', filter: 'url(#filter-vivid)' },
-        { id: 'dramatic', name: 'דרמטי', filter: 'url(#filter-dramatic)' }
-    ];
+        { id: 'original', name: 'מקורי' },
+        { id: 'silver', name: 'כסף' },
+        { id: 'noir', name: 'נואר' },
+        { id: 'vivid', name: 'עז' },
+        { id: 'dramatic', name: 'דרמטי' }
+    ].map(e => ({ ...e, css: getCssFilter(e.id) }));
 
     let effectsWorker;
+    let effectsWorkerUnsupported = false;
     let activePanel = null;
     let loaderEl;
     let surfaceEl;
@@ -134,6 +136,11 @@
                     } else {
                         updateMagnetProcessedSrc(magnetId, effectId, newSrc);
                     }
+                    return;
+                }
+                if (status === 'unsupported') {
+                    effectsWorkerUnsupported = true;
+                    if (loaderEl) loaderEl.style.display = 'none';
                 }
             };
         }
@@ -662,7 +669,7 @@
         {#each effectsList as effect (effect.id)}
             <button class="effect-select-btn" class:active={effect.id === $editorSettings.currentEffect} on:click={() => applyEffectToAllMagnets(effect.id)}>
                 <div class="thumbnail-wrapper">
-                    <img src="/effects.png" alt={effect.name} style="filter: {effect.filter};">
+                    <img src="/effects.png" alt={effect.name} style="filter: {effect.css};">
                 </div>
                 <span>{effect.name}</span>
             </button>
