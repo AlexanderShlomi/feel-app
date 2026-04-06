@@ -371,10 +371,21 @@ a.info-card, button.info-card { cursor: pointer; }
     -webkit-backdrop-filter: blur(12px) saturate(180%);
     border: 1px solid rgba(255, 255, 255, 0.6);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    /* iOS: allow taps to pass through dock "empty" area */
+    pointer-events: none;
 }
 
 .glass-dock::-webkit-scrollbar {
     display: none;
+}
+
+.glass-dock .dock-divider,
+.glass-dock .dock-btn-circle,
+.glass-dock .dock-btn-text,
+.glass-dock .widget-wrapper,
+.glass-dock .gift-btn,
+.glass-dock .trigger-circle {
+    pointer-events: auto;
 }
 
 .glass-dock .dock-divider,
