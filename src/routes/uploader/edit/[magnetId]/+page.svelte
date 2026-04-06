@@ -222,42 +222,48 @@
 </div>
 
 {#if magnet}
-<div class="editor-page" class:is-interacting={isInteracting}>
-    
-    <div class="image-layer">
-        <div 
-            class="movable-content"
-            style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
+<div class="magnet-edit-layout">
+    <div class="editor-page" class:is-interacting={isInteracting}>
+        <div class="editor-stage">
+            <div class="image-layer">
+                <div
+                    class="movable-content"
+                    style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
+                >
+                    <img
+                        src={displaySrc}
+                        bind:this={bgImageEl}
+                        on:load={onBgImageLoad}
+                        style="{activeFilterCss}"
+                        alt="editing source"
+                    />
+                </div>
+            </div>
+
+            <div
+                class="mask-layer"
+                on:mousedown={startDrag}
+                on:touchstart|preventDefault={startDrag}
+            >
+                <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
+            </div>
+
+            {#if isLoadingEffect}
+                <div class="center-loader"><div class="loader-spinner"></div></div>
+            {/if}
+        </div>
+
+        <div
+            class="zoom-controls"
+            on:mousedown={startInteraction}
+            on:touchstart={startInteraction}
         >
-            <img 
-                src={displaySrc} 
-                bind:this={bgImageEl}
-                on:load={onBgImageLoad}
-                style="{activeFilterCss}" 
-                alt="editing source"
-            />
+            <input type="range" min="1" max="3" step="0.01" value={bgScale / (minScaleLimit || 1)} on:input={handleZoomInput}>
+            <span class="hint">צבוט או גרור לזום ומיקום</span>
         </div>
     </div>
 
-    <div 
-        class="mask-layer"
-        on:mousedown={startDrag}
-        on:touchstart|preventDefault={startDrag}
-    >
-        <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
-    </div>
-
-    <div class="zoom-controls" on:mousedown={startInteraction} on:touchstart={startInteraction}>
-        <input type="range" min="1" max="3" step="0.01" value={bgScale / (minScaleLimit || 1)} on:input={handleZoomInput}>
-        <span class="hint">צבוט או גרור לזום ומיקום</span>
-    </div>
-
-    {#if isLoadingEffect}
-        <div class="center-loader"><div class="loader-spinner"></div></div>
-    {/if}
-</div>
-
-<footer id="bottom-toolbar-edit" class="glass-dock">
+    <footer id="bottom-toolbar-edit" class="glass-dock">
     <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
     <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
     <div class="dock-divider"></div>
@@ -277,23 +283,52 @@
         {/each}
     </div>
 </FloatingPanel>
+</div>
 {/if}
 
 <style>
+    /* גובה מלא מתחת ל-header; ריווח תחתון ל-dock קבוע + iOS safe-area / vv-chrome */
+    .magnet-edit-layout {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        box-sizing: border-box;
+        /* גובה אזור התוכן מתחת ל-header הקבוע */
+        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
+        padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+    }
+
     .editor-page {
         position: relative;
-        width: 100%; flex-grow: 1;
+        width: 100%;
+        flex: 1;
+        min-height: 0;
         background-color: var(--color-canvas-bg);
-        overflow: hidden; 
-        display: flex; justify-content: center; align-items: center;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .editor-stage {
+        position: relative;
+        flex: 1;
+        min-height: 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .image-layer {
         position: absolute;
-        width: 100%; height: 100%;
-        display: flex; justify-content: center; align-items: center;
-        /* 🔥 שינוי קריטי: ביטול overflow hidden מאפשר לראות את התמונה מחוץ למסכה */
-        overflow: visible; 
+        inset: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: visible;
         z-index: 1;
     }
 
@@ -309,10 +344,14 @@
     }
 
     .mask-layer {
-        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        position: absolute;
+        inset: 0;
         z-index: 10;
-        display: flex; justify-content: center; align-items: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
         cursor: grab;
+        touch-action: none;
     }
     .mask-layer:active { cursor: grabbing; }
 
@@ -330,16 +369,94 @@
         box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
     }
     
-    /* שאר ה-CSS ללא שינוי */
-    .zoom-controls { position: absolute; bottom: calc(120px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)); z-index: 20; width: 80%; max-width: 300px; display: flex; flex-direction: column; align-items: center; gap: 10px; transition: opacity 0.3s; opacity: 0.7; }
-    .zoom-controls:hover, .editor-page.is-interacting .zoom-controls { opacity: 1; }
-    .zoom-controls input { width: 100%; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; -webkit-appearance: none; }
-    .zoom-controls input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--color-pink); border: 2px solid white; border-radius: 50%; cursor: pointer; }
-    .hint { color: var(--color-medium-blue-gray); font-size: 14px; font-weight: 600; text-shadow: none; }
+    /* מתחת לתמונה בזרימה (לא absolute) — ב-iPhone לא נכנס על אזור החיתוך */
+    .zoom-controls {
+        position: relative;
+        flex-shrink: 0;
+        z-index: 25;
+        width: 100%;
+        max-width: 360px;
+        margin: 0 auto;
+        box-sizing: border-box;
+        padding: 10px 20px 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        transition: opacity 0.3s;
+        opacity: 0.85;
+        background: rgba(255, 255, 255, 0.94);
+        border-top: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06);
+        touch-action: manipulation;
+    }
+    .zoom-controls:hover,
+    .editor-page.is-interacting .zoom-controls {
+        opacity: 1;
+    }
+    .zoom-controls input {
+        width: 100%;
+        height: 8px;
+        background: rgba(0, 0, 0, 0.12);
+        border-radius: 4px;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+    .zoom-controls input::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 24px;
+        height: 24px;
+        background: var(--color-pink);
+        border: 2px solid white;
+        border-radius: 50%;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    }
+    .zoom-controls input::-moz-range-thumb {
+        width: 24px;
+        height: 24px;
+        background: var(--color-pink);
+        border: 2px solid white;
+        border-radius: 50%;
+        cursor: pointer;
+    }
+    .hint {
+        color: var(--color-medium-blue-gray);
+        font-size: 13px;
+        font-weight: 600;
+        text-align: center;
+        line-height: 1.35;
+        padding: 0 8px;
+    }
     .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
     .center-loader { position: absolute; z-index: 30; }
-    .glass-dock { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)); left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 10px 12px; padding: 10px 16px; border-radius: 50px; width: max-content; max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); transition: opacity 0.3s; }
+    .glass-dock {
+        position: fixed;
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        justify-content: center;
+        gap: 10px 12px;
+        padding: 10px 16px;
+        border-radius: 50px;
+        width: max-content;
+        max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        transition: opacity 0.3s;
+    }
     .glass-dock::-webkit-scrollbar { display: none; }
     .glass-dock .dock-btn-text { flex-shrink: 0; }
     .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }

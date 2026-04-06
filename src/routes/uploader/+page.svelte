@@ -12,6 +12,7 @@
     import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
     import { resetSystem } from '$lib/stores.js';
     import { goto } from '$app/navigation';
+    import { get } from 'svelte/store';
     
     import { 
         magnets, 
@@ -50,6 +51,41 @@
     
     let isSplitEditing = false; 
     $: isGiftMode = $editorSettings.currentProductType === PRODUCT_TYPES.GIFT;
+
+    /** רשת מגנטים במובייל: גלילה דרך התמונה (pointer-events על השכבה הפנימית none); רק "הקשה" קצרה → עריכה */
+    let mobileMagnetTap = null;
+
+    function onMobilePackPointerDown(e) {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (!get(isMobile) || get(editorSettings).currentProductType !== PRODUCT_TYPES.MAGNETS_PACK) return;
+        const wrap = e.target.closest?.('.magnet-wrapper');
+        if (!wrap) return;
+        const id = wrap.dataset.magnetId;
+        if (!id) return;
+        mobileMagnetTap = {
+            id,
+            x: e.clientX,
+            y: e.clientY,
+            t: Date.now(),
+            pointerId: e.pointerId
+        };
+    }
+
+    function onMobilePackPointerUp(e) {
+        if (!mobileMagnetTap || e.pointerId !== mobileMagnetTap.pointerId) return;
+        const dx = Math.abs(e.clientX - mobileMagnetTap.x);
+        const dy = Math.abs(e.clientY - mobileMagnetTap.y);
+        const dt = Date.now() - mobileMagnetTap.t;
+        const id = mobileMagnetTap.id;
+        mobileMagnetTap = null;
+        if (dx <= 14 && dy <= 14 && dt <= 550) {
+            goto(`/uploader/edit/${id}`);
+        }
+    }
+
+    function onMobilePackPointerCancel(e) {
+        if (mobileMagnetTap && e.pointerId === mobileMagnetTap.pointerId) mobileMagnetTap = null;
+    }
     
     $: splitGridInfo = (() => {
         const ratio = $editorSettings.splitImageRatio;
@@ -473,10 +509,14 @@
         bind:this={surfaceEl} 
         style="min-height: {$editorSettings.surfaceMinHeight};"
         class:surface-dark={$editorSettings.isSurfaceDark}
+        on:pointerdown={onMobilePackPointerDown}
+        on:pointerup={onMobilePackPointerUp}
+        on:pointercancel={onMobilePackPointerCancel}
     >
         {#each $magnets as magnet (magnet.id)}
             <div 
                 class="magnet-wrapper"
+                data-magnet-id={magnet.id}
                 style="left: {magnet.position.x}px; top: {magnet.position.y}px; width: {magnet.size}px; height: {magnet.size}px;"
                 use:draggable={{
                     enabled: $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK && !$isMobile,
@@ -712,9 +752,9 @@
             border-radius: 12px !important;
             overflow: hidden !important;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
+            /* המגע נקלט כאן לגלילה; התמונה לא חוסמת את הקונטיינר המתגלל */
             touch-action: pan-y !important;
         }
-        /* Magnet.svelte: touch-action: none חוסם גלילה; ברשת מובייל מאפשרים pan-y */
         .mobile-grid-active .magnet,
         .mobile-grid-active .image-wrapper {
             width: 100% !important;
@@ -722,16 +762,12 @@
             position: static !important;
             border-radius: 0 !important;
             transform: none !important;
-            pointer-events: auto !important;
-        }
-        .mobile-grid-active .magnet {
-            touch-action: pan-y !important;
+            pointer-events: none !important;
         }
         .mobile-grid-active img {
             display: block !important;
-            image-rendering: -webkit-optimize-contrast; 
-            pointer-events: auto !important;
-            touch-action: pan-y !important;
+            image-rendering: -webkit-optimize-contrast;
+            pointer-events: none !important;
         }
         .mobile-grid-active .overlay,
         .mobile-grid-active .control-btn {
