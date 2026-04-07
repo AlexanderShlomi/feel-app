@@ -19,7 +19,7 @@
     const siteDescription = 'לעצור את הזמן – להרגיש את הרגע';
 
     $: siteBase = (data?.siteUrl ?? '').replace(/\/$/, '');
-    $: ogImageAbsolute = siteBase ? `${siteBase}/og-share.svg` : '';
+    $: ogImageAbsolute = siteBase ? `${siteBase}/FeelLogo.svg` : '';
     $: canonicalUrl =
         siteBase && $page?.url ? `${siteBase}${$page.url.pathname}${$page.url.search}` : '';
 
@@ -53,6 +53,62 @@
         document.documentElement.style.setProperty('--vv-bottom-chrome', `${bottomObstruction}px`);
     }
 
+    let dockResizeObserver;
+    let dockMutationObserver;
+    let dockScheduled = false;
+
+    function computeDockPadPx() {
+        if (typeof document === 'undefined') return 0;
+        const docks = Array.from(document.querySelectorAll('.glass-dock'));
+        if (!docks.length) return 0;
+
+        let maxPad = 0;
+        for (const el of docks) {
+            const rect = el.getBoundingClientRect();
+            if (!rect || rect.height <= 0 || rect.width <= 0) continue;
+            // How much of the viewport is covered from the dock's top to the bottom.
+            const pad = Math.max(0, window.innerHeight - rect.top) + 8; // small breathing room
+            if (pad > maxPad) maxPad = pad;
+        }
+        return Math.round(maxPad);
+    }
+
+    function scheduleDockPadUpdate() {
+        if (dockScheduled) return;
+        dockScheduled = true;
+        requestAnimationFrame(() => {
+            dockScheduled = false;
+            const pad = computeDockPadPx();
+            document.documentElement.style.setProperty('--dock-pad', `${pad}px`);
+        });
+    }
+
+    function initDockPadObservers() {
+        if (typeof document === 'undefined') return;
+        scheduleDockPadUpdate();
+
+        dockResizeObserver = new ResizeObserver(() => scheduleDockPadUpdate());
+        const observeCurrent = () => {
+            const docks = Array.from(document.querySelectorAll('.glass-dock'));
+            docks.forEach((el) => {
+                try { dockResizeObserver.observe(el); } catch {}
+            });
+        };
+        observeCurrent();
+
+        dockMutationObserver = new MutationObserver(() => {
+            observeCurrent();
+            scheduleDockPadUpdate();
+        });
+        dockMutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+
+        window.addEventListener('resize', scheduleDockPadUpdate);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', scheduleDockPadUpdate);
+            window.visualViewport.addEventListener('scroll', scheduleDockPadUpdate);
+        }
+    }
+
     onMount(() => {
         initApp();
         initAuth();
@@ -67,6 +123,8 @@
                 window.visualViewport.addEventListener('scroll', updateVisualViewportChrome);
             }
             window.addEventListener('resize', updateVisualViewportChrome);
+
+            initDockPadObservers();
         }
     });
 
@@ -79,6 +137,14 @@
                 window.visualViewport.removeEventListener('scroll', updateVisualViewportChrome);
             }
             window.removeEventListener('resize', updateVisualViewportChrome);
+
+            try { dockResizeObserver?.disconnect?.(); } catch {}
+            try { dockMutationObserver?.disconnect?.(); } catch {}
+            window.removeEventListener('resize', scheduleDockPadUpdate);
+            if (window.visualViewport) {
+                window.visualViewport.removeEventListener('resize', scheduleDockPadUpdate);
+                window.visualViewport.removeEventListener('scroll', scheduleDockPadUpdate);
+            }
         }
     });
 </script>
