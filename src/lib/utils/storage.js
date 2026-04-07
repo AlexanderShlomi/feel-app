@@ -4,6 +4,30 @@ import { setItem, getItem, removeItem } from './idb.js';
 
 const WORKSPACE_KEY = 'feel_app_workspace';
 
+// Cache blob: URL -> base64 to avoid re-encoding large images on every autosave.
+// This is an in-memory optimization (cleared on reload). Keep it bounded to prevent unbounded growth.
+const BLOB_URL_BASE64_CACHE_MAX = 80;
+const blobUrlToBase64Cache = new Map();
+function cacheGet(key) {
+    if (!key) return null;
+    const v = blobUrlToBase64Cache.get(key);
+    if (v) {
+        // refresh LRU order
+        blobUrlToBase64Cache.delete(key);
+        blobUrlToBase64Cache.set(key, v);
+    }
+    return v || null;
+}
+function cacheSet(key, value) {
+    if (!key || !value) return;
+    if (blobUrlToBase64Cache.has(key)) blobUrlToBase64Cache.delete(key);
+    blobUrlToBase64Cache.set(key, value);
+    if (blobUrlToBase64Cache.size > BLOB_URL_BASE64_CACHE_MAX) {
+        const firstKey = blobUrlToBase64Cache.keys().next().value;
+        if (firstKey) blobUrlToBase64Cache.delete(firstKey);
+    }
+}
+
 // המרה לקובץ טקסט לשמירה
 export const fileToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
@@ -40,8 +64,12 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
             // במגנטים רגילים: שומרים את התמונה
             let base64Src = null;
             if (m.originalSrc && m.originalSrc.startsWith('blob:')) {
-                const blob = await fetch(m.originalSrc).then(r => r.blob());
-                base64Src = await fileToBase64(blob);
+                base64Src = cacheGet(m.originalSrc);
+                if (!base64Src) {
+                    const blob = await fetch(m.originalSrc).then(r => r.blob());
+                    base64Src = await fileToBase64(blob);
+                    cacheSet(m.originalSrc, base64Src);
+                }
             } else {
                 base64Src = m.originalSrc || m.src;
             }
@@ -53,13 +81,27 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
         const serializedSettings = { ...settings };
         
         if (settings.splitImageSrc && settings.splitImageSrc.startsWith('blob:')) {
-            const blob = await fetch(settings.splitImageSrc).then(r => r.blob());
-            serializedSettings.splitImageSrc = await fileToBase64(blob);
+            const cached = cacheGet(settings.splitImageSrc);
+            if (cached) {
+                serializedSettings.splitImageSrc = cached;
+            } else {
+                const blob = await fetch(settings.splitImageSrc).then(r => r.blob());
+                const b64 = await fileToBase64(blob);
+                cacheSet(settings.splitImageSrc, b64);
+                serializedSettings.splitImageSrc = b64;
+            }
         }
         
         if (settings.giftImage && settings.giftImage.startsWith('blob:')) {
-             const blob = await fetch(settings.giftImage).then(r => r.blob());
-             serializedSettings.giftImage = await fileToBase64(blob);
+             const cached = cacheGet(settings.giftImage);
+             if (cached) {
+                serializedSettings.giftImage = cached;
+             } else {
+                const blob = await fetch(settings.giftImage).then(r => r.blob());
+                const b64 = await fileToBase64(blob);
+                cacheSet(settings.giftImage, b64);
+                serializedSettings.giftImage = b64;
+             }
         }
         
         serializedSettings.splitImageCache = {}; 

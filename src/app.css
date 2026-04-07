@@ -1,6 +1,8 @@
 :root {
     /* Safari iOS: סרגל כתובות/כלי תחתון דינמי — מעודכן מ-+layout דרך visualViewport */
     --vv-bottom-chrome: 0px;
+    /* Dynamic padding needed so fixed bottom dock won't cover content */
+    --dock-pad: 0px;
 
     /* --- פלטת צבעים --- */
     --color-dark-blue: #1E1E1E; /* Ink */
@@ -334,6 +336,8 @@ a.info-card, button.info-card { cursor: pointer; }
     min-height: calc(100vh - 70px);
     min-height: calc(100dvh - 70px);
     box-sizing: border-box;
+    padding-bottom: var(--dock-pad, 0px);
+    scroll-padding-bottom: var(--dock-pad, 0px);
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
 }
