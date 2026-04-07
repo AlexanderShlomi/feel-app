@@ -414,7 +414,7 @@
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
-    <div class="effects-list theme-scroll effects-panel-grid">
+    <div class="effects-list theme-scroll effects-panel-row">
         {#each effectsList as effect (effect.id)}
             <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
                 <div class="thumbnail-wrapper theme-shadow">
@@ -425,8 +425,8 @@
                         loading="lazy"
                         decoding="async"
                         fetchpriority="low"
-                        width="80"
-                        height="80"
+                        width="64"
+                        height="64"
                     >
                 </div>
                 <span class="theme-text">{effect.name}</span>
@@ -660,15 +660,20 @@
     .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
     .dock-btn-circle.primary { background: var(--color-pink); color: white; }
     .dock-btn-circle.danger { background: #eee; color: #d32f2f; }
-    @media (min-width: 769px) {
-        .effects-list.effects-panel-grid {
-            display: flex;
-            flex-wrap: nowrap;
-            gap: 15px;
-            padding: 10px;
-            overflow-x: auto;
-        }
+    /* In the single-image editor we keep effects in one compact row (Photos-like) */
+    .effects-list.effects-panel-row {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 10px;
+        padding: 6px 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        max-width: 92vw;
     }
+    .effects-list.effects-panel-row::-webkit-scrollbar { display: none; }
     .thumbnail-wrapper { width: 60px; height: 60px; border-radius: 8px; overflow: hidden; margin-bottom: 5px; }
     .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
     .effect-select-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
