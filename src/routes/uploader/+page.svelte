@@ -789,6 +789,7 @@
             overscroll-behavior-y: contain;
             /* גלילה חלקה בכל המסך; הריווח לתחתית מטופל בתוך ה-surface כדי שהתמונות "יסתיימו" מעל הדוק */
             padding-bottom: 0 !important;
+            scroll-padding-bottom: calc(24px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
         }
         
         .mobile-grid-active #configurator-surface {
@@ -798,7 +799,7 @@
             gap: 16px !important;
             padding: 16px !important;
             /* גורם לכך שהשורה האחרונה תיעצר מעל ה-dock (ללא צורך שהתמונות ייכנסו מתחתיו) */
-            padding-bottom: calc(16px + 140px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)) !important;
+            padding-bottom: calc(16px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)) !important;
             
             height: auto !important;
             min-height: 100% !important;
