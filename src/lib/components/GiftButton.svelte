@@ -88,7 +88,7 @@
                     תבחר תמונה שאתה אוהב, ואנחנו נדאג לקסם.
                 </p>
 
-                <div class="image-preview-area square-ratio" on:click={triggerUpload}>
+                <div class="image-preview-area square-ratio" role="button" tabindex="0" aria-label="בחר או החלף תמונה למתנה" on:click={triggerUpload} on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerUpload()}>
                     {#if $editorSettings.giftImage}
                         <img src={$editorSettings.giftImage} alt="Gift" class="uploaded-gift-img" />
                         <div class="overlay-hint">לחץ להחלפה</div>
@@ -105,7 +105,7 @@
                 <button class="editor-btn secondary" on:click={toggleGift}>ביטול</button>
                 
                 {#if $editorSettings.giftImage}
-                    <button class="save-circle-btn" on:click={handleSave}>
+                    <button class="save-circle-btn" aria-label="שמור מתנה" on:click={handleSave}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>

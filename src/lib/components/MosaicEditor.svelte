@@ -1,5 +1,6 @@
 <script>
     import { createEventDispatcher, onMount } from 'svelte';
+    import { beginUserInteraction, endUserInteraction } from '$lib/stores.js';
     
     export let imageSrc;
     export let transform = { zoom: 1, x: 0, y: 0 };
@@ -120,6 +121,7 @@
     function handleMouseDown(e) {
         if (e.cancelable) e.preventDefault();
         isDragging = true;
+        beginUserInteraction();
         
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -151,6 +153,7 @@
     function handleUp() {
         isDragging = false;
         removeGlobalListeners();
+        endUserInteraction();
     }
 
     function addGlobalListeners() {
@@ -168,8 +171,25 @@
     }
 
     function handleZoom(e) {
+        beginUserInteraction();
         scale = parseFloat(e.target.value);
         clamp();
+    }
+
+    function handleCropKeyDown(e) {
+        const key = e.key;
+        const step = e.shiftKey ? 25 : 10;
+        if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+            e.preventDefault();
+            beginUserInteraction();
+            if (key === 'ArrowLeft') translateX -= step;
+            if (key === 'ArrowRight') translateX += step;
+            if (key === 'ArrowUp') translateY -= step;
+            if (key === 'ArrowDown') translateY += step;
+            clamp();
+            // End interaction on next tick to avoid blocking autosave too long.
+            setTimeout(() => endUserInteraction(), 0);
+        }
     }
 
     // 3. הגבלת גבולות (Constraints)
@@ -220,8 +240,12 @@
                 class="crop-box" 
                 bind:this={containerEl}
                 style="width: {containerWidth}px; height: {containerHeight}px;"
+                role="button"
+                tabindex="0"
+                aria-label="הזז את התמונה במסגרת"
                 on:mousedown={handleMouseDown}
                 on:touchstart={handleMouseDown}
+                on:keydown={handleCropKeyDown}
             >
                 <img 
                     src={imageSrc} 
@@ -259,6 +283,7 @@
                     min="1" max="3" step="0.01" 
                     value={scale} 
                     on:input={handleZoom}
+                    on:change={() => endUserInteraction()}
                 >
                 <span class="icon">+</span>
             </div>

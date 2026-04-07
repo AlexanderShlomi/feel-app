@@ -7,14 +7,13 @@
   $: thumbPx = size === 'sm' ? 46 : 60;
 </script>
 
-<div class="effects-row" role="list" aria-label="אפקטים">
+<div class="effects-row" role="group" aria-label="אפקטים">
   {#each effects as effect (effect.id)}
     <button
       type="button"
       class="effect-btn"
       class:active={effect.id === activeId}
       on:click={() => onSelect(effect.id)}
-      role="listitem"
       aria-pressed={effect.id === activeId}
       aria-label={`בחר אפקט: ${effect.name}`}
     >

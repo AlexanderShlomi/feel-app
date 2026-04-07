@@ -8,6 +8,16 @@ import { setItem, getItem } from '$lib/utils/idb.js';
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
 
+// User interaction (drag/zoom/etc). While true, avoid heavy background work (autosave/image encoding).
+const interactionDepth = writable(0);
+export const isUserInteracting = derived(interactionDepth, (n) => n > 0);
+export function beginUserInteraction() {
+    interactionDepth.update((n) => n + 1);
+}
+export function endUserInteraction() {
+    interactionDepth.update((n) => Math.max(0, n - 1));
+}
+
 // קבועים ומחירים
 export const EXTRA_MAGNET_PRICE = 10;
 export const BASE_MAGNET_SIZE = 150; 
@@ -112,15 +122,62 @@ export const cartCount = derived(cart, ($cart) => $cart.length);
 
 // Auto Save + Init
 let saveTimeout;
-function triggerAutoSave() {
+let saveInFlight = false;
+let saveQueued = false;
+let lastSaveAt = 0;
+
+function scheduleIdle(fn, timeoutMs = 2000) {
     if (typeof window === 'undefined') return;
-    clearTimeout(saveTimeout);
-    saveTimeout = setTimeout(async () => {
+    const ric = window.requestIdleCallback;
+    if (typeof ric === 'function') {
+        ric(() => fn(), { timeout: timeoutMs });
+    } else {
+        setTimeout(fn, Math.min(250, timeoutMs));
+    }
+}
+
+function getAutosaveDelayMs() {
+    // Mobile browsers are much more sensitive to background work.
+    // Keep autosave much less aggressive on small viewports.
+    try {
+        return (typeof window !== 'undefined' && window.innerWidth <= 768) ? 8000 : 2000;
+    } catch {
+        return 2000;
+    }
+}
+
+async function runAutosaveOnce() {
+    if (saveInFlight) { saveQueued = true; return; }
+    if (get(isUserInteracting)) { saveQueued = true; return; }
+    // Avoid stacking autosaves too frequently.
+    const now = Date.now();
+    if (now - lastSaveAt < 1200) { saveQueued = true; return; }
+
+    saveInFlight = true;
+    saveQueued = false;
+    try {
         const currentMagnets = get(magnets);
         if (currentMagnets.length > 0 || get(editorSettings).splitImageSrc) {
             await saveStateToStorage(currentMagnets, get(editorSettings), get(editingItemId));
+            lastSaveAt = Date.now();
         }
-    }, 1000);
+    } finally {
+        saveInFlight = false;
+        if (saveQueued) {
+            // If changes happened while saving, schedule another idle save.
+            scheduleIdle(() => runAutosaveOnce(), 2500);
+        }
+    }
+}
+
+function triggerAutoSave() {
+    if (typeof window === 'undefined') return;
+    clearTimeout(saveTimeout);
+    const delay = getAutosaveDelayMs();
+    saveTimeout = setTimeout(() => {
+        // Prefer running heavy work during idle time to keep touch/scroll responsive.
+        scheduleIdle(() => runAutosaveOnce(), 2500);
+    }, delay);
 }
 magnets.subscribe(() => triggerAutoSave());
 editorSettings.subscribe(() => triggerAutoSave());
@@ -393,20 +450,47 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
 export function getFullMagnetSize() { return BASE_MAGNET_SIZE * (get(editorSettings).currentDisplayScale || SCALE_DEFAULT); }
 export function getMargin() { return getFullMagnetSize() * MULTI_MARGIN_PERCENT; }
 export function addUploadedMagnets(files) {
-    const newMags = Array.from(files).map(f => ({
+    const newMags = Array.from(files).map(f => {
+        const url = URL.createObjectURL(f);
+        return ({
         id: crypto.randomUUID(), transform: {zoom:1,x:0,y:0}, position:{x:0,y:0}, size: getFullMagnetSize(),
-        originalSrc: URL.createObjectURL(f), src: URL.createObjectURL(f), activeEffectId:'original', isSplitPart:false, hidden:false, processed:{}
-    }));
+        originalSrc: url, src: url, activeEffectId:'original', isSplitPart:false, hidden:false, processed:{}
+        });
+    });
     magnets.update(l => [...l, ...newMags]);
 }
 export function updateMagnetProcessedSrc(id, eff, src) {
     magnets.update(l => l.map(m => {
         if (m.id !== id) return m;
-        const prev = m.processed?.[eff];
+        const MAX_EFFECT_BLOBS_PER_MAGNET = 2;
+        const processed = { ...(m.processed || {}) };
+
+        // Track effect insertion order for eviction (kept on the magnet object).
+        const order = Array.isArray(m.processedOrder) ? [...m.processedOrder] : [];
+        const nextOrder = order.filter(k => k !== eff);
+        nextOrder.push(eff);
+
+        const prev = processed?.[eff];
         if (prev && prev !== src && typeof prev === 'string' && prev.startsWith('blob:')) {
             try { URL.revokeObjectURL(prev); } catch {}
         }
-        return { ...m, processed: { ...m.processed, [eff]: src } };
+
+        processed[eff] = src;
+
+        // Evict older blob URLs so effect processing doesn't grow memory unbounded on mobile.
+        const blobKeys = nextOrder.filter((k) => typeof processed[k] === 'string' && processed[k].startsWith('blob:'));
+        while (blobKeys.length > MAX_EFFECT_BLOBS_PER_MAGNET) {
+            const evictEff = blobKeys.shift();
+            const evictVal = processed[evictEff];
+            if (typeof evictVal === 'string' && evictVal.startsWith('blob:')) {
+                try { URL.revokeObjectURL(evictVal); } catch {}
+            }
+            delete processed[evictEff];
+            const idx = nextOrder.indexOf(evictEff);
+            if (idx >= 0) nextOrder.splice(idx, 1);
+        }
+
+        return { ...m, processed, processedOrder: nextOrder };
     }));
 }
 export function updateMagnetTransform(id, tr) { magnets.update(l => l.map(m => m.id===id ? {...m, transform:tr} : m)); }
