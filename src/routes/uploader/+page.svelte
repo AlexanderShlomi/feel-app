@@ -6,8 +6,10 @@
     import EffectsRow from '$lib/components/EffectsRow.svelte';
     import FileUploader from '$lib/components/FileUploader.svelte';
     import MosaicEditor from '$lib/components/MosaicEditor.svelte';
+    import Coachmarks from '$lib/components/Coachmarks.svelte';
     import GiftButton from '$lib/components/GiftButton.svelte'; 
     import UpsellWidget from '$lib/components/UpsellWidget.svelte';
+    import { isDismissed, dismiss } from '$lib/utils/onboarding.js';
     
     import { draggable } from '$lib/actions/draggable.js';
     import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
@@ -61,6 +63,32 @@
     let canvasContainerEl;
     let isOpeningEditor = false;
     const UPLOADER_SCROLL_KEY = 'feel_uploader_scroll_v1';
+    const UPLOADER_ONBOARDING_KEY = 'uploader_v1';
+
+    let showGuide = false;
+    function openGuide() { showGuide = true; }
+    function closeGuide() { showGuide = false; }
+
+    $: isPackMode = $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK;
+    $: isMosaicMode = $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC;
+    $: guideSteps = isPackMode ? packGuideSteps : (isMosaicMode ? mosaicGuideSteps : []);
+
+    const packGuideSteps = [
+        { id: 'upload', selector: '#initial-upload-btn', title: 'התחלה', text: 'הוסף תמונות כדי להתחיל.', placement: 'bottom', when: () => isPackMode && $magnets.length === 0 },
+        { id: 'tap-edit', selector: '#configurator-surface', title: 'עריכה', text: 'לחץ על תמונה כדי לערוך.', placement: 'top', when: () => isPackMode && $magnets.length > 0 },
+        { id: 'effects', selector: '[data-coach="pack-effects"]', title: 'אפקטים', text: 'בחר פילטר לכל התמונות.', placement: 'top', when: () => isPackMode && $magnets.length > 0 },
+        { id: 'bg', selector: '[data-coach="pack-bg"]', title: 'רקע', text: 'החלף רקע בהיר/כהה.', placement: 'top', when: () => isPackMode && $magnets.length > 0 },
+        { id: 'add', selector: '[data-coach="pack-add"]', title: 'הוספה', text: 'הוסף עוד תמונות בכל רגע.', placement: 'top', when: () => isPackMode && $magnets.length > 0 },
+        { id: 'gift', selector: '[data-coach="gift"]', title: 'מתנה', text: 'הוסף תמונת מתנה (5×5).', placement: 'top', when: () => isPackMode && $magnets.length > 0 }
+    ];
+
+    const mosaicGuideSteps = [
+        { id: 'upload', selector: '#initial-upload-btn', title: 'התחלה', text: 'בחר תמונה לפיצול.', placement: 'bottom', when: () => isMosaicMode && !$editorSettings.splitImageSrc },
+        { id: 'grid', selector: '[data-coach="mosaic-grid"]', title: 'רשת', text: 'שנה את כמות החלקים.', placement: 'top', when: () => isMosaicMode && !!$editorSettings.splitImageSrc },
+        { id: 'crop', selector: '[data-coach="mosaic-crop"]', title: 'חיתוך', text: 'מיקום וחיתוך לפני פיצול.', placement: 'top', when: () => isMosaicMode && !!$editorSettings.splitImageSrc },
+        { id: 'effects', selector: '[data-coach="mosaic-effects"]', title: 'אפקטים', text: 'בחר פילטר לפסיפס.', placement: 'top', when: () => isMosaicMode && !!$editorSettings.splitImageSrc },
+        { id: 'gift', selector: '[data-coach="gift"]', title: 'מתנה', text: 'הוסף תמונת מתנה (5×5).', placement: 'top', when: () => isMosaicMode && !!$editorSettings.splitImageSrc }
+    ];
 
     function saveUploaderScroll() {
         try {
@@ -179,6 +207,14 @@
     $: canAddToCartMosaic = !!$editorSettings.splitImageSrc;
 
     onMount(() => {
+        // First-time guide (uploader only).
+        try {
+            if (!isDismissed(UPLOADER_ONBOARDING_KEY) && (isPackMode || isMosaicMode)) {
+                // Delay a tick so dock/targets exist.
+                setTimeout(() => { showGuide = true; }, 350);
+            }
+        } catch {}
+
         window.addEventListener('dragstart', preventDragStart);
         window.addEventListener('resize', handleResize);
         
@@ -707,6 +743,13 @@
     {/if}
 </div>
 
+<Coachmarks
+    isOpen={showGuide}
+    steps={guideSteps}
+    on:close={closeGuide}
+    on:dismiss={() => dismiss(UPLOADER_ONBOARDING_KEY)}
+/>
+
 {#if isGiftMode}
     <footer class="glass-dock" transition:fade>
         <button class="dock-btn-text" on:click={() => { resetSystem(); goto('/select'); }}>ביטול</button>
@@ -719,15 +762,18 @@
             <button class="dock-btn-text mobile-hidden" on:click={() => { handleReflow(); activePanel = null; }}>סדר מחדש</button>
             <div class="dock-divider mobile-hidden"></div>
             <button class="dock-btn-text mobile-hidden" on:click={() => togglePanel('size')}>גודל</button>
-            <button class="dock-btn-text" on:click={() => handleEffectsDockClick('pack-dock')}>אפקטים</button>
-            <button class="dock-btn-text" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
+            <button class="dock-btn-text" data-coach="pack-effects" data-tooltip="פילטרים" on:click={() => handleEffectsDockClick('pack-dock')}>אפקטים</button>
+            <button class="dock-btn-text" data-coach="pack-bg" data-tooltip="רקע" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
             
             <div class="dock-divider"></div>
-            <GiftButton />
+            <div data-coach="gift">
+                <GiftButton />
+            </div>
             <UpsellWidget />
-            <button class="dock-btn-circle secondary" on:click={() => { triggerUploadAction(); activePanel = null; }} title="הוסף עוד תמונות">
+            <button class="dock-btn-circle secondary" data-coach="pack-add" data-tooltip="הוסף עוד" on:click={() => { triggerUploadAction(); activePanel = null; }} title="הוסף עוד תמונות">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             </button>
+            <button class="dock-btn-circle secondary coach-help-btn" data-tooltip="הדרכה" aria-label="פתח הדרכה" on:click={openGuide}>?</button>
         </footer>
     {/if}
     {#if $editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC && $editorSettings.splitImageSrc}
@@ -736,13 +782,15 @@
          
          <button class="dock-btn-text mobile-hidden" on:click={() => editorSettings.update(s => ({...s, isSurfaceDark: !s.isSurfaceDark}))}>רקע</button>
          
-         <button class="dock-btn-text" on:click={() => handleEffectsDockClick('mosaic-dock')}>אפקטים</button> 
+         <button class="dock-btn-text" data-coach="mosaic-effects" data-tooltip="פילטרים" on:click={() => handleEffectsDockClick('mosaic-dock')}>אפקטים</button> 
          
          <div class="dock-divider"></div>
-         <GiftButton />
+         <div data-coach="gift">
+            <GiftButton />
+         </div>
          <UpsellWidget />
          
-        <button class="dock-btn-circle secondary" aria-label="גודל רשת" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
+        <button class="dock-btn-circle secondary" data-coach="mosaic-grid" aria-label="גודל רשת" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <line x1="3" y1="9" x2="21" y2="9"></line>
@@ -751,12 +799,13 @@
                 <line x1="15" y1="3" x2="15" y2="21"></line>
              </svg>
          </button>
-        <button class="dock-btn-circle secondary" aria-label="חיתוך פסיפס" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
+        <button class="dock-btn-circle secondary" data-coach="mosaic-crop" aria-label="חיתוך פסיפס" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
                 <path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
              </svg>
          </button>
+         <button class="dock-btn-circle secondary coach-help-btn" data-tooltip="הדרכה" aria-label="פתח הדרכה" on:click={openGuide}>?</button>
     </footer>
 {/if}
 {/if}
@@ -854,6 +903,19 @@
     .dock-btn-circle.disabled:hover { transform: none; }
     
     .gift-only-mode-msg { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--color-medium-blue-gray); pointer-events: none; }
+
+    .coach-help-btn {
+        font-weight: 900;
+        font-size: 16px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--color-pink);
+        border: 1px solid rgba(63, 82, 79, 0.22);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    }
+    .coach-help-btn:hover { transform: scale(1.1); background: rgba(63, 82, 79, 0.06); }
 
     .opening-editor {
         pointer-events: none;
