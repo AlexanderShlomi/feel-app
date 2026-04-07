@@ -55,13 +55,18 @@
 </script>
 
 {#if isOpen}
-    <div class="panel-backdrop" on:click={handleBackdropClick} use:portal />
+    <div class="panel-backdrop" role="presentation" on:click={handleBackdropClick} use:portal></div>
     
-    <div 
-        class="floating-panel active" 
-        use:portal 
+    <div
+        class="floating-panel active"
+        use:portal
         transition:fly={{ y: panelFlyY, duration: 300, opacity: 1 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabindex="-1"
         on:click|stopPropagation
+        on:keydown={(e) => e.key === 'Escape' && close()}
     >
         <div class="floating-panel-header">
             <h4>{title}</h4>

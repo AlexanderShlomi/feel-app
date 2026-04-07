@@ -2,8 +2,9 @@
     import { onMount, onDestroy } from 'svelte';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter } from '$lib/stores.js';
+    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction } from '$lib/stores.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+    import EffectsRow from '$lib/components/EffectsRow.svelte';
 
     const FRAME_SIZE = 300; 
 
@@ -23,6 +24,7 @@
     let bgTranslateY = 0;
     let bgScale = 1;
     let minScaleLimit = 0.1;
+    let zoomMultiplier = 1; // 1..3, slider source-of-truth (stable even when minScaleLimit changes)
 
     let isDragging = false;
     let isInteracting = false; 
@@ -160,16 +162,16 @@
                 // שחזור מלא של מצב עריכה קיים
                 bgTranslateX = magnet.transform.x * FRAME_SIZE; 
                 bgTranslateY = magnet.transform.y * FRAME_SIZE;
-                bgScale = magnet.transform.zoom * minScaleLimit;
+                zoomMultiplier = magnet.transform.zoom;
+                bgScale = zoomMultiplier * minScaleLimit;
             } else {
                 // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
                 applyDefaultPositioning(naturalW, naturalH);
+                zoomMultiplier = minScaleLimit > 0 ? (bgScale / minScaleLimit) : 1;
             }
 
             hasInitializedImage = true;
         } else {
-            // Preserve user's current zoom multiplier across image reloads.
-            const zoomMultiplier = minScaleLimit > 0 ? (bgScale / minScaleLimit) : 1;
             minScaleLimit = nextMinScale;
             bgScale = zoomMultiplier * minScaleLimit;
         }
@@ -220,8 +222,15 @@
 
     // --- אירועי גרירה ואינטראקציה ---
 
-    function startInteraction() { isInteracting = true; }
-    function endInteraction() { isDragging = false; isInteracting = false; }
+    function startInteraction() {
+        if (!isInteracting) beginUserInteraction();
+        isInteracting = true;
+    }
+    function endInteraction() {
+        isDragging = false;
+        if (isInteracting) endUserInteraction();
+        isInteracting = false;
+    }
 
     function startDrag(e) {
         // Pointer events unify mouse/touch and avoid global touchmove listeners.
@@ -287,7 +296,8 @@
             zoomRafId = requestAnimationFrame(() => {
                 zoomRafId = 0;
                 if (pendingZoomMultiplier === null) return;
-                bgScale = pendingZoomMultiplier * minScaleLimit;
+                zoomMultiplier = pendingZoomMultiplier;
+                bgScale = zoomMultiplier * minScaleLimit;
                 pendingZoomMultiplier = null;
                 clampPosition();
             });
@@ -319,11 +329,11 @@
     function saveAndClose() {
         // שמירת ערכים יחסיים (באחוזים/יחס) כדי שיתאימו לכל גודל בגריד
         updateMagnetTransform(magnetId, {
-            zoom: bgScale / minScaleLimit,
+            zoom: zoomMultiplier,
             x: bgTranslateX / FRAME_SIZE,
             y: bgTranslateY / FRAME_SIZE
         });
-        goto('/uploader');
+        goto('/uploader', { noScroll: true });
     }
 
     function applyEffect(effectId) {
@@ -334,7 +344,7 @@
     function deleteMagnet() {
         if (confirm('למחוק את התמונה?')) {
             magnets.update(list => list.filter(m => m.id !== magnetId));
-            goto('/uploader');
+            goto('/uploader', { noScroll: true });
         }
     }
 </script>
@@ -389,19 +399,21 @@
             on:pointerdown={startInteraction}
         >
             <div class="slider-wrapper">
-                <span class="icon">-</span>
+                <span class="icon" aria-hidden="true">-</span>
                 <input
                     type="range"
                     min="1"
                     max="3"
                     step="0.01"
-                    value={bgScale / (minScaleLimit || 1)}
+                    value={zoomMultiplier}
                     on:input={handleZoomInput}
                     on:change={endZoomInteraction}
+                    aria-label="זום"
+                    aria-describedby="zoom-hint"
                 >
-                <span class="icon">+</span>
+                <span class="icon" aria-hidden="true">+</span>
             </div>
-            <span class="hint">הזז והגדל את התמונה</span>
+            <span id="zoom-hint" class="hint">הזז את התמונה באצבע ובחר זום בסליידר</span>
         </div>
     </div>
 
@@ -414,25 +426,12 @@
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
-    <div class="effects-list theme-scroll effects-panel-row">
-        {#each effectsList as effect (effect.id)}
-            <button class="effect-select-btn" class:active={effect.id === currentEffectId} on:click={() => applyEffect(effect.id)}>
-                <div class="thumbnail-wrapper theme-shadow">
-                    <img
-                        src="/effects.png"
-                        alt=""
-                        style="filter: {effect.css};"
-                        loading="lazy"
-                        decoding="async"
-                        fetchpriority="low"
-                        width="64"
-                        height="64"
-                    >
-                </div>
-                <span class="theme-text">{effect.name}</span>
-            </button>
-        {/each}
-    </div>
+    <EffectsRow
+        effects={effectsList}
+        activeId={currentEffectId}
+        onSelect={applyEffect}
+        size="sm"
+    />
 </FloatingPanel>
 </div>
 {/if}
@@ -449,7 +448,7 @@
         /* גובה אזור התוכן מתחת ל-header הקבוע */
         min-height: calc(100vh - 70px);
         min-height: calc(100dvh - 70px);
-        padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+        padding-bottom: max(var(--dock-pad, 0px), calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)));
     }
 
     .editor-page {
@@ -564,9 +563,9 @@
         gap: 10px;
         transition: opacity 0.3s;
         opacity: 0.85;
-        background: rgba(255, 255, 255, 0.94);
-        border-top: 1px solid rgba(0, 0, 0, 0.06);
-        box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06);
+        background: transparent;
+        border-top: none;
+        box-shadow: none;
         touch-action: manipulation;
     }
     .zoom-controls:hover,
@@ -580,6 +579,7 @@
         width: 100%;
         touch-action: manipulation;
         -webkit-tap-highlight-color: transparent;
+        direction: ltr; /* stable -/+ placement on RTL pages */
     }
     .icon {
         font-weight: 800;
@@ -598,6 +598,7 @@
         appearance: none;
         outline: none;
         -webkit-tap-highlight-color: transparent;
+        direction: ltr;
     }
     .zoom-controls input::-webkit-slider-thumb {
         -webkit-appearance: none;
@@ -660,22 +661,4 @@
     .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }
     .dock-btn-circle.primary { background: var(--color-pink); color: white; }
     .dock-btn-circle.danger { background: #eee; color: #d32f2f; }
-    /* In the single-image editor we keep effects in one compact row (Photos-like) */
-    .effects-list.effects-panel-row {
-        display: flex;
-        flex-wrap: nowrap;
-        gap: 10px;
-        padding: 6px 4px;
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        overscroll-behavior-x: contain;
-        scrollbar-width: none;
-        max-width: 92vw;
-    }
-    .effects-list.effects-panel-row::-webkit-scrollbar { display: none; }
-    .thumbnail-wrapper { width: 60px; height: 60px; border-radius: 8px; overflow: hidden; margin-bottom: 5px; }
-    .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
-    .effect-select-btn { background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; }
-    .effect-select-btn.active .thumbnail-wrapper { border: 2px solid var(--color-pink); }
 </style>

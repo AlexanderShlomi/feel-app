@@ -1,5 +1,5 @@
 <svelte:head>
-    <title>feel - LUXURY MEMORIES</title>
+    <title>FEEL - LUXURY MEMORIES</title>
     <meta name="description" content="לעצור את הזמן – להרגיש את הרגע" />
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -198,10 +198,10 @@
         <div class="community-wrapper">
             <h2 class="community-title fade-in-up" use:scrollAnimation>מהקהילה שלנו</h2>
 
-            <button class="scroll-btn left" on:click={() => scrollCommunity(-1)}>
+            <button class="scroll-btn left" aria-label="גלילה שמאלה" title="גלילה שמאלה" on:click={() => scrollCommunity(-1)}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
             </button>
-            <button class="scroll-btn right" on:click={() => scrollCommunity(1)}>
+            <button class="scroll-btn right" aria-label="גלילה ימינה" title="גלילה ימינה" on:click={() => scrollCommunity(1)}>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
             </button>
 
