@@ -3,6 +3,7 @@
     import { fade } from 'svelte/transition';
     import Magnet from '$lib/components/Magnet.svelte';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
+    import EffectsRow from '$lib/components/EffectsRow.svelte';
     import FileUploader from '$lib/components/FileUploader.svelte';
     import MosaicEditor from '$lib/components/MosaicEditor.svelte';
     import GiftButton from '$lib/components/GiftButton.svelte'; 
@@ -45,6 +46,9 @@
 
     let effectsWorker;
     let effectsWorkerUnsupported = false;
+    let effectsQueue = [];
+    let effectsActiveEffect = null;
+    let effectsProcessing = false;
     let activePanel = null;
     let loaderEl;
     let surfaceEl;
@@ -53,6 +57,43 @@
     
     let isSplitEditing = false; 
     $: isGiftMode = $editorSettings.currentProductType === PRODUCT_TYPES.GIFT;
+
+    let canvasContainerEl;
+    let isOpeningEditor = false;
+    const UPLOADER_SCROLL_KEY = 'feel_uploader_scroll_v1';
+
+    function saveUploaderScroll() {
+        try {
+            const scrollTop = canvasContainerEl ? canvasContainerEl.scrollTop : (typeof window !== 'undefined' ? window.scrollY : 0);
+            sessionStorage.setItem(UPLOADER_SCROLL_KEY, String(Math.max(0, Math.round(scrollTop || 0))));
+        } catch {}
+    }
+
+    async function restoreUploaderScroll() {
+        try {
+            const raw = sessionStorage.getItem(UPLOADER_SCROLL_KEY);
+            const val = raw ? parseInt(raw, 10) : 0;
+            if (!val || val < 1) return;
+            await tick();
+            requestAnimationFrame(() => {
+                if (canvasContainerEl) canvasContainerEl.scrollTop = val;
+                else window.scrollTo(0, val);
+            });
+        } catch {}
+    }
+
+    async function openEditorForMagnet(id) {
+        if (!id) return;
+        if (isOpeningEditor) return;
+        saveUploaderScroll();
+        isOpeningEditor = true;
+        await tick();
+        try {
+            await goto(`/uploader/edit/${id}`, { noScroll: true });
+        } finally {
+            isOpeningEditor = false;
+        }
+    }
 
     /** מובייל: ה-tiles עם pointer-events:none כדי שהגלילה תעבור ל-.canvas-container; לחיצה מזוהה לפי קואורדינטות */
     const MOBILE_TAP_SCROLL_CANCEL_PX = 14;
@@ -78,6 +119,10 @@
             }
         }
         return null;
+    }
+
+    function preventDragStart(e) {
+        e.preventDefault();
     }
 
     function onMobilePackPointerDown(e) {
@@ -114,7 +159,7 @@
         const id = mobileMagnetTap.id;
         mobileMagnetTap = null;
         if (dx <= MOBILE_TAP_SCROLL_CANCEL_PX && dy <= MOBILE_TAP_SCROLL_CANCEL_PX && dt <= 550) {
-            goto(`/uploader/edit/${id}`);
+            openEditorForMagnet(id);
         }
     }
 
@@ -134,7 +179,7 @@
     $: canAddToCartMosaic = !!$editorSettings.splitImageSrc;
 
     onMount(() => {
-        window.addEventListener('dragstart', (e) => e.preventDefault());
+        window.addEventListener('dragstart', preventDragStart);
         window.addEventListener('resize', handleResize);
         
         // פתיחת מתנה אוטומטית אם צריך
@@ -154,6 +199,19 @@
             effectsWorker = new Worker('/effects.worker.js');
             effectsWorker.onmessage = (event) => {
                 const { status, magnetId, effectId, blob } = event.data;
+                // Allow queue to send next item after any response.
+                effectsProcessing = false;
+
+                // If user already switched effects, ignore stale worker results (avoid thrash/memory).
+                if (effectsActiveEffect && effectId !== effectsActiveEffect) {
+                    if (status === 'success' && blob) {
+                        // Drop result promptly.
+                        try { /* no-op */ } catch {}
+                    }
+                    // Continue draining queue for the current effect.
+                    drainEffectsQueue();
+                    return;
+                }
                 if (status === 'success') {
                     const newSrc = URL.createObjectURL(blob);
                     if (magnetId === 'split-master') {
@@ -169,11 +227,18 @@
                     } else {
                         updateMagnetProcessedSrc(magnetId, effectId, newSrc);
                     }
+                    drainEffectsQueue();
                     return;
                 }
                 if (status === 'unsupported') {
                     effectsWorkerUnsupported = true;
                     if (loaderEl) loaderEl.style.display = 'none';
+                    effectsQueue = [];
+                    effectsProcessing = false;
+                }
+                if (status === 'error') {
+                    // Avoid infinite blocking if a single item fails.
+                    drainEffectsQueue();
                 }
             };
         }
@@ -212,8 +277,11 @@
                 calculateAndRenderSplitGrid();
             }
         }, 100);
+
+        restoreUploaderScroll();
         
         return () => {
+             window.removeEventListener('dragstart', preventDragStart);
              window.removeEventListener('resize', handleResize);
         }
     });
@@ -494,19 +562,38 @@
         editorSettings.update(s => ({ ...s, currentEffect: effectId }));
         magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
         
+        effectsActiveEffect = effectId;
+        effectsQueue = [];
+        effectsProcessing = false;
         if (effectId === 'original') return;
 
         if ($editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC) {
             if (!$editorSettings.splitImageCache || !$editorSettings.splitImageCache[effectId]) {
-                effectsWorker.postMessage({ magnetId: 'split-master', effectId: effectId, originalSrc: $editorSettings.splitImageSrc });
+                effectsQueue.push({ magnetId: 'split-master', effectId, originalSrc: $editorSettings.splitImageSrc });
+                drainEffectsQueue();
             }
         } else {
             for (const magnet of $magnets) {
                 if (!magnet.processed || !magnet.processed[effectId]) {
                     updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
-                    effectsWorker.postMessage({ magnetId: magnet.id, effectId: effectId, originalSrc: magnet.originalSrc });
+                    effectsQueue.push({ magnetId: magnet.id, effectId, originalSrc: magnet.originalSrc });
                 }
             }
+            drainEffectsQueue();
+        }
+    }
+
+    function drainEffectsQueue() {
+        if (!effectsWorker || effectsWorkerUnsupported) return;
+        if (effectsProcessing) return;
+        const next = effectsQueue.shift();
+        if (!next) return;
+        effectsProcessing = true;
+        try {
+            effectsWorker.postMessage(next);
+        } finally {
+            // processing flag is normally released on worker response; this is just a safety net.
+            setTimeout(() => { effectsProcessing = false; drainEffectsQueue(); }, 15000);
         }
     }
 
@@ -547,6 +634,8 @@
      class:container-dark={$editorSettings.isSurfaceDark} 
      class:split-center={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
      class:mobile-grid-active={$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK}
+     class:opening-editor={isOpeningEditor}
+     bind:this={canvasContainerEl}
      on:pointerdown|capture={onMobilePackPointerDown}
      on:pointermove|capture={onMobilePackPointerMove}
      on:pointerup|capture={onMobilePackPointerUp}
@@ -575,11 +664,21 @@
                     hidden={magnet.hidden} 
                     on:delete={handleDeleteRequest}
                     on:toggleVisibility={handleToggleVisibility} 
+                    on:openEdit={(e) => openEditorForMagnet(e.detail?.id)}
                     on:dblclick={(e) => e.preventDefault()} 
                 />
             </div>
         {/each}
     </div>
+
+    {#if isOpeningEditor}
+        <div class="opening-editor-overlay" aria-live="polite" aria-label="פותח עריכה">
+            <div class="opening-editor-card">
+                <div class="opening-spinner" aria-hidden="true"></div>
+                <div class="opening-text">פותח עריכה…</div>
+            </div>
+        </div>
+    {/if}
         
     {#if $magnets.length === 0 && !$editorSettings.splitImageSrc && !isGiftMode}
     <div id="initial-upload-prompt">
@@ -643,7 +742,7 @@
          <GiftButton />
          <UpsellWidget />
          
-         <button class="dock-btn-circle secondary" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
+        <button class="dock-btn-circle secondary" aria-label="גודל רשת" on:click={() => togglePanel('grid')} data-tooltip="גודל רשת">
              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <line x1="3" y1="9" x2="21" y2="9"></line>
@@ -652,7 +751,7 @@
                 <line x1="15" y1="3" x2="15" y2="21"></line>
              </svg>
          </button>
-         <button class="dock-btn-circle secondary" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
+        <button class="dock-btn-circle secondary" aria-label="חיתוך פסיפס" on:click={() => isSplitEditing = true} data-tooltip="חיתוך">
              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
                 <path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
@@ -689,35 +788,22 @@
 
 <FloatingPanel title="גודל הרשת" isOpen={activePanel === 'grid'} on:close={() => activePanel = null}>
     <div class="grid-control-panel">
-        <button class="round-control-btn" on:click={decrementGrid} disabled={$editorSettings.gridBaseSize <= MIN_GRID_BASE}>-</button>
+        <button class="round-control-btn" aria-label="הקטן רשת" on:click={decrementGrid} disabled={$editorSettings.gridBaseSize <= MIN_GRID_BASE}>-</button>
         <div class="grid-info">
             <span class="grid-dim" dir="ltr">{splitGridInfo.cols} x {splitGridInfo.rows}</span>
             <span class="grid-total">({splitGridInfo.total} יחידות)</span>
         </div>
-        <button class="round-control-btn" on:click={incrementGrid}>+</button>
+        <button class="round-control-btn" aria-label="הגדל רשת" on:click={incrementGrid}>+</button>
     </div>
 </FloatingPanel>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
-    <div class="effects-list effects-panel-grid">
-        {#each effectsList as effect (effect.id)}
-            <button class="effect-select-btn" class:active={effect.id === $editorSettings.currentEffect} on:click={() => applyEffectToAllMagnets(effect.id)}>
-                <div class="thumbnail-wrapper">
-                    <img
-                        src="/effects.png"
-                        alt=""
-                        style="filter: {effect.css};"
-                        loading="lazy"
-                        decoding="async"
-                        fetchpriority="low"
-                        width="80"
-                        height="80"
-                    >
-                </div>
-                <span>{effect.name}</span>
-            </button>
-        {/each}
-    </div>
+    <EffectsRow
+        effects={effectsList}
+        activeId={$editorSettings.currentEffect}
+        onSelect={applyEffectToAllMagnets}
+        size={$isMobile ? 'sm' : 'md'}
+    />
 </FloatingPanel>
 
 {#if isSplitEditing && $editorSettings.splitImageSrc}
@@ -760,24 +846,64 @@
     .size-slider-container span { font-size: 16px; color: var(--color-medium-blue-gray); }
     
     @media (min-width: 769px) {
-        .effects-list.effects-panel-grid {
-            display: flex;
-            flex-wrap: nowrap;
-            gap: 15px;
-            justify-content: center;
-            padding: 5px 0;
-            overflow-x: auto;
-        }
+        /* effects UI is shared via EffectsRow.svelte */
     }
-    .effect-select-btn { background: none; border: none; cursor: pointer; padding: 0; font-family: 'Assistant', sans-serif; font-size: 14px; color: var(--color-medium-blue-gray); font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 5px; }
-    .effect-select-btn .thumbnail-wrapper { width: 80px; height: 80px; border-radius: 8px; border: 3px solid transparent; overflow: hidden; }
-    .effect-select-btn .thumbnail-wrapper img { width: 100%; height: 100%; object-fit: cover; }
-    .effect-select-btn.active .thumbnail-wrapper { border-color: var(--color-pink); }
+    /* effects UI is shared via EffectsRow.svelte */
     
     .dock-btn-circle.disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.7; }
     .dock-btn-circle.disabled:hover { transform: none; }
     
     .gift-only-mode-msg { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--color-medium-blue-gray); pointer-events: none; }
+
+    .opening-editor {
+        pointer-events: none;
+    }
+
+    .opening-editor-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        pointer-events: all;
+    }
+
+    .opening-editor-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+        color: #222;
+        font-weight: 800;
+    }
+
+    .opening-text {
+        font-size: 14px;
+        letter-spacing: 0.2px;
+    }
+
+    .opening-spinner {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 2px solid rgba(0, 0, 0, 0.15);
+        border-top-color: var(--color-pink);
+        animation: spin 0.9s linear infinite;
+        flex: 0 0 auto;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
     
     /* Mobile Grid Override */
     @media (max-width: 768px) {
@@ -789,7 +915,7 @@
             overscroll-behavior-y: contain;
             /* גלילה חלקה בכל המסך; הריווח לתחתית מטופל בתוך ה-surface כדי שהתמונות "יסתיימו" מעל הדוק */
             padding-bottom: 0 !important;
-            scroll-padding-bottom: calc(24px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
+            scroll-padding-bottom: max(var(--dock-pad, 0px), calc(24px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)));
         }
         
         .mobile-grid-active #configurator-surface {
@@ -799,7 +925,7 @@
             gap: 16px !important;
             padding: 16px !important;
             /* גורם לכך שהשורה האחרונה תיעצר מעל ה-dock (ללא צורך שהתמונות ייכנסו מתחתיו) */
-            padding-bottom: calc(16px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)) !important;
+            padding-bottom: max(var(--dock-pad, 0px), calc(16px + 190px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px))) !important;
             
             height: auto !important;
             min-height: 100% !important;

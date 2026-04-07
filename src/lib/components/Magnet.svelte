@@ -1,6 +1,5 @@
 <script>
     import { createEventDispatcher } from 'svelte';
-    import { goto } from '$app/navigation'; 
     import { getFilterStyle, isMobile } from '$lib/stores.js'; 
     
     export let id;
@@ -51,24 +50,15 @@
             return; 
         } 
         
-        // במובייל (מגנטים רגילים), לחיצה מעבירה לעריכה
-        if ($isMobile) { 
-            // מניעת התנהגות כפולה
-            if (e.type === 'touchstart') {
-                 // בטאץ' אנחנו רוצים למנוע את יצירת ה-click המלאכותי של הדפדפן
-                 // אבל לאפשר את המעבר
-                 // e.preventDefault() כאן עלול לחסום גלילה אם לא נזהרים, 
-                 // אבל מכיוון שזה אירוע על המגנט עצמו ולא גרירה, זה תקין לניווט.
-            }
-            goto(`/uploader/edit/${id}`); 
-            return; 
-        }
+        // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
+        dispatch('openEdit', { id });
     }
 
     function handleEditClick(e) {
         if (e) { e.stopPropagation(); }
-        goto(`/uploader/edit/${id}`);
+        dispatch('openEdit', { id });
     }
+
     
     function handleDeleteClick(e) {
         if (e) { e.stopPropagation(); }
@@ -88,6 +78,8 @@
     class:desktop-mode={!$isMobile}
     style="{cssVars}"
     on:click={handleInteraction} 
+    role={isSplitPart ? undefined : 'button'}
+    aria-label={isSplitPart ? undefined : 'פתח עריכת תמונה'}
 >
     <div 
         class="image-wrapper" 
@@ -115,15 +107,15 @@
             />
         {/if}
 
-        <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden} on:click={handleInteraction}>
+        <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden}>
             {#if !$isMobile && !isSplitPart && !hidden}
-                <button class="control-btn edit-btn" on:click={handleEditClick} on:mousedown|stopPropagation>
+                <button class="control-btn edit-btn" aria-label="ערוך תמונה" on:click={handleEditClick} on:mousedown|stopPropagation>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                 </button>
             {/if}
             {#if !hidden}
                 {#if isSplitPart || (!$isMobile && !isSplitPart)}
-                    <button class="control-btn delete-btn" on:click={handleDeleteClick} on:mousedown|stopPropagation on:touchstart|stopPropagation>
+                    <button class="control-btn delete-btn" aria-label="מחק תמונה" on:click={handleDeleteClick} on:mousedown|stopPropagation on:touchstart|stopPropagation>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
                 {/if}
