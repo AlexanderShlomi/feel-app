@@ -37,6 +37,22 @@
 
     let isOpen = false; 
 
+    // Portal drawer/backdrop to <body> to avoid stacking-context issues (transforms)
+    // and guarantee the cart sits above fixed docks on all pages.
+    function portal(node) {
+        let target = document.body;
+        async function update() {
+            target.appendChild(node);
+            node.hidden = false;
+        }
+        update();
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            }
+        };
+    }
+
     function toggleCart() {
         isOpen = !isOpen;
         if (isOpen) privacyReadChecked = false;
@@ -121,13 +137,22 @@
 </button>
 
 {#if isOpen}
-    <div class="backdrop" on:click={closeCart} transition:fade={{ duration: 200 }}></div>
+    <div
+        class="backdrop"
+        role="button"
+        tabindex="0"
+        aria-label="סגור סל"
+        on:click={closeCart}
+        on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') closeCart(); }}
+        transition:fade={{ duration: 200 }}
+        use:portal
+    ></div>
 
-    <div class="cart-drawer" transition:fly={{ x: -350, duration: 300, opacity: 1 }}>
+    <div class="cart-drawer" transition:fly={{ x: -350, duration: 300, opacity: 1 }} use:portal>
         
         <div class="drawer-header">
             <h2>הסל שלי <span class="header-count">({count})</span></h2>
-            <button class="close-btn" on:click={closeCart}>✕</button>
+            <button class="close-btn" on:click={closeCart} aria-label="סגור סל">&times;</button>
         </div>
 
         <div class="drawer-content theme-scroll">
@@ -145,7 +170,7 @@
                         {#if item.type === PRODUCT_TYPES.GIFT}
                             <div class="cart-item gift-item" transition:slide>
                                 <div class="item-image gift-border">
-                                    <img src={item.previewImage} alt="Gift" />
+                                    <img src={item.previewImage} alt="Gift" loading="lazy" decoding="async" />
                                     <div class="gift-icon-overlay">🎁</div>
                                 </div>
                                 <div class="item-details">
@@ -168,7 +193,7 @@
                         {:else if item.type === PRODUCT_TYPES.MOSAIC}
                             <div class="cart-item mosaic-item" transition:slide>
                                 <div class="item-image mosaic-border">
-                                    <img src={item.previewImage} alt="Mosaic" />
+                                    <img src={item.previewImage} alt="Mosaic" loading="lazy" decoding="async" />
                                     <div class="type-badge">פסיפס</div>
                                 </div>
                                 <div class="item-details">
@@ -192,7 +217,7 @@
                             <div class="cart-item" transition:slide>
                                 <div class="item-image">
                                     {#if item.previewImage}
-                                        <img src={item.previewImage} alt="Preview" />
+                                        <img src={item.previewImage} alt="Preview" loading="lazy" decoding="async" />
                                     {:else}
                                         <div class="no-img">📷</div>
                                     {/if}
@@ -314,12 +339,12 @@
     }
 
     /* --- Drawer --- */
-    .backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 5000 !important; backdrop-filter: blur(4px); cursor: pointer; }
-    .cart-drawer { position: fixed; top: 0; left: 0; width: 360px; max-width: 85%; height: 100vh; background: #fff; color: #1E1E1E; z-index: 5001 !important; box-shadow: 5px 0 40px rgba(0,0,0,0.1); display: flex; flex-direction: column; direction: rtl; }
+    .backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 6500 !important; backdrop-filter: blur(4px); cursor: pointer; }
+    .cart-drawer { position: fixed; top: 0; left: 0; width: 360px; max-width: 85%; height: 100vh; background: #fff; color: #1E1E1E; z-index: 6501 !important; box-shadow: 5px 0 40px rgba(0,0,0,0.1); display: flex; flex-direction: column; direction: rtl; }
 
     .drawer-header { padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f9f9f9; }
     .drawer-header h2 { margin: 0; font-size: 18px; font-weight: 800; }
-    .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; padding: 5px; }
+    .close-btn { background: none; border: none; color: var(--color-gold); font-size: 32px; line-height: 1; cursor: pointer; padding: 4px 8px; }
 
     .drawer-content { flex: 1; padding: 20px; overflow-y: auto; }
     
