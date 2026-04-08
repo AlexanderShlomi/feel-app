@@ -246,7 +246,7 @@
         
         // הנוסחה: (גובה התמונה בפועל - גובה המסגרת) / 2
         // זה יתן את ה-Offset החיובי הנדרש כדי שראש התמונה יהיה ב-0.
-        bgTranslateY = (currentH - FRAME_SIZE) / 2;
+        bgTranslateY = Math.max(0, (currentH - FRAME_SIZE) / 2);
     }
 
     function clampPosition() {
@@ -259,8 +259,8 @@
         const currentH = naturalH * bgScale;
 
         // גבולות גזרה: לא מאפשרים לראות רקע לבן בתוך המסגרת
-        const maxX = (currentW - FRAME_SIZE) / 2;
-        const maxY = (currentH - FRAME_SIZE) / 2;
+        const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
+        const maxY = Math.max(0, (currentH - FRAME_SIZE) / 2);
 
         if (bgTranslateX > maxX) bgTranslateX = maxX;
         if (bgTranslateX < -maxX) bgTranslateX = -maxX;
