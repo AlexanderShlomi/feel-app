@@ -497,8 +497,11 @@
             const finalBgWidth = bgWidth * userTransform.zoom;
             const finalBgHeight = bgHeight * userTransform.zoom;
             
-            const shiftX = (userTransform.xPct || 0) * finalBgWidth;
-            const shiftY = (userTransform.yPct || 0) * finalBgHeight;
+            // v2: xPct/yPct are normalized to allowed overflow range [-1..1]
+            const maxX = Math.max(0, (finalBgWidth - totalGridWidth) / 2);
+            const maxY = Math.max(0, (finalBgHeight - totalGridHeight) / 2);
+            const shiftX = Math.max(-1, Math.min(1, userTransform.xPct || 0)) * maxX;
+            const shiftY = Math.max(-1, Math.min(1, userTransform.yPct || 0)) * maxY;
             
             const startX = (totalGridWidth - finalBgWidth) / 2 + shiftX;
             const startY = (totalGridHeight - finalBgHeight) / 2 + shiftY;

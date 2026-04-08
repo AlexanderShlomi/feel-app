@@ -453,7 +453,7 @@ export function addUploadedMagnets(files) {
     const newMags = Array.from(files).map(f => {
         const url = URL.createObjectURL(f);
         return ({
-        id: crypto.randomUUID(), transform: {zoom:1,x:0,y:0}, position:{x:0,y:0}, size: getFullMagnetSize(),
+        id: crypto.randomUUID(), transform: { zoom: 1, xPct: 0, yPct: 0 }, position:{x:0,y:0}, size: getFullMagnetSize(),
         originalSrc: url, src: url, activeEffectId:'original', isSplitPart:false, hidden:false, processed:{}
         });
     });

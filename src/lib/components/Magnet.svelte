@@ -15,15 +15,88 @@
     let imgElement;
     let isLandscape = true; 
     let isImageLoaded = false;
+
+    // Legacy editor saved translation relative to FRAME_SIZE=300.
+    const LEGACY_FRAME_SIZE = 300;
+    let translateX = 0;
+    let translateY = 0;
+    let zoom = 1;
     
-    $: hasTransform = transform && (transform.x !== 0 || transform.y !== 0 || transform.zoom !== 1);
+    $: hasTransform = transform && (
+        (typeof transform.xPct === 'number' && transform.xPct !== 0) ||
+        (typeof transform.yPct === 'number' && transform.yPct !== 0) ||
+        (typeof transform.x === 'number' && transform.x !== 0) ||
+        (typeof transform.y === 'number' && transform.y !== 0) ||
+        (transform.zoom !== 1)
+    );
     $: filterCss = getFilterStyle(activeEffectId);
+
+    function computeCoverMinScale(imgW, imgH, frame) {
+        const scaleX = frame / imgW;
+        const scaleY = frame / imgH;
+        return Math.max(scaleX, scaleY);
+    }
+
+    function computeMaxTranslate(imgW, imgH, frame, z) {
+        const minScale = computeCoverMinScale(imgW, imgH, frame);
+        const scale = (z || 1) * minScale;
+        const currentW = imgW * scale;
+        const currentH = imgH * scale;
+        return {
+            maxX: Math.max(0, (currentW - frame) / 2),
+            maxY: Math.max(0, (currentH - frame) / 2)
+        };
+    }
+
+    function clamp(n, min, max) {
+        if (n < min) return min;
+        if (n > max) return max;
+        return n;
+    }
+
+    function recomputeTransform() {
+        // Only for non-mosaic magnets, and only once we know image dimensions.
+        if (isSplitPart) return;
+        const z = transform?.zoom || 1;
+        zoom = z;
+
+        if (!imgElement || !isImageLoaded) {
+            translateX = 0;
+            translateY = 0;
+            return;
+        }
+
+        const imgW = imgElement.naturalWidth || 0;
+        const imgH = imgElement.naturalHeight || 0;
+        if (!imgW || !imgH || !size) {
+            translateX = 0;
+            translateY = 0;
+            return;
+        }
+
+        const { maxX, maxY } = computeMaxTranslate(imgW, imgH, size, z);
+
+        // v2 (preferred): pct of allowed overflow range [-1..1]
+        if (typeof transform?.xPct === 'number' || typeof transform?.yPct === 'number') {
+            const xp = typeof transform?.xPct === 'number' ? transform.xPct : 0;
+            const yp = typeof transform?.yPct === 'number' ? transform.yPct : 0;
+            translateX = clamp(xp, -1, 1) * maxX;
+            translateY = clamp(yp, -1, 1) * maxY;
+            return;
+        }
+
+        // Legacy v1: stored relative to FRAME_SIZE=300, interpret as px in that space then clamp to current bounds.
+        const legacyX = typeof transform?.x === 'number' ? transform.x : 0;
+        const legacyY = typeof transform?.y === 'number' ? transform.y : 0;
+        translateX = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
+        translateY = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
+    }
     
     $: cssVars = `
         --magnet-size: ${size}px;
-        --zoom: ${(!isSplitPart && transform) ? transform.zoom : 1};
-        --pos-x: ${(!isSplitPart && transform) ? (transform.x * 100) : 0}%;
-        --pos-y: ${(!isSplitPart && transform) ? (transform.y * 100) : 0}%;
+        --zoom: ${(!isSplitPart && transform) ? (transform.zoom || 1) : 1};
+        --tx: ${(!isSplitPart && transform) ? translateX : 0}px;
+        --ty: ${(!isSplitPart && transform) ? translateY : 0}px;
         --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
         --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
         --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
@@ -35,6 +108,12 @@
         if (!imgElement) return;
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
+        recomputeTransform();
+    }
+
+    // Recompute when transform/size changes after image load.
+    $: if (!isSplitPart && isImageLoaded && size && transform) {
+        recomputeTransform();
     }
     
     // --- אירועים ---
@@ -102,7 +181,7 @@
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}
                 class:loaded={isImageLoaded}
-                style="{filterCss} left: var(--pos-x); top: var(--pos-y); transform: scale(var(--zoom));" 
+                style="{filterCss}" 
                 on:error={handleImageError} 
             />
         {/if}
@@ -145,7 +224,15 @@
     .image-wrapper.sharp-corners { border-radius: 0 !important; box-shadow: none; }
     
     .magnet-image { 
-        display: block; position: relative; transform-origin: center center; will-change: transform, left, top; opacity: 0; transition: opacity 0.2s;
+        display: block;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform-origin: center center;
+        will-change: transform;
+        opacity: 0;
+        transition: opacity 0.2s;
+        transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
     }
     
     .magnet-image.loaded { opacity: 1; }

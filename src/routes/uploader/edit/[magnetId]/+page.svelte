@@ -159,11 +159,25 @@
             minScaleLimit = nextMinScale;
 
             if (magnet.transform && magnet.transform.zoom) {
-                // שחזור מלא של מצב עריכה קיים
-                bgTranslateX = magnet.transform.x * FRAME_SIZE; 
-                bgTranslateY = magnet.transform.y * FRAME_SIZE;
+                // שחזור מלא של מצב עריכה קיים (תמיכה ב-v2 + תאימות לאחור)
                 zoomMultiplier = magnet.transform.zoom;
                 bgScale = zoomMultiplier * minScaleLimit;
+
+                const currentW = naturalW * bgScale;
+                const currentH = naturalH * bgScale;
+                const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
+                const maxY = Math.max(0, (currentH - FRAME_SIZE) / 2);
+
+                if (typeof magnet.transform.xPct === 'number' || typeof magnet.transform.yPct === 'number') {
+                    const xp = typeof magnet.transform.xPct === 'number' ? magnet.transform.xPct : 0;
+                    const yp = typeof magnet.transform.yPct === 'number' ? magnet.transform.yPct : 0;
+                    bgTranslateX = Math.max(-1, Math.min(1, xp)) * maxX;
+                    bgTranslateY = Math.max(-1, Math.min(1, yp)) * maxY;
+                } else {
+                    // Legacy: saved relative to FRAME_SIZE=300
+                    bgTranslateX = (magnet.transform.x || 0) * FRAME_SIZE;
+                    bgTranslateY = (magnet.transform.y || 0) * FRAME_SIZE;
+                }
             } else {
                 // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
                 applyDefaultPositioning(naturalW, naturalH);
@@ -327,11 +341,22 @@
     }
 
     function saveAndClose() {
-        // שמירת ערכים יחסיים (באחוזים/יחס) כדי שיתאימו לכל גודל בגריד
+        // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1] עבור אותו zoom.
+        // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
+        const naturalW = bgImageEl?.naturalWidth || 0;
+        const naturalH = bgImageEl?.naturalHeight || 0;
+        const currentW = naturalW * bgScale;
+        const currentH = naturalH * bgScale;
+        const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
+        const maxY = Math.max(0, (currentH - FRAME_SIZE) / 2);
+
+        const xPct = maxX > 0 ? (bgTranslateX / maxX) : 0;
+        const yPct = maxY > 0 ? (bgTranslateY / maxY) : 0;
+
         updateMagnetTransform(magnetId, {
             zoom: zoomMultiplier,
-            x: bgTranslateX / FRAME_SIZE,
-            y: bgTranslateY / FRAME_SIZE
+            xPct: Math.max(-1, Math.min(1, xPct)),
+            yPct: Math.max(-1, Math.min(1, yPct))
         });
         goto('/uploader', { noScroll: true });
     }
