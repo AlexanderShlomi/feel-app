@@ -107,7 +107,17 @@
             const blob = await resp.blob();
 
             const img = await (async () => {
-                if (window.createImageBitmap) return await createImageBitmap(blob);
+                // Important: iOS/Android camera photos often rely on EXIF orientation.
+                // Some createImageBitmap() implementations ignore it unless explicitly requested,
+                // which would make crop/position look correct in the editor but differ in the grid.
+                if (window.createImageBitmap) {
+                    try {
+                        return await createImageBitmap(blob, { imageOrientation: 'from-image' });
+                    } catch {
+                        // Older browsers / partial implementations.
+                        return await createImageBitmap(blob);
+                    }
+                }
                 const el = new Image();
                 el.decoding = 'async';
                 el.src = URL.createObjectURL(blob);

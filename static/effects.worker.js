@@ -16,7 +16,13 @@ self.onmessage = async (event) => {
         const blob = await response.blob();
         
         // 2. יצירת ImageBitmap לעיבוד מהיר
-        const image = await createImageBitmap(blob);
+        // NOTE: Respect EXIF orientation to keep preview/effects consistent with <img> rendering.
+        let image;
+        try {
+            image = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+        } catch {
+            image = await createImageBitmap(blob);
+        }
 
         // 3. קנבס: כדי לשמור על ביצועים במובייל, עושים downscale מתון לתצוגה/Preview.
         // איכות המקור נשמרת ב-originalSrc; המגנט משתמש בזה לחיתוך/תצוגה, וה-preview מספיק חד.
