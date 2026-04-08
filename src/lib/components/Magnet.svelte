@@ -76,7 +76,15 @@
             return;
         }
 
-        const { maxX, maxY } = computeMaxTranslate(imgW, imgH, size, z);
+        // IMPORTANT:
+        // Max translate MUST be computed against the *rendered* image size.
+        // We render the image at baseW/baseH (cover-scaled to the frame) and then apply zoom.
+        // Previously we computed bounds from naturalW*scale but rendered baseW/baseH rounded,
+        // which can cause visible drift between editor and grid on mobile.
+        const currentW = (baseW || 0) * z;
+        const currentH = (baseH || 0) * z;
+        const maxX = Math.max(0, (currentW - size) / 2);
+        const maxY = Math.max(0, (currentH - size) / 2);
 
         // v2 (preferred): pct of allowed overflow range [-1..1]
         if (typeof transform?.xPct === 'number' || typeof transform?.yPct === 'number') {
@@ -102,8 +110,9 @@
         if (!imgW || !imgH || !size) return;
 
         const minScale = computeCoverMinScale(imgW, imgH, size);
-        baseW = Math.max(1, Math.round(imgW * minScale));
-        baseH = Math.max(1, Math.round(imgH * minScale));
+        // Keep as floats (no rounding) so transform math matches rendered size precisely.
+        baseW = Math.max(1, imgW * minScale);
+        baseH = Math.max(1, imgH * minScale);
     }
     
     $: cssVars = `
