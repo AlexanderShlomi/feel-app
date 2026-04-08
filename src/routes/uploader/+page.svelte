@@ -957,7 +957,8 @@
         .mobile-grid-active .image-wrapper {
             width: 100% !important;
             height: 100% !important;
-            position: static !important;
+            /* Keep a positioned ancestor for absolutely-positioned magnet images */
+            position: relative !important;
             border-radius: 0 !important;
             transform: none !important;
             pointer-events: none !important;
