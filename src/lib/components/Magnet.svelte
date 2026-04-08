@@ -1,6 +1,7 @@
 <script>
     import { createEventDispatcher } from 'svelte';
     import { getFilterStyle, isMobile } from '$lib/stores.js'; 
+    import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, clamp } from '$lib/utils/cropMath.js';
     
     export let id;
     export let src; 
@@ -33,29 +34,6 @@
     );
     $: filterCss = getFilterStyle(activeEffectId);
 
-    function computeCoverMinScale(imgW, imgH, frame) {
-        const scaleX = frame / imgW;
-        const scaleY = frame / imgH;
-        return Math.max(scaleX, scaleY);
-    }
-
-    function computeMaxTranslate(imgW, imgH, frame, z) {
-        const minScale = computeCoverMinScale(imgW, imgH, frame);
-        const scale = (z || 1) * minScale;
-        const currentW = imgW * scale;
-        const currentH = imgH * scale;
-        return {
-            maxX: Math.max(0, (currentW - frame) / 2),
-            maxY: Math.max(0, (currentH - frame) / 2)
-        };
-    }
-
-    function clamp(n, min, max) {
-        if (n < min) return min;
-        if (n > max) return max;
-        return n;
-    }
-
     function recomputeTransform() {
         // Only for non-mosaic magnets, and only once we know image dimensions.
         if (isSplitPart) return;
@@ -75,23 +53,13 @@
             translateY = 0;
             return;
         }
-
-        // IMPORTANT:
-        // Max translate MUST be computed against the *rendered* image size.
-        // We render the image at baseW/baseH (cover-scaled to the frame) and then apply zoom.
-        // Previously we computed bounds from naturalW*scale but rendered baseW/baseH rounded,
-        // which can cause visible drift between editor and grid on mobile.
-        const currentW = (baseW || 0) * z;
-        const currentH = (baseH || 0) * z;
-        const maxX = Math.max(0, (currentW - size) / 2);
-        const maxY = Math.max(0, (currentH - size) / 2);
+        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, size, z);
 
         // v2 (preferred): pct of allowed overflow range [-1..1]
         if (typeof transform?.xPct === 'number' || typeof transform?.yPct === 'number') {
-            const xp = typeof transform?.xPct === 'number' ? transform.xPct : 0;
-            const yp = typeof transform?.yPct === 'number' ? transform.yPct : 0;
-            translateX = clamp(xp, -1, 1) * maxX;
-            translateY = clamp(yp, -1, 1) * maxY;
+            const t = pctToTranslate(transform?.xPct, transform?.yPct, maxX, maxY);
+            translateX = t.x;
+            translateY = t.y;
             return;
         }
 
@@ -108,11 +76,9 @@
         const imgW = imgElement.naturalWidth || 0;
         const imgH = imgElement.naturalHeight || 0;
         if (!imgW || !imgH || !size) return;
-
-        const minScale = computeCoverMinScale(imgW, imgH, size);
-        // Keep as floats (no rounding) so transform math matches rendered size precisely.
-        baseW = Math.max(1, imgW * minScale);
-        baseH = Math.max(1, imgH * minScale);
+        const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, size);
+        baseW = bw;
+        baseH = bh;
     }
     
     $: cssVars = `
