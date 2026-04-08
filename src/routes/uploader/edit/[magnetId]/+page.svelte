@@ -49,6 +49,11 @@
     let previewSrc = null;
     let previewSrcToRevoke = null;
 
+    // Use original image geometry (not preview) for crop math to match the grid.
+    let baseNaturalW = 0;
+    let baseNaturalH = 0;
+    let baseGeomToken = 0;
+
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src;
     $: resolvedEffectSrc = previewSrc || displaySrc;
@@ -82,6 +87,25 @@
 
     onMount(() => {
         if (!magnet) { goto('/uploader'); return; }
+
+        // Load original geometry once; iOS can differ between preview sizing and original sizing.
+        // Using original naturalWidth/Height keeps xPct/yPct consistent with grid rendering.
+        (async () => {
+            const token = ++baseGeomToken;
+            try {
+                const src = displaySrc;
+                if (!src) return;
+                const img = new Image();
+                img.decoding = 'async';
+                img.src = src;
+                if (img.decode) await img.decode().catch(() => {});
+                if (token !== baseGeomToken) return;
+                baseNaturalW = img.naturalWidth || 0;
+                baseNaturalH = img.naturalHeight || 0;
+            } catch {
+                // best-effort; we'll fallback to bgImageEl dimensions
+            }
+        })();
         
         // Build a smaller preview bitmap to keep mobile editing smooth and avoid memory spikes.
         // This does not affect the stored original (used elsewhere).
@@ -154,9 +178,10 @@
 
     function onBgImageLoad() {
         if (!bgImageEl) return;
-        
-        const naturalW = bgImageEl.naturalWidth;
-        const naturalH = bgImageEl.naturalHeight;
+
+        // Prefer original dimensions for math so saved crop matches grid rendering.
+        const naturalW = baseNaturalW || bgImageEl.naturalWidth;
+        const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
         // חישוב יחס זום כדי לכסות את המסגרת
         const scaleX = FRAME_SIZE / naturalW;
@@ -227,8 +252,8 @@
     function clampPosition() {
         if (!bgImageEl) return;
 
-        const naturalW = bgImageEl.naturalWidth;
-        const naturalH = bgImageEl.naturalHeight;
+        const naturalW = baseNaturalW || bgImageEl.naturalWidth;
+        const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
         const currentW = naturalW * bgScale;
         const currentH = naturalH * bgScale;
@@ -337,8 +362,8 @@
     function resetTransform() {
         if (!bgImageEl) return;
         // חישוב מחדש של המינימום
-        const naturalW = bgImageEl.naturalWidth;
-        const naturalH = bgImageEl.naturalHeight;
+        const naturalW = baseNaturalW || bgImageEl.naturalWidth;
+        const naturalH = baseNaturalH || bgImageEl.naturalHeight;
         const scaleX = FRAME_SIZE / naturalW;
         const scaleY = FRAME_SIZE / naturalH;
         minScaleLimit = Math.max(scaleX, scaleY);
@@ -353,8 +378,8 @@
     function saveAndClose() {
         // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1] עבור אותו zoom.
         // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
-        const naturalW = bgImageEl?.naturalWidth || 0;
-        const naturalH = bgImageEl?.naturalHeight || 0;
+        const naturalW = baseNaturalW || (bgImageEl?.naturalWidth || 0);
+        const naturalH = baseNaturalH || (bgImageEl?.naturalHeight || 0);
         const currentW = naturalW * bgScale;
         const currentH = naturalH * bgScale;
         const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
