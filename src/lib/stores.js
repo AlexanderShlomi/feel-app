@@ -4,6 +4,7 @@ import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
+import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -449,15 +450,47 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
 
 export function getFullMagnetSize() { return BASE_MAGNET_SIZE * (get(editorSettings).currentDisplayScale || SCALE_DEFAULT); }
 export function getMargin() { return getFullMagnetSize() * MULTI_MARGIN_PERCENT; }
-export function addUploadedMagnets(files) {
-    const newMags = Array.from(files).map(f => {
-        const url = URL.createObjectURL(f);
-        return ({
-        id: crypto.randomUUID(), transform: { zoom: 1, xPct: 0, yPct: 0 }, position:{x:0,y:0}, size: getFullMagnetSize(),
-        originalSrc: url, src: url, activeEffectId:'original', isSplitPart:false, hidden:false, processed:{}
-        });
-    });
-    magnets.update(l => [...l, ...newMags]);
+export async function addUploadedMagnets(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+
+    const normalized = await Promise.all(
+        list.map(async (f) => {
+            try {
+                // Normalize EXIF orientation once at upload so editor/grid math stays consistent on iOS.
+                const norm = await normalizeImageFileToBlobUrl(f, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
+                const url = norm?.url || URL.createObjectURL(f);
+                return ({
+                    id: crypto.randomUUID(),
+                    transform: { zoom: 1, xPct: 0, yPct: 0 },
+                    position: { x: 0, y: 0 },
+                    size: getFullMagnetSize(),
+                    originalSrc: url,
+                    src: url,
+                    activeEffectId: 'original',
+                    isSplitPart: false,
+                    hidden: false,
+                    processed: {}
+                });
+            } catch {
+                const url = URL.createObjectURL(f);
+                return ({
+                    id: crypto.randomUUID(),
+                    transform: { zoom: 1, xPct: 0, yPct: 0 },
+                    position: { x: 0, y: 0 },
+                    size: getFullMagnetSize(),
+                    originalSrc: url,
+                    src: url,
+                    activeEffectId: 'original',
+                    isSplitPart: false,
+                    hidden: false,
+                    processed: {}
+                });
+            }
+        })
+    );
+
+    magnets.update((l) => [...l, ...normalized]);
 }
 export function updateMagnetProcessedSrc(id, eff, src) {
     magnets.update(l => l.map(m => {

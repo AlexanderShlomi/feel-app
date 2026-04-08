@@ -2,6 +2,7 @@
     import { fade, fly } from 'svelte/transition';
     import { editorSettings, saveWorkspaceToCart, PRODUCT_TYPES } from '$lib/stores.js';
     import FileUploader from '$lib/components/FileUploader.svelte';
+    import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
 
     let isOpen = false;
     let isAnimating = true;
@@ -14,11 +15,17 @@
         isOpen = !isOpen;
     }
 
-    function handleGiftUpload(event) {
+    async function handleGiftUpload(event) {
         const files = event.detail;
         if (files && files.length > 0) {
-            const url = URL.createObjectURL(files[0]);
-            editorSettings.update(s => ({ ...s, giftImage: url }));
+            try {
+                const norm = await normalizeImageFileToBlobUrl(files[0], { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
+                const url = norm?.url || URL.createObjectURL(files[0]);
+                editorSettings.update(s => ({ ...s, giftImage: url }));
+            } catch {
+                const url = URL.createObjectURL(files[0]);
+                editorSettings.update(s => ({ ...s, giftImage: url }));
+            }
             isAnimating = false; 
         }
     }
