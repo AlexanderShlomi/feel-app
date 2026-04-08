@@ -228,6 +228,9 @@
         position: absolute;
         left: 50%;
         top: 50%;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
         transform-origin: center center;
         will-change: transform;
         opacity: 0;
@@ -236,8 +239,8 @@
     }
     
     .magnet-image.loaded { opacity: 1; }
-    .magnet-image.is-landscape { height: 100%; width: auto; }
-    .magnet-image.is-portrait { width: 100%; height: auto; }
+    .magnet-image.is-landscape { height: 100%; width: 100%; }
+    .magnet-image.is-portrait { width: 100%; height: 100%; }
     
     @media (hover: hover) {
         .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
