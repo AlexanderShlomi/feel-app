@@ -101,8 +101,24 @@
         // שחזור עריכה קודמת אם קיימת
         if (transform && transform.zoom) {
             scale = transform.zoom;
-            translateX = transform.x;
-            translateY = transform.y;
+            // v2 (preferred): xPct/yPct are normalized to allowed overflow range [-1..1]
+            const currentW = imgDisplayWidth * scale;
+            const currentH = imgDisplayHeight * scale;
+            const maxX = Math.max(0, (currentW - containerWidth) / 2);
+            const maxY = Math.max(0, (currentH - containerHeight) / 2);
+
+            if (typeof transform.xPct === 'number' || typeof transform.yPct === 'number') {
+                const xp = typeof transform.xPct === 'number' ? transform.xPct : 0;
+                const yp = typeof transform.yPct === 'number' ? transform.yPct : 0;
+                const clampedXp = Math.max(-1, Math.min(1, xp));
+                const clampedYp = Math.max(-1, Math.min(1, yp));
+                translateX = clampedXp * maxX;
+                translateY = clampedYp * maxY;
+            } else {
+                // Legacy: pixel translations
+                translateX = transform.x || 0;
+                translateY = transform.y || 0;
+            }
         } else {
             resetPosition();
         }
@@ -213,17 +229,19 @@
     }
 
     function onSave() {
-        // המרה לערכים יחסיים (Percentage) לשמירה בבסיס הנתונים
-        // זה מאפשר לשחזר את העריכה בכל גודל מסך
+        // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1].
+        // מאפשר שחזור 1:1 בכל גודל מסך/גריד.
         const currentW = imgDisplayWidth * scale;
         const currentH = imgDisplayHeight * scale;
+        const maxX = Math.max(0, (currentW - containerWidth) / 2);
+        const maxY = Math.max(0, (currentH - containerHeight) / 2);
         
         dispatch('save', {
             zoom: scale,
             x: translateX,
             y: translateY,
-            xPct: currentW > 0 ? translateX / currentW : 0,
-            yPct: currentH > 0 ? translateY / currentH : 0
+            xPct: maxX > 0 ? Math.max(-1, Math.min(1, translateX / maxX)) : 0,
+            yPct: maxY > 0 ? Math.max(-1, Math.min(1, translateY / maxY)) : 0
         });
     }
 </script>
