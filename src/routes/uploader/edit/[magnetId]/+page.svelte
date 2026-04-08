@@ -106,22 +106,21 @@
             const resp = await fetch(src);
             const blob = await resp.blob();
 
+            // IMPORTANT:
+            // Use <img> decoding (not createImageBitmap) for preview generation because mobile camera photos
+            // often rely on EXIF orientation. <img> rendering is the source-of-truth for the grid too,
+            // while createImageBitmap may ignore EXIF on some browsers even with imageOrientation hints.
+            const objUrl = URL.createObjectURL(blob);
             const img = await (async () => {
-                // Important: iOS/Android camera photos often rely on EXIF orientation.
-                // Some createImageBitmap() implementations ignore it unless explicitly requested,
-                // which would make crop/position look correct in the editor but differ in the grid.
-                if (window.createImageBitmap) {
-                    try {
-                        return await createImageBitmap(blob, { imageOrientation: 'from-image' });
-                    } catch {
-                        // Older browsers / partial implementations.
-                        return await createImageBitmap(blob);
-                    }
-                }
                 const el = new Image();
                 el.decoding = 'async';
-                el.src = URL.createObjectURL(blob);
-                await new Promise((res, rej) => { el.onload = res; el.onerror = rej; });
+                el.src = objUrl;
+                // decode() is more reliable than onload for avoiding flashes, but isn't universal.
+                if (el.decode) {
+                    await el.decode().catch(() => {});
+                } else {
+                    await new Promise((res, rej) => { el.onload = res; el.onerror = rej; });
+                }
                 return el;
             })();
 
@@ -140,7 +139,8 @@
             const ctx = canvas.getContext('2d', { alpha: false });
             ctx.drawImage(img, 0, 0, outW, outH);
 
-            if (img.close) { try { img.close(); } catch {} }
+            // Release the temporary object URL promptly (image is already in memory).
+            try { URL.revokeObjectURL(objUrl); } catch {}
 
             const outBlob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
             if (!outBlob) return null;
