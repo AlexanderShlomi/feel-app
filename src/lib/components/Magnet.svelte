@@ -27,9 +27,14 @@
      */
     function bindFrameMeasure(node, active) {
         let ro;
+        let raf = 0;
         function measure() {
-            const w = Math.round(node.clientWidth);
-            if (w > 0) measuredFrame = w;
+            if (raf) return;
+            raf = requestAnimationFrame(() => {
+                raf = 0;
+                const w = Math.round(node.clientWidth);
+                if (w > 0 && w !== measuredFrame) measuredFrame = w;
+            });
         }
         function start() {
             measure();
@@ -40,6 +45,8 @@
         function stop() {
             ro?.disconnect();
             ro = undefined;
+            if (raf) cancelAnimationFrame(raf);
+            raf = 0;
             measuredFrame = 0;
         }
         if (active) start();

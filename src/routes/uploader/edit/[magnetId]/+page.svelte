@@ -1,15 +1,17 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
+    import { get } from 'svelte/store';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction } from '$lib/stores.js';
+    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction, isMobile } from '$lib/stores.js';
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, translateToPct, clamp } from '$lib/utils/cropMath.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
 
     const FRAME_SIZE = 300; 
 
-    const magnetId = $page.params.magnetId;
+    /** Must be reactive — `const` from `$page` would not update on client navigations. */
+    $: magnetId = $page.params.magnetId;
     let magnet;
     $: magnet = $magnets.find(m => m.id === magnetId);
 
@@ -46,6 +48,8 @@
     let renderSrc = null; // never show a blank frame: swap only after decode
     let lastResolvedSrc = null;
     let preloadToken = 0;
+    /** Set in decode done(); avoids reading `renderSrc` in the preload reactive (extra re-runs). */
+    let committedFirstFrame = false;
 
     let previewSrc = null;
     let previewSrcToRevoke = null;
@@ -65,11 +69,26 @@
     $: resolvedFilterCss = getFilterStyle(currentEffectId);
     $: isLoadingEffect = false;
 
+    let prevMagnetRouteId = null;
+    $: if (magnetId !== prevMagnetRouteId) {
+        prevMagnetRouteId = magnetId;
+        committedFirstFrame = false;
+        renderSrc = null;
+        lastResolvedSrc = null;
+        preloadToken++;
+        previewSrc = null;
+        if (previewSrcToRevoke) {
+            try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
+            previewSrcToRevoke = null;
+        }
+    }
+
     $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
-        // Only show the loading placeholder on the first decode. When we later swap
-        // full-res → preview blob, keep the current frame visible to avoid a shimmer "refresh".
-        if (!renderSrc) isImageDecoded = false;
+        // Only blank the stage before the first committed decode. When swapping to the desktop
+        // preview blob, keep the current frame visible (no shimmer). Use `committedFirstFrame`,
+        // not `renderSrc`, so this reactive does not re-run on every `renderSrc` update.
+        if (!committedFirstFrame) isImageDecoded = false;
         const token = ++preloadToken;
         const img = new Image();
         img.decoding = 'async';
@@ -78,6 +97,7 @@
             if (token !== preloadToken) return;
             renderSrc = resolvedEffectSrc;
             isImageDecoded = true;
+            committedFirstFrame = true;
         };
         // decode() avoids blank frames on iOS when swapping large images.
         if (img.decode) {
@@ -114,13 +134,15 @@
             }
         })();
         
-        // Build a smaller preview bitmap to keep mobile editing smooth and avoid memory spikes.
-        // This does not affect the stored original (used elsewhere).
-        createPreview(displaySrc).then((url) => {
-            if (!url) return;
-            previewSrcToRevoke = url;
-            previewSrc = url;
-        });
+        // Desktop: downscaled blob so pan/zoom stays light. Mobile skips this — a second
+        // fetch+canvas pass duplicated work and stretched time-to-interactive on large photos.
+        if (!get(isMobile)) {
+            createPreview(displaySrc).then((url) => {
+                if (!url) return;
+                previewSrcToRevoke = url;
+                previewSrc = url;
+            });
+        }
     });
 
     onDestroy(() => {
