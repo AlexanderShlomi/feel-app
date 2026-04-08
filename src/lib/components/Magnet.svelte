@@ -21,6 +21,8 @@
     let translateX = 0;
     let translateY = 0;
     let zoom = 1;
+    let baseW = 0;
+    let baseH = 0;
     
     $: hasTransform = transform && (
         (typeof transform.xPct === 'number' && transform.xPct !== 0) ||
@@ -91,12 +93,26 @@
         translateX = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
         translateY = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
     }
+
+    function recomputeCoverBaseSize() {
+        if (isSplitPart) return;
+        if (!imgElement || !isImageLoaded) return;
+        const imgW = imgElement.naturalWidth || 0;
+        const imgH = imgElement.naturalHeight || 0;
+        if (!imgW || !imgH || !size) return;
+
+        const minScale = computeCoverMinScale(imgW, imgH, size);
+        baseW = Math.max(1, Math.round(imgW * minScale));
+        baseH = Math.max(1, Math.round(imgH * minScale));
+    }
     
     $: cssVars = `
         --magnet-size: ${size}px;
         --zoom: ${(!isSplitPart && transform) ? (transform.zoom || 1) : 1};
         --tx: ${(!isSplitPart && transform) ? translateX : 0}px;
         --ty: ${(!isSplitPart && transform) ? translateY : 0}px;
+        --base-w: ${(!isSplitPart && baseW) ? baseW : size}px;
+        --base-h: ${(!isSplitPart && baseH) ? baseH : size}px;
         --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
         --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
         --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
@@ -108,11 +124,13 @@
         if (!imgElement) return;
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
+        recomputeCoverBaseSize();
         recomputeTransform();
     }
 
     // Recompute when transform/size changes after image load.
     $: if (!isSplitPart && isImageLoaded && size && transform) {
+        recomputeCoverBaseSize();
         recomputeTransform();
     }
     
@@ -228,9 +246,8 @@
         position: absolute;
         left: 50%;
         top: 50%;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
+        width: var(--base-w);
+        height: var(--base-h);
         transform-origin: center center;
         will-change: transform;
         opacity: 0;
@@ -239,8 +256,8 @@
     }
     
     .magnet-image.loaded { opacity: 1; }
-    .magnet-image.is-landscape { height: 100%; width: 100%; }
-    .magnet-image.is-portrait { width: 100%; height: 100%; }
+    .magnet-image.is-landscape { width: var(--base-w); height: var(--base-h); }
+    .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); }
     
     @media (hover: hover) {
         .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
