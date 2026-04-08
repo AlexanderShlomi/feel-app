@@ -3,6 +3,7 @@
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
     import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction } from '$lib/stores.js';
+    import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, translateToPct, clamp } from '$lib/utils/cropMath.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
 
@@ -183,10 +184,7 @@
         const naturalW = baseNaturalW || bgImageEl.naturalWidth;
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
-        // חישוב יחס זום כדי לכסות את המסגרת
-        const scaleX = FRAME_SIZE / naturalW;
-        const scaleY = FRAME_SIZE / naturalH;
-        const nextMinScale = Math.max(scaleX, scaleY);
+        const { baseW, baseH, minScale: nextMinScale } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
 
         // חשוב: החלפת src בעת שינוי אפקט גורמת ל-onload מחדש.
         // אסור לאתחל מחדש transform — זה נראה כמו "קופץ חזרה לגודל המקורי".
@@ -198,16 +196,12 @@
                 zoomMultiplier = magnet.transform.zoom;
                 bgScale = zoomMultiplier * minScaleLimit;
 
-                const currentW = naturalW * bgScale;
-                const currentH = naturalH * bgScale;
-                const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
-                const maxY = Math.max(0, (currentH - FRAME_SIZE) / 2);
+                const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
 
                 if (typeof magnet.transform.xPct === 'number' || typeof magnet.transform.yPct === 'number') {
-                    const xp = typeof magnet.transform.xPct === 'number' ? magnet.transform.xPct : 0;
-                    const yp = typeof magnet.transform.yPct === 'number' ? magnet.transform.yPct : 0;
-                    bgTranslateX = Math.max(-1, Math.min(1, xp)) * maxX;
-                    bgTranslateY = Math.max(-1, Math.min(1, yp)) * maxY;
+                    const t = pctToTranslate(magnet.transform.xPct, magnet.transform.yPct, maxX, maxY);
+                    bgTranslateX = t.x;
+                    bgTranslateY = t.y;
                 } else {
                     // Legacy: saved relative to FRAME_SIZE=300
                     bgTranslateX = (magnet.transform.x || 0) * FRAME_SIZE;
@@ -246,7 +240,7 @@
         
         // הנוסחה: (גובה התמונה בפועל - גובה המסגרת) / 2
         // זה יתן את ה-Offset החיובי הנדרש כדי שראש התמונה יהיה ב-0.
-        bgTranslateY = (currentH - FRAME_SIZE) / 2;
+        bgTranslateY = Math.max(0, (currentH - FRAME_SIZE) / 2);
     }
 
     function clampPosition() {
@@ -255,12 +249,8 @@
         const naturalW = baseNaturalW || bgImageEl.naturalWidth;
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
-        const currentW = naturalW * bgScale;
-        const currentH = naturalH * bgScale;
-
-        // גבולות גזרה: לא מאפשרים לראות רקע לבן בתוך המסגרת
-        const maxX = (currentW - FRAME_SIZE) / 2;
-        const maxY = (currentH - FRAME_SIZE) / 2;
+        const { baseW, baseH } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
+        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
 
         if (bgTranslateX > maxX) bgTranslateX = maxX;
         if (bgTranslateX < -maxX) bgTranslateX = -maxX;
@@ -364,9 +354,8 @@
         // חישוב מחדש של המינימום
         const naturalW = baseNaturalW || bgImageEl.naturalWidth;
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
-        const scaleX = FRAME_SIZE / naturalW;
-        const scaleY = FRAME_SIZE / naturalH;
-        minScaleLimit = Math.max(scaleX, scaleY);
+        const { minScale } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
+        minScaleLimit = minScale;
 
         // שימוש בלוגיקה המרכזית
         applyDefaultPositioning(naturalW, naturalH);
@@ -380,18 +369,14 @@
         // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
         const naturalW = baseNaturalW || (bgImageEl?.naturalWidth || 0);
         const naturalH = baseNaturalH || (bgImageEl?.naturalHeight || 0);
-        const currentW = naturalW * bgScale;
-        const currentH = naturalH * bgScale;
-        const maxX = Math.max(0, (currentW - FRAME_SIZE) / 2);
-        const maxY = Math.max(0, (currentH - FRAME_SIZE) / 2);
-
-        const xPct = maxX > 0 ? (bgTranslateX / maxX) : 0;
-        const yPct = maxY > 0 ? (bgTranslateY / maxY) : 0;
+        const { baseW, baseH } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
+        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
+        const { xPct, yPct } = translateToPct(bgTranslateX, bgTranslateY, maxX, maxY);
 
         updateMagnetTransform(magnetId, {
             zoom: zoomMultiplier,
-            xPct: Math.max(-1, Math.min(1, xPct)),
-            yPct: Math.max(-1, Math.min(1, yPct))
+            xPct: clamp(xPct, -1, 1),
+            yPct: clamp(yPct, -1, 1)
         });
         goto('/uploader', { noScroll: true });
     }
