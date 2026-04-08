@@ -67,7 +67,9 @@
 
     $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
-        isImageDecoded = false;
+        // Only show the loading placeholder on the first decode. When we later swap
+        // full-res → preview blob, keep the current frame visible to avoid a shimmer "refresh".
+        if (!renderSrc) isImageDecoded = false;
         const token = ++preloadToken;
         const img = new Image();
         img.decoding = 'async';
