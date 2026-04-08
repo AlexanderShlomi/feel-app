@@ -55,6 +55,10 @@
     let baseNaturalH = 0;
     let baseGeomToken = 0;
 
+    // Cover base size (the same geometry the grid uses).
+    let coverBaseW = 0;
+    let coverBaseH = 0;
+
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src;
     $: resolvedEffectSrc = previewSrc || displaySrc;
@@ -185,6 +189,8 @@
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
         const { baseW, baseH, minScale: nextMinScale } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
+        coverBaseW = baseW;
+        coverBaseH = baseH;
 
         // חשוב: החלפת src בעת שינוי אפקט גורמת ל-onload מחדש.
         // אסור לאתחל מחדש transform — זה נראה כמו "קופץ חזרה לגודל המקורי".
@@ -194,7 +200,7 @@
             if (magnet.transform && magnet.transform.zoom) {
                 // שחזור מלא של מצב עריכה קיים (תמיכה ב-v2 + תאימות לאחור)
                 zoomMultiplier = magnet.transform.zoom;
-                bgScale = zoomMultiplier * minScaleLimit;
+                bgScale = zoomMultiplier;
 
                 const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
 
@@ -210,13 +216,14 @@
             } else {
                 // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
                 applyDefaultPositioning(naturalW, naturalH);
-                zoomMultiplier = minScaleLimit > 0 ? (bgScale / minScaleLimit) : 1;
+                zoomMultiplier = 1;
+                bgScale = 1;
             }
 
             hasInitializedImage = true;
         } else {
             minScaleLimit = nextMinScale;
-            bgScale = zoomMultiplier * minScaleLimit;
+            bgScale = zoomMultiplier;
         }
         
         clampPosition();
@@ -224,23 +231,15 @@
 
     // פונקציה מרכזית לחישוב מיקום ה-Default (Top Align)
     function applyDefaultPositioning(w, h) {
-        // איפוס סקייל למינימום שמכסה את המסגרת
-        bgScale = minScaleLimit;
-        
-        // מכיוון שנקודת הייחוס (Transform Origin) היא המרכז (Center Center):
-        // X=0 ממקם את מרכז התמונה במרכז המסגרת (וזה מה שאנחנו רוצים אופקית ב-Landscape וגם ב-Portrait זה בסדר כי זה ממלא רוחב).
-        bgTranslateX = 0; 
+        // Default: cover + top-align.
+        // Keep math identical to grid by working in cover-base geometry.
+        const { baseW, baseH } = computeCoverBaseSize(w, h, FRAME_SIZE);
+        coverBaseW = baseW;
+        coverBaseH = baseH;
 
-        // Y=0 ממקם את מרכז התמונה במרכז המסגרת.
-        // אבל הדרישה היא Top Align (הצמדה למעלה).
-        // כדי להזיז את התמונה כך שהחלק העליון שלה ייגע בחלק העליון של המסגרת,
-        // עלינו להזיז אותה "למטה" (חיובי) בחצי מההפרש שבין הגובה הנוכחי למסגרת.
-        
-        const currentH = h * bgScale;
-        
-        // הנוסחה: (גובה התמונה בפועל - גובה המסגרת) / 2
-        // זה יתן את ה-Offset החיובי הנדרש כדי שראש התמונה יהיה ב-0.
-        bgTranslateY = Math.max(0, (currentH - FRAME_SIZE) / 2);
+        bgTranslateX = 0;
+        const { maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
+        bgTranslateY = maxY;
     }
 
     function clampPosition() {
@@ -250,6 +249,8 @@
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
 
         const { baseW, baseH } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
+        coverBaseW = baseW;
+        coverBaseH = baseH;
         const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME_SIZE, zoomMultiplier);
 
         if (bgTranslateX > maxX) bgTranslateX = maxX;
@@ -336,7 +337,7 @@
                 zoomRafId = 0;
                 if (pendingZoomMultiplier === null) return;
                 zoomMultiplier = pendingZoomMultiplier;
-                bgScale = zoomMultiplier * minScaleLimit;
+                bgScale = zoomMultiplier;
                 pendingZoomMultiplier = null;
                 clampPosition();
             });
@@ -356,6 +357,9 @@
         const naturalH = baseNaturalH || bgImageEl.naturalHeight;
         const { minScale } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
         minScaleLimit = minScale;
+
+        zoomMultiplier = 1;
+        bgScale = 1;
 
         // שימוש בלוגיקה המרכזית
         applyDefaultPositioning(naturalW, naturalH);
@@ -410,13 +414,13 @@
             <div class="image-layer">
                 <div
                     class="movable-content"
-                    style="transform: translate({bgTranslateX}px, {bgTranslateY}px) scale({bgScale});"
+                    style="transform: translate(-50%, -50%) translate({bgTranslateX}px, {bgTranslateY}px) scale({zoomMultiplier});"
                 >
                     <img
                         src={renderSrc || resolvedEffectSrc}
                         bind:this={bgImageEl}
                         on:load={(e) => { isImageDecoded = true; onBgImageLoad(e); }}
-                        style="{resolvedFilterCss}"
+                        style="{resolvedFilterCss}; width: {coverBaseW ? `${coverBaseW}px` : 'auto'}; height: {coverBaseH ? `${coverBaseH}px` : 'auto'};"
                         decoding="async"
                         fetchpriority="high"
                         alt="editing source"
@@ -556,9 +560,12 @@
     }
 
     .movable-content {
+        position: absolute;
+        left: 50%;
+        top: 50%;
         transform-origin: center center;
         will-change: transform;
-        display: flex; justify-content: center; align-items: center;
+        display: block;
     }
 
     .movable-content img {
