@@ -1,5 +1,6 @@
 <script>
     import { createEventDispatcher } from 'svelte';
+    import { browser } from '$app/environment';
     import { getFilterStyle, isMobile } from '$lib/stores.js'; 
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, clamp } from '$lib/utils/cropMath.js';
     
@@ -16,6 +17,42 @@
     let imgElement;
     let isLandscape = true; 
     let isImageLoaded = false;
+
+    /** Actual CSS width of the tile (mobile grid uses 100% of cell, often ≠ store `size`). */
+    let measuredFrame = 0;
+
+    /**
+     * @param {HTMLElement} node
+     * @param {boolean} active
+     */
+    function bindFrameMeasure(node, active) {
+        let ro;
+        function measure() {
+            const w = Math.round(node.clientWidth);
+            if (w > 0) measuredFrame = w;
+        }
+        function start() {
+            measure();
+            if (!browser || typeof ResizeObserver === 'undefined') return;
+            ro = new ResizeObserver(measure);
+            ro.observe(node);
+        }
+        function stop() {
+            ro?.disconnect();
+            ro = undefined;
+            measuredFrame = 0;
+        }
+        if (active) start();
+        return {
+            update(next) {
+                stop();
+                if (next) start();
+            },
+            destroy() {
+                stop();
+            }
+        };
+    }
 
     // Legacy editor saved translation relative to FRAME_SIZE=300.
     const LEGACY_FRAME_SIZE = 300;
@@ -34,6 +71,8 @@
     );
     $: filterCss = getFilterStyle(activeEffectId);
 
+    $: frameSize = !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
+
     function recomputeTransform() {
         // Only for non-mosaic magnets, and only once we know image dimensions.
         if (isSplitPart) return;
@@ -48,12 +87,12 @@
 
         const imgW = imgElement.naturalWidth || 0;
         const imgH = imgElement.naturalHeight || 0;
-        if (!imgW || !imgH || !size) {
+        if (!imgW || !imgH || !frameSize) {
             translateX = 0;
             translateY = 0;
             return;
         }
-        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, size, z);
+        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, frameSize, z);
 
         // v2 (preferred): pct of allowed overflow range [-1..1]
         if (typeof transform?.xPct === 'number' || typeof transform?.yPct === 'number') {
@@ -75,19 +114,19 @@
         if (!imgElement || !isImageLoaded) return;
         const imgW = imgElement.naturalWidth || 0;
         const imgH = imgElement.naturalHeight || 0;
-        if (!imgW || !imgH || !size) return;
-        const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, size);
+        if (!imgW || !imgH || !frameSize) return;
+        const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, frameSize);
         baseW = bw;
         baseH = bh;
     }
     
     $: cssVars = `
-        --magnet-size: ${size}px;
+        --magnet-size: ${frameSize}px;
         --zoom: ${(!isSplitPart && transform) ? (transform.zoom || 1) : 1};
         --tx: ${(!isSplitPart && transform) ? translateX : 0}px;
         --ty: ${(!isSplitPart && transform) ? translateY : 0}px;
-        --base-w: ${(!isSplitPart && baseW) ? baseW : size}px;
-        --base-h: ${(!isSplitPart && baseH) ? baseH : size}px;
+        --base-w: ${(!isSplitPart && baseW) ? baseW : frameSize}px;
+        --base-h: ${(!isSplitPart && baseH) ? baseH : frameSize}px;
         --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
         --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
         --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
@@ -103,8 +142,8 @@
         recomputeTransform();
     }
 
-    // Recompute when transform/size changes after image load.
-    $: if (!isSplitPart && isImageLoaded && size && transform) {
+    // Recompute when transform / frame size changes after image load.
+    $: if (!isSplitPart && isImageLoaded && frameSize && transform) {
         recomputeCoverBaseSize();
         recomputeTransform();
     }
@@ -148,6 +187,7 @@
     class:split-part={isSplitPart} 
     class:is-hidden={hidden}
     class:desktop-mode={!$isMobile}
+    use:bindFrameMeasure={!isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
     role={isSplitPart ? undefined : 'button'}
