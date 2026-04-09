@@ -526,6 +526,30 @@ export function removeCartItem(itemId) {
 }
 
 export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
+    // Ensure we don't keep any scroll/viewport gating state between sessions.
+    try { uploaderScrollActive.set(false); } catch {}
+
+    // Clear queued normalize swaps (and revoke any blob URLs they reference).
+    try {
+        if (flushQueuedNormalizeSwapsTimer) clearTimeout(flushQueuedNormalizeSwapsTimer);
+        flushQueuedNormalizeSwapsTimer = null;
+    } catch {}
+    try {
+        if (Array.isArray(queuedNormalizeSwaps) && queuedNormalizeSwaps.length) {
+            for (const s of queuedNormalizeSwaps) {
+                try { if (typeof s?.nextUrl === 'string' && s.nextUrl.startsWith('blob:')) URL.revokeObjectURL(s.nextUrl); } catch {}
+                try { if (typeof s?.rawUrl === 'string' && s.rawUrl.startsWith('blob:')) URL.revokeObjectURL(s.rawUrl); } catch {}
+            }
+        }
+        queuedNormalizeSwaps = [];
+    } catch {}
+
+    // Reset interaction depth gate to avoid suppressing autosaves after a reset.
+    try { interactionDepth.set(0); } catch {}
+
+    // Clear per-uploader stored scroll position (avoid restoring scroll from previous session).
+    try { sessionStorage.removeItem('feel_uploader_scroll_v1'); } catch {}
+
     const currentList = get(magnets);
     if (currentList.length > 0) currentList.forEach(m => {
         if (m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc);
@@ -540,6 +564,7 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
     editingItemId.set(null);
     const s = get(editorSettings);
     if (s.splitImageSrc?.startsWith('blob:')) URL.revokeObjectURL(s.splitImageSrc);
+    if (s.giftImage?.startsWith('blob:')) URL.revokeObjectURL(s.giftImage);
     if (s.splitImageCache) {
         Object.values(s.splitImageCache).forEach(v => {
             if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);

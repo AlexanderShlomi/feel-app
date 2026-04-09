@@ -1,34 +1,74 @@
-# Project Rules for Magnet/Mosaic Svelte Project
+# FEEL — Master .cursorrules (Sprint Stability Lock)
 
-## 1. Context & Architecture
-- **Framework:** Svelte 4.
-- **State Management:** Centralized in `src/lib/stores.js`.
-- **Styling:** CSS-in-JS/Tailwind (Follow patterns in `app.css`).
-- **Core Logic:** A photo-to-magnet/mosaic ordering system.
-- **Persistence:** Uses IndexedDB (`src/lib/utils/idb.js`) for workspace saving.
+This file is the **master "constitution"** for FEEL. Any change must preserve the non‑negotiable principles in
+`docs/app-functionality-he.md` and the stabilization sprint checklist.
 
-## 2. State & Reactivity Rules (Critical)
-- **Store Access:** Always use the `$` prefix to access and subscribe to stores in `.svelte` files (e.g., `$magnets`, `$editorSettings`).
-- **Reactive Declarations:** Use `$: { ... }` blocks for complex derived logic that depends on multiple stores (like price calculations in `UpsellWidget`).
-- **Business Logic:** Maintain constant values like `PACKAGES`, `EXTRA_MAGNET_PRICE`, and `PRODUCT_TYPES` inside `src/lib/stores.js` for global consistency.
+---
 
-## 3. Component Standards
-- **Organization:** - UI components: `src/lib/components/`
-  - Logic/Utilities: `src/lib/utils/`
-  - Routes: SvelteKit structure in `src/routes/`
-- **Language:** UI text is primarily in Hebrew (RTL). Ensure any new UI elements support RTL and use the correct CSS logical properties.
-- **Transitions:** Use Svelte's built-in transitions (`fly`, `fade`, `scale`) for UI panels and widgets.
+## 0) Non‑negotiable Laws (MUST)
 
-## 4. Integration & Features
-- **Database (Supabase/Firebase):** Future integrations should reside in `src/lib/services/`.
-- **Mosaic Logic:** Respect the `PRODUCT_TYPES.MOSAIC` vs `PRODUCT_TYPES.COLLECTION` logic when handling counts and pricing.
-- **Error Handling:** Async operations (like `saveWorkspaceToCart`) must have a loading state (`isSaving`) and handle success/error feedback.
+### Law A — Accuracy (Editors → Everywhere)
+- Any change in the editors (**Magnets** / **Mosaic**) must reflect with **100% visual accuracy** in:
+  - **Thumbnails**
+  - **Cart**
+  - **Checkout**
+- Same crop/pan/zoom/effect must reproduce the same frame across screens and resolutions.
+- If accuracy can't be proven, the change must not ship.
 
-## 5. Coding Style
-- **TypeScript:** Use strict types for all utility functions.
-- **Clean Code:** Prefer descriptive variable names for UI states (e.g., `isMinReached`, `progressPercent`).
-- **Performance:** For heavy tasks (image processing), refer to `static/effects.worker.js`.
+### Law B — Mobile‑First UX (Baseline)
+- Every new feature is designed and verified **on mobile first**.
+- **No horizontal scrolling** anywhere. No unnecessary nested vertical scroll areas.
+- Touch targets must be correct (comfortable sizes/spacing), actions must be reachable without hunting/extra scrolling.
+- Layout must be **pixel‑perfect** (no accidental overflow causing scrollbars).
 
-## 6. Development Workflow
-- **Context Awareness:** Before suggesting changes, always check `src/lib/stores.js` to see if a store already exists for that data.
-- **Holistic Bug Fixing:** When a bug is reported in a component, check if the root cause is a missing reactive update (`$:`) or an unsynced store.
+### Law C — Performance (No Base64 in JSON + Worker for heavy work)
+- **Absolute prohibition:** do not send **Base64 inside JSON** to the backend/RPCs.
+  - Order creation payloads must contain **metadata only**; images go to **Storage**.
+- Heavy image work must run off the main thread when possible:
+  - Prefer **Web Worker** (`static/effects.worker.js`) for expensive pixel operations.
+  - Keep main thread focused on transforms (CSS) and responsive interaction/scroll.
+
+### Law D — Security & Authority (Pricing/Payment)
+- **Prices and payment confirmation are server‑authoritative only.**
+- Payment + pricing logic must be executed only through the **secured Supabase RPCs** created for this project.
+- Client/UI may show estimates, but must never become the authority for totals or paid status.
+
+---
+
+## 1) Context & Architecture
+- **Framework**: Svelte 5 + SvelteKit + Vite
+- **State management**: centralized in `src/lib/stores.js`
+- **Persistence**:
+  - Workspace draft: IndexedDB via `src/lib/utils/idb.js` + `src/lib/utils/storage.js`
+  - Cart: IndexedDB key `feel_cart_db_v1`
+- **Core product**: photo‑to‑magnet / photo‑to‑mosaic ordering flow
+
+## 2) State & Reactivity Rules (Critical)
+- In `.svelte` files, access stores with `$store` subscriptions (e.g. `$magnets`, `$editorSettings`).
+- For derived values depending on multiple stores, prefer `$:` reactive blocks with clear dependencies.
+- Keep business constants centralized in `src/lib/stores.js` (`PACKAGES`, `EXTRA_MAGNET_PRICE`, `PRODUCT_TYPES`, etc.).
+
+## 3) UX/UI Standards (Pixel‑Perfect)
+- RTL first. Use CSS logical properties when possible.
+- Avoid layout shifts and flicker (especially on mobile Safari).
+- Navigation/header/menu are **fixed**; core actions must remain reachable without scrolling.
+- Prevent accidental scrollbars:
+  - Prefer `width: 100%` over `100vw` when applicable
+  - Explicitly guard `overflow-x: hidden` where needed
+
+## 4) Data / Payload Standards
+- **Order item configuration** sent to RPCs must be **small and metadata‑only**:
+  - Never include Base64 images or large blobs.
+  - Use Storage URLs for thumbnails/assets.
+- Validate inputs at boundaries:
+  - Client: Zod where available
+  - Server/Edge Functions: strict validation before calling external services (e.g., Resend)
+
+## 5) Performance Checklist (Always)
+- Keep scrolling smooth; do not schedule heavy work during active touch/scroll.
+- Debounce + run heavy persistence during idle windows.
+- Revoke `blob:` URLs aggressively on replacements/resets to prevent leaks.
+
+## 6) Development Workflow
+- Before adding new code, search for existing store/utilities already solving the problem.
+- Any change touching editor/crop/thumbnail/cart/checkout must include at least one automated baseline check (Playwright smoke).
