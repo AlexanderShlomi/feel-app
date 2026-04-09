@@ -64,19 +64,36 @@
 <style>
     /* שכבת רקע כהה ומטושטשת - שומרת על עומק */
     .privacy-overlay {
-        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(13, 13, 13, 0.8); backdrop-filter: blur(20px);
-        z-index: 9000; display: flex; justify-content: center; align-items: center; padding: 20px;
+        position: fixed;
+        inset: 0;
+        width: auto;
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+        background: rgba(13, 13, 13, 0.8);
+        backdrop-filter: blur(20px);
+        z-index: 9000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+        box-sizing: border-box;
     }
 
     /* תיבת המודאל - צבע חול (Sand) מהפלטה */
     .privacy-modal {
-        background: #F2F0EC; /* Sand - בהיר, חם ויוקרתי */
-        color: #475160; /* Slate - כחול-אפור כהה לטקסט קריא מאוד */
-        width: 100%; max-width: 800px; max-height: 85vh;
-        border-radius: 30px; 
-        display: flex; flex-direction: column; overflow: hidden;
-        box-shadow: 0 40px 100px rgba(0,0,0,0.3);
+        background: #f2f0ec;
+        color: #475160;
+        width: 100%;
+        max-width: 800px;
+        max-height: 85vh;
+        max-height: 85dvh;
+        border-radius: 30px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+        box-shadow: 0 40px 100px rgba(0, 0, 0, 0.3);
         position: relative;
     }
 
@@ -105,7 +122,13 @@
     .close-x-btn:hover { transform: scale(1.1); color: #1E2A38; }
 
     /* גוף המדיניות — :global כי התוכן מגיע מ-{@html} (DB) */
-    .privacy-body { padding: 40px 45px; overflow-y: auto; flex: 1; text-align: right; }
+    .privacy-body {
+        padding: 40px 45px;
+        overflow-y: auto;
+        flex: 1;
+        min-height: 0;
+        text-align: right;
+    }
 
     .privacy-body :global(section) { margin-bottom: 35px; }
     .privacy-body :global(h3) {
@@ -142,7 +165,14 @@
     .privacy-body :global(a:hover) { border-bottom-color: #1e2a38; }
 
     /* פוטר */
-    .privacy-footer { padding: 30px; background: #EAE5DD; text-align: center; border-top: 1px solid rgba(198, 178, 154, 0.3); }
+    .privacy-footer {
+        flex-shrink: 0;
+        padding: 30px;
+        padding-bottom: max(30px, calc(30px + env(safe-area-inset-bottom, 0px)));
+        background: #eae5dd;
+        text-align: center;
+        border-top: 1px solid rgba(198, 178, 154, 0.3);
+    }
 
     /* כפתור אישור - נגיעת זהב/Dune (יוקרתי) */
     .accept-btn {
@@ -154,11 +184,26 @@
 
     .accept-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(198, 178, 154, 0.5); background: #846349; }
 
-    /* התאמה למובייל */
     @media (max-width: 768px) {
-        .privacy-modal { height: 100vh; max-height: 100vh; border-radius: 0; }
-        .privacy-body { padding: 30px 25px; }
-        h2 { font-size: 22px; }
-        .close-x-btn { top: 15px; left: 15px; }
+        .privacy-overlay {
+            padding: 0;
+            align-items: stretch;
+        }
+        .privacy-modal {
+            height: 100vh;
+            height: 100dvh;
+            max-height: 100dvh;
+            border-radius: 0;
+        }
+        .privacy-body {
+            padding: 30px 25px;
+        }
+        h2 {
+            font-size: 22px;
+        }
+        .close-x-btn {
+            top: max(15px, env(safe-area-inset-top, 0px));
+            left: max(15px, env(safe-area-inset-left, 0px));
+        }
     }
 </style>
