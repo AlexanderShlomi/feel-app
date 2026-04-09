@@ -78,7 +78,9 @@
     );
     $: filterCss = getFilterStyle(activeEffectId);
 
-    $: frameSize = !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
+    // Measure only on mobile where the grid CSS overrides the tile width (100% of cell).
+    // On desktop, using the store `size` avoids a ResizeObserver per tile and keeps uploads snappy.
+    $: frameSize = $isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
 
     function recomputeTransform() {
         // Only for non-mosaic magnets, and only once we know image dimensions.
@@ -194,7 +196,7 @@
     class:split-part={isSplitPart} 
     class:is-hidden={hidden}
     class:desktop-mode={!$isMobile}
-    use:bindFrameMeasure={!isSplitPart}
+    use:bindFrameMeasure={$isMobile && !isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
     role={isSplitPart ? undefined : 'button'}
