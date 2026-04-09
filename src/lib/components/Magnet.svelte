@@ -17,6 +17,55 @@
     let imgElement;
     let isLandscape = true; 
     let isImageLoaded = false;
+    let hasLoadedOnce = false;
+
+    // Keep previous image visible until the next src is decoded, to avoid
+    // transient blanks on iOS Safari when blob URLs are reassigned mid-scroll.
+    let displaySrc = src;
+    let srcSwapToken = 0;
+
+    function decodeImageUrl(url) {
+        return new Promise((resolve) => {
+            if (!browser || !url) return resolve(false);
+            try {
+                const pre = new Image();
+                pre.decoding = 'async';
+                pre.onload = async () => {
+                    try {
+                        if (typeof pre.decode === 'function') await pre.decode();
+                    } catch {}
+                    resolve(true);
+                };
+                pre.onerror = () => resolve(false);
+                pre.src = url;
+            } catch {
+                resolve(false);
+            }
+        });
+    }
+
+    async function swapDisplaySrcWhenReady(next) {
+        const token = ++srcSwapToken;
+        if (!next) {
+            displaySrc = next;
+            return;
+        }
+        // First paint: no need to gate; just show it.
+        if (!hasLoadedOnce || !displaySrc) {
+            displaySrc = next;
+            return;
+        }
+        if (next === displaySrc) return;
+
+        const ok = await decodeImageUrl(next);
+        if (token !== srcSwapToken) return;
+        if (!ok) {
+            // Fall back to immediate swap; better than getting stuck.
+            displaySrc = next;
+            return;
+        }
+        displaySrc = next;
+    }
 
     /** Actual CSS width of the tile (mobile grid uses 100% of cell, often ≠ store `size`). */
     let measuredFrame = 0;
@@ -77,6 +126,11 @@
         (transform.zoom !== 1)
     );
     $: filterCss = getFilterStyle(activeEffectId);
+
+    // Atomic src swap: only change the <img> src once the next image is decoded.
+    $: if (!isSplitPart && browser && src !== displaySrc) {
+        swapDisplaySrcWhenReady(src);
+    }
 
     // Measure only on mobile where the grid CSS overrides the tile width (100% of cell).
     // On desktop, using the store `size` avoids a ResizeObserver per tile and keeps uploads snappy.
@@ -147,6 +201,7 @@
         if (!imgElement) return;
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
+        hasLoadedOnce = true;
         recomputeCoverBaseSize();
         recomputeTransform();
     }
@@ -186,7 +241,7 @@
     }
     
     function handleImageError(e) { 
-        if (e.target.src !== src) e.target.src = src; 
+        if (e.target.src !== displaySrc) e.target.src = displaySrc; 
         else e.target.style.opacity = 0;
     }
 </script>
@@ -212,7 +267,7 @@
             <div class="split-image" style="{filterCss}"></div>
         {:else}
             <img 
-                src={src} 
+                src={displaySrc} 
                 bind:this={imgElement}
                 on:load={handleImageLoad}
                 alt="" 
@@ -223,7 +278,7 @@
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}
-                class:loaded={isImageLoaded}
+                class:loaded={hasLoadedOnce}
                 style="{filterCss}" 
                 on:error={handleImageError} 
             />
@@ -276,7 +331,7 @@
         transform-origin: center center;
         will-change: transform;
         opacity: 0;
-        transition: opacity 0.2s;
+        transition: opacity 0.18s;
         transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
     }
     

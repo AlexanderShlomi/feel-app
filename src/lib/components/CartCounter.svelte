@@ -2,7 +2,8 @@
 <script>
     //src\lib\components\CartCounter.svelte
     
-    import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES } from '$lib/stores.js';
+    import { onDestroy, onMount } from 'svelte';
+    import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES, isMobile } from '$lib/stores.js';
     import { goto } from '$app/navigation';
     import { fly, fade, slide } from 'svelte/transition';
     import {
@@ -36,6 +37,68 @@
     $: total = $cartTotal;
 
     let isOpen = false; 
+    let prefersReducedMotion = false;
+
+    // iOS Safari: prevent viewport/scrollbar churn while the drawer is open.
+    let prevBodyOverflow = '';
+    let prevHtmlOverflow = '';
+    let prevBodyOverscroll = '';
+    let scrollLocked = false;
+
+    function lockBodyScroll() {
+        if (typeof document === 'undefined') return;
+        if (scrollLocked) return;
+        const body = document.body;
+        const html = document.documentElement;
+        if (!body || !html) return;
+
+        prevBodyOverflow = body.style.overflow;
+        prevHtmlOverflow = html.style.overflow;
+        // @ts-ignore - not in older TS lib dom typings
+        prevBodyOverscroll = body.style.overscrollBehavior || '';
+
+        body.style.overflow = 'hidden';
+        html.style.overflow = 'hidden';
+        // @ts-ignore
+        body.style.overscrollBehavior = 'contain';
+        scrollLocked = true;
+    }
+
+    function unlockBodyScroll() {
+        if (typeof document === 'undefined') return;
+        if (!scrollLocked) return;
+        const body = document.body;
+        const html = document.documentElement;
+        if (body) {
+            body.style.overflow = prevBodyOverflow || '';
+            // @ts-ignore
+            body.style.overscrollBehavior = prevBodyOverscroll || '';
+        }
+        if (html) {
+            html.style.overflow = prevHtmlOverflow || '';
+        }
+        scrollLocked = false;
+    }
+
+    $: if (isOpen) lockBodyScroll();
+    $: if (!isOpen) unlockBodyScroll();
+
+    onMount(() => {
+        try {
+            const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+            if (mq) {
+                prefersReducedMotion = !!mq.matches;
+                const onChange = (e) => (prefersReducedMotion = !!e.matches);
+                mq.addEventListener?.('change', onChange);
+                return () => mq.removeEventListener?.('change', onChange);
+            }
+        } catch {}
+        return undefined;
+    });
+
+    onDestroy(() => {
+        unlockBodyScroll();
+    });
 
     // Portal drawer/backdrop to <body> to avoid stacking-context issues (transforms)
     // and guarantee the cart sits above fixed docks on all pages.
@@ -144,11 +207,15 @@
         aria-label="סגור סל"
         on:click={closeCart}
         on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') closeCart(); }}
-        transition:fade={{ duration: 200 }}
+        transition:fade={{ duration: ($isMobile || prefersReducedMotion) ? 120 : 200 }}
         use:portal
     ></div>
 
-    <div class="cart-drawer" transition:fly={{ x: -350, duration: 300, opacity: 1 }} use:portal>
+    <div
+        class="cart-drawer"
+        transition:fly={{ x: ($isMobile || prefersReducedMotion) ? -260 : -350, duration: ($isMobile || prefersReducedMotion) ? 180 : 300, opacity: 1 }}
+        use:portal
+    >
         
         <div class="drawer-header">
             <h2>הסל שלי <span class="header-count">({count})</span></h2>
@@ -168,7 +235,7 @@
                     {#each items as item (item.id)}
                         
                         {#if item.type === PRODUCT_TYPES.GIFT}
-                            <div class="cart-item gift-item" transition:slide>
+                            <div class="cart-item gift-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image gift-border">
                                     <img src={item.previewImage} alt="Gift" loading="lazy" decoding="async" />
                                     <div class="gift-icon-overlay">🎁</div>
@@ -191,7 +258,7 @@
                             </div>
 
                         {:else if item.type === PRODUCT_TYPES.MOSAIC}
-                            <div class="cart-item mosaic-item" transition:slide>
+                            <div class="cart-item mosaic-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image mosaic-border">
                                     <img src={item.previewImage} alt="Mosaic" loading="lazy" decoding="async" />
                                     <div class="type-badge">פסיפס</div>
@@ -214,7 +281,7 @@
                             </div>
 
                         {:else}
-                            <div class="cart-item" transition:slide>
+                            <div class="cart-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image">
                                     {#if item.previewImage}
                                         <img src={item.previewImage} alt="Preview" loading="lazy" decoding="async" />
