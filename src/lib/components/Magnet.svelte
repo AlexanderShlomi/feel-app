@@ -217,9 +217,9 @@
                 on:load={handleImageLoad}
                 alt="" 
                 draggable="false"
-                loading={$isMobile ? 'eager' : 'lazy'}
+                loading="lazy"
                 decoding="async"
-                fetchpriority={$isMobile ? 'low' : undefined}
+                fetchpriority="auto"
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}

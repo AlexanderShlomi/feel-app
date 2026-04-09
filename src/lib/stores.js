@@ -331,15 +331,9 @@ export async function editCartItem(itemId) {
 
     // 1. הפעלת מסך טעינה גלובלי
     isGlobalLoading.set(true);
-
-    // 🔥 תיקון קריטי: איפוס מיידי של התצוגה למניעת "הבהוב" של המוצר הקודם
-    magnets.set([]); 
-    editorSettings.update(s => ({ 
-        ...s, 
-        splitImageSrc: null, // ניקוי רקע פסיפס אם היה
-        splitImageCache: {},
-        currentProductType: item.type // עדכון ראשוני של הסוג כדי שה-UI יתכונן
-    }));
+    // Mobile-first: avoid clearing UI immediately (causes visible flash during navigation).
+    // We hydrate the next state before navigating, so keeping the current UI behind the
+    // global loader is both smoother and reduces perceived flicker.
 
     try {
         const hydrateMagnetsPack = async (list) => { 
