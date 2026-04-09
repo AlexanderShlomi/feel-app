@@ -72,6 +72,68 @@ function num(v: number | string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function isHttpUrlOrNull(v: unknown): v is string | null {
+  if (v == null) return true;
+  if (typeof v !== 'string') return false;
+  const s = v.trim();
+  if (!s) return true;
+  return s.startsWith('https://') || s.startsWith('http://');
+}
+
+function logValidationError(code: string, details: Record<string, unknown>) {
+  // Supabase edge functions capture console logs. Keep a stable shape for alerting.
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      scope: 'send-order-confirmation',
+      code,
+      ...details
+    })
+  );
+}
+
+function validateOrderForEmail(order: OrderRow, expected: { id: string; user_id: string }) {
+  if (!isNonEmptyString(order?.id) || order.id !== expected.id) {
+    return { ok: false as const, code: 'order_id_mismatch' };
+  }
+  if (!isNonEmptyString(order?.user_id) || order.user_id !== expected.user_id) {
+    return { ok: false as const, code: 'order_user_mismatch' };
+  }
+  if (!isNonEmptyString(order?.status) || order.status !== 'paid') {
+    return { ok: false as const, code: 'order_status_not_paid' };
+  }
+  // Money sanity: totals should be finite and non-negative (we allow 0 for edge cases).
+  const total = num(order.total_amount);
+  const sub = num(order.subtotal_amount);
+  const ship = num(order.shipping_amount);
+  const disc = num(order.discount_amount);
+  if (![total, sub, ship, disc].every((n) => Number.isFinite(n) && n >= 0)) {
+    return { ok: false as const, code: 'order_amounts_invalid' };
+  }
+  return { ok: true as const };
+}
+
+function validateItemsForEmail(items: OrderItemRow[]) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { ok: false as const, code: 'order_items_missing' };
+  }
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const qty = it.quantity && it.quantity > 0 ? it.quantity : 1;
+    const unit = num(it.unit_price);
+    const line = num(it.line_total);
+    if (!Number.isFinite(qty) || qty < 1) return { ok: false as const, code: 'order_item_quantity_invalid', index: i };
+    if (!Number.isFinite(unit) || unit < 0) return { ok: false as const, code: 'order_item_unit_price_invalid', index: i };
+    if (!Number.isFinite(line) || line < 0) return { ok: false as const, code: 'order_item_line_total_invalid', index: i };
+    if (!isHttpUrlOrNull(it.thumbnail_url)) return { ok: false as const, code: 'order_item_thumbnail_invalid', index: i };
+  }
+  return { ok: true as const };
+}
+
 function formatMoneyILS(amount: number): string {
   return `₪${amount.toLocaleString('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
@@ -387,7 +449,28 @@ Deno.serve(async (req) => {
       .eq('id', record.id)
       .maybeSingle();
 
-    const orderForEmail: OrderRow = !orderErr && fullOrder ? (fullOrder as OrderRow) : record;
+    if (orderErr || !fullOrder) {
+      logValidationError('order_fetch_failed', { order_id: record.id, user_id: record.user_id, message: orderErr?.message });
+      return new Response(JSON.stringify({ error: 'Order fetch failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const orderForEmail: OrderRow = fullOrder as OrderRow;
+    const orderValidation = validateOrderForEmail(orderForEmail, { id: record.id, user_id: record.user_id });
+    if (!orderValidation.ok) {
+      logValidationError(orderValidation.code, {
+        order_id: record.id,
+        user_id: record.user_id,
+        status: orderForEmail?.status,
+        order_number: orderForEmail?.order_number ?? null
+      });
+      return new Response(JSON.stringify({ error: 'Order validation failed', code: orderValidation.code }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     const { data: itemRows, error: itemsErr } = await admin
       .from('order_items')
@@ -395,10 +478,32 @@ Deno.serve(async (req) => {
       .eq('order_id', record.id)
       .order('created_at', { ascending: true });
 
-    const items: OrderItemRow[] = !itemsErr && itemRows ? (itemRows as OrderItemRow[]) : [];
+    if (itemsErr) {
+      logValidationError('order_items_fetch_failed', { order_id: record.id, user_id: record.user_id, message: itemsErr.message });
+      return new Response(JSON.stringify({ error: 'Order items fetch failed' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const items: OrderItemRow[] = itemRows ? (itemRows as OrderItemRow[]) : [];
+    const itemsValidation = validateItemsForEmail(items);
+    if (!itemsValidation.ok) {
+      logValidationError(itemsValidation.code, {
+        order_id: record.id,
+        user_id: record.user_id,
+        index: 'index' in itemsValidation ? itemsValidation.index : null,
+        items_count: Array.isArray(items) ? items.length : null
+      });
+      return new Response(JSON.stringify({ error: 'Order items validation failed', code: itemsValidation.code }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     const { data: userData, error: userErr } = await admin.auth.admin.getUserById(record.user_id);
     if (userErr || !userData?.user?.email) {
+      logValidationError('user_email_not_found', { order_id: record.id, user_id: record.user_id, message: userErr?.message });
       return new Response(JSON.stringify({ error: 'User email not found', details: userErr?.message }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }

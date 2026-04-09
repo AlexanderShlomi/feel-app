@@ -4,6 +4,7 @@
     import PaymentMock from '$lib/components/PaymentMock.svelte';
     import { supabase } from '$lib/supabase';
     import { cart, cartTotal } from '$lib/stores.js';
+    import { goto } from '$app/navigation';
     import { user, profile, authLoading, refreshProfile } from '$lib/authStore';
     import { fetchCitySuggestions, fetchStreetSuggestions } from '$lib/addresses/govIlStreets.js';
     import { maskIsraelMobileInput, normalizeDigitsToIsraelMobile } from '$lib/validation/inputMasks.js';
@@ -20,6 +21,7 @@
         privacyNeedsReaccept
     } from '$lib/privacyPolicyStore.js';
     import { uploadOrderItemThumbnails } from '$lib/orderThumbnails.js';
+    import { invalidateOrdersAfterCheckout } from '$lib/ordersCache.js';
 
     // ----- UI state -----
     let showAuthModal = false;
@@ -79,7 +81,7 @@
     $: needsPrivacyGate = $authLoading
         ? true
         : !$user
-          ? !hasCheckoutPrivacyConsent()
+          ? !hasCheckoutPrivacyConsent() && !privacyGateChecked
           : privacyNeedsReaccept($profile, $currentPrivacyPolicy);
 
     async function onPrivacyGateCheckboxChange() {
@@ -494,16 +496,24 @@
 
         placeOrderLoading = true;
         try {
-            const { error } = await supabase
-                .from('orders')
-                .update({ status: 'paid' })
-                .eq('id', paymentOrderId);
-
+            const { error } = await supabase.rpc('confirm_order_payment', {
+                p_order_id: paymentOrderId
+            });
             if (error) throw error;
+
+            // Ensure /orders doesn't serve stale session cache after a successful payment confirmation.
+            invalidateOrdersAfterCheckout({
+                userId: $user.id,
+                orderId: paymentOrderId,
+                expectedStatus: 'paid'
+            });
 
             // ריקון עגלה
             cart.set([]);
             success = true;
+
+            // Navigate only after final payment confirmation RPC.
+            await goto(`/checkout/success/${paymentOrderId}`);
         } catch (e) {
             console.error('Update order to paid failed:', e);
             errorMessage = supabaseErrorMessage(e);
@@ -973,7 +983,7 @@
     }
 
     .checkout-container.checkout-gated {
-        pointer-events: none;
+        /* Visual dim only. Interaction is blocked by the full-screen privacy gate overlay. */
         user-select: none;
         opacity: 0.45;
         filter: grayscale(0.15);

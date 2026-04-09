@@ -3,6 +3,12 @@
     import { get } from 'svelte/store';
     import { supabase } from '$lib/supabase';
     import { user, authLoading } from '$lib/authStore';
+    import {
+        ordersSessionKey,
+        clearOrdersSessionCacheForUser,
+        clearAllOrdersSessionCache,
+        consumeOrdersRefreshSignal
+    } from '$lib/ordersCache.js';
 
     /** @type {Array<{
      *   id: string;
@@ -46,6 +52,10 @@
     /** @type {ReturnType<typeof setTimeout> | null} */
     let loadDebounceTimer = null;
 
+    // Watchdog: if we get stuck in loading (edge cases), force-refresh once after 5s.
+    let watchdogTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+    let watchdogDidForceRefresh = false;
+
     /** עמוד קטן = פחות JSON ופחות עומס DB/RAM לכל משתמש */
     const ORDERS_PAGE_SIZE = 25;
     /** 0 = בלי עיכוב מלאכותי אחרי auth */
@@ -56,7 +66,7 @@
 
     /** @param {string} uid */
     function sessionOrdersKey(uid) {
-        return `feel_orders:${uid}`;
+        return ordersSessionKey(uid);
     }
 
     /**
@@ -101,24 +111,11 @@
 
     /** @param {string} userId */
     function clearSessionOrdersForUser(userId) {
-        if (typeof sessionStorage === 'undefined') return;
-        try {
-            sessionStorage.removeItem(sessionOrdersKey(userId));
-        } catch {
-            /* */
-        }
+        clearOrdersSessionCacheForUser(userId);
     }
 
     function clearAllSessionOrdersCache() {
-        if (typeof sessionStorage === 'undefined') return;
-        try {
-            for (let i = sessionStorage.length - 1; i >= 0; i--) {
-                const k = sessionStorage.key(i);
-                if (k && k.startsWith('feel_orders:')) sessionStorage.removeItem(k);
-            }
-        } catch {
-            /* */
-        }
+        clearAllOrdersSessionCache();
     }
 
     let ordersHasMore = false;
@@ -444,6 +441,20 @@
         }
     }
 
+    function scheduleOrdersWatchdog(userId) {
+        if (typeof window === 'undefined') return;
+        if (watchdogTimer) clearTimeout(watchdogTimer);
+        watchdogTimer = setTimeout(() => {
+            if (watchdogDidForceRefresh) return;
+            if (!listLoading) return;
+            if (!userId) return;
+            watchdogDidForceRefresh = true;
+            invalidateOrdersCache();
+            clearSessionOrdersForUser(userId);
+            void fetchOrdersForUser(userId, { force: true });
+        }, 5000);
+    }
+
     async function loadMoreOrders() {
         const u = get(user);
         if (!u?.id || !ordersHasMore || listLoadingMore || listLoading) return;
@@ -519,7 +530,19 @@
                 if (get(authLoading)) return;
                 const u = get(user);
                 if (!u?.id) return;
+
+                // Smart refresh: if checkout signaled a recent payment/order update, bypass caches and silently refresh.
+                const signal = consumeOrdersRefreshSignal(u.id);
+                if (signal) {
+                    invalidateOrdersCache();
+                    clearSessionOrdersForUser(u.id);
+                    void fetchOrdersForUser(u.id, { force: true, silent: true });
+                    scheduleOrdersWatchdog(u.id);
+                    return;
+                }
+
                 void fetchOrdersForUser(u.id);
+                scheduleOrdersWatchdog(u.id);
             }, LOAD_DEBOUNCE_MS);
         }
         const unsubAuth = authLoading.subscribe(() => tickLoad());
@@ -528,6 +551,7 @@
         return () => {
             disposed = true;
             if (loadDebounceTimer != null) clearTimeout(loadDebounceTimer);
+            if (watchdogTimer) clearTimeout(watchdogTimer);
             unsubAuth();
             unsubUser();
         };
