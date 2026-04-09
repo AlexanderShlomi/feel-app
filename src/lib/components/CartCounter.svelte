@@ -3,7 +3,7 @@
     //src\lib\components\CartCounter.svelte
     
     import { onDestroy, onMount } from 'svelte';
-    import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES, isMobile } from '$lib/stores.js';
+    import { cart, cartTotal, removeCartItem, editCartItem, PRODUCT_TYPES, isMobile, setUploaderScrollActive } from '$lib/stores.js';
     import { goto } from '$app/navigation';
     import { fly, fade, slide } from 'svelte/transition';
     import {
@@ -97,7 +97,10 @@
     });
 
     onDestroy(() => {
+        if (uploaderGateReleaseTimer) clearTimeout(uploaderGateReleaseTimer);
+        uploaderGateReleaseTimer = null;
         unlockBodyScroll();
+        try { setUploaderScrollActive(false); } catch {}
     });
 
     // Portal drawer/backdrop to <body> to avoid stacking-context issues (transforms)
@@ -119,9 +122,25 @@
     function toggleCart() {
         isOpen = !isOpen;
         if (isOpen) privacyReadChecked = false;
+        // Mobile-only: opening/closing overlays on iOS can cause viewport churn.
+        // Treat it like "active scroll" so uploader image swaps are deferred.
+        try { if ($isMobile) setUploaderScrollActive(isOpen); } catch {}
     }
     
-    function closeCart() { isOpen = false; }
+    let uploaderGateReleaseTimer;
+    function closeCart() {
+        isOpen = false;
+        try {
+            if ($isMobile) {
+                // Give the close transition / viewport settling a moment before releasing.
+                if (uploaderGateReleaseTimer) clearTimeout(uploaderGateReleaseTimer);
+                uploaderGateReleaseTimer = setTimeout(() => {
+                    uploaderGateReleaseTimer = null;
+                    try { setUploaderScrollActive(false); } catch {}
+                }, 260);
+            }
+        } catch {}
+    }
     
     function handleEdit(itemId) {
         editCartItem(itemId);
