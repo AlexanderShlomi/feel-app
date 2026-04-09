@@ -73,7 +73,20 @@
         uploaderScrollIdleTimer = setTimeout(() => {
             uploaderScrollIdleTimer = null;
             setUploaderScrollActive(false);
-        }, 320);
+        }, 460);
+    }
+
+    // iOS Safari: address-bar / overlay animations can shift visualViewport without firing container scroll.
+    // Treat visualViewport movement as "active" to defer swaps during viewport churn.
+    let vvIdleTimer;
+    function onVisualViewportActivity() {
+        if (!get(isMobile)) return;
+        setUploaderScrollActive(true);
+        if (vvIdleTimer) clearTimeout(vvIdleTimer);
+        vvIdleTimer = setTimeout(() => {
+            vvIdleTimer = null;
+            setUploaderScrollActive(false);
+        }, 460);
     }
 
     function saveUploaderScroll() {
@@ -202,6 +215,15 @@
                 canvasContainerEl.addEventListener('scroll', onCanvasScroll, { passive: true });
             }
         } catch {}
+
+        // visualViewport activity tracking (mobile-only, best-effort).
+        try {
+            const vv = window.visualViewport;
+            if (vv) {
+                vv.addEventListener('resize', onVisualViewportActivity, { passive: true });
+                vv.addEventListener('scroll', onVisualViewportActivity, { passive: true });
+            }
+        } catch {}
         
         // פתיחת מתנה אוטומטית אם צריך
         setTimeout(() => {
@@ -307,6 +329,15 @@
              try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', onCanvasScroll); } catch {}
              if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
              uploaderScrollIdleTimer = null;
+             try {
+                 const vv = window.visualViewport;
+                 if (vv) {
+                     vv.removeEventListener('resize', onVisualViewportActivity);
+                     vv.removeEventListener('scroll', onVisualViewportActivity);
+                 }
+             } catch {}
+             if (vvIdleTimer) clearTimeout(vvIdleTimer);
+             vvIdleTimer = null;
              // Ensure we don't leave the gate stuck "active" when navigating away.
              try { setUploaderScrollActive(false); } catch {}
         }

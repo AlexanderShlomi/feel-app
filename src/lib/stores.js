@@ -60,6 +60,7 @@ export const uploaderScrollActive = writable(false);
 /** @type {Array<{ id: string, rawUrl: string, nextUrl: string }>} */
 let queuedNormalizeSwaps = [];
 let flushQueuedNormalizeSwapsTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+const UPLOADER_IDLE_FLUSH_MS = 420;
 
 function isMobileViewportNow() {
     try {
@@ -81,10 +82,10 @@ export function setUploaderScrollActive(active) {
     // Keep it mobile-only to avoid changing desktop behavior.
     if (!isMobileViewportNow()) return;
     uploaderScrollActive.set(!!active);
-    if (!active) scheduleFlushQueuedNormalizeSwaps(260);
+    if (!active) scheduleFlushQueuedNormalizeSwaps(UPLOADER_IDLE_FLUSH_MS);
 }
 
-export function waitForUploaderScrollIdle(idleMs = 260, timeoutMs = 2500) {
+export function waitForUploaderScrollIdle(idleMs = UPLOADER_IDLE_FLUSH_MS, timeoutMs = 3000) {
     if (typeof window === 'undefined') return Promise.resolve(true);
     if (!isMobileViewportNow()) return Promise.resolve(true);
     if (!get(uploaderScrollActive)) return Promise.resolve(true);
@@ -131,7 +132,7 @@ function enqueueNormalizeSwap(id, rawUrl, nextUrl) {
 function flushQueuedNormalizeSwaps() {
     if (!queuedNormalizeSwaps.length) return;
     // Only flush when idle.
-    if (get(uploaderScrollActive)) { scheduleFlushQueuedNormalizeSwaps(260); return; }
+    if (get(uploaderScrollActive)) { scheduleFlushQueuedNormalizeSwaps(UPLOADER_IDLE_FLUSH_MS); return; }
 
     const batch = queuedNormalizeSwaps;
     queuedNormalizeSwaps = [];
