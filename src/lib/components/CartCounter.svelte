@@ -137,7 +137,7 @@
                 uploaderGateReleaseTimer = setTimeout(() => {
                     uploaderGateReleaseTimer = null;
                     try { setUploaderScrollActive(false); } catch {}
-                }, 260);
+                }, 460);
             }
         } catch {}
     }
