@@ -406,9 +406,22 @@
         else updateSurfaceHeight();
     }
     
+    let splitNormalizeToken = 0;
+    function scheduleIdleLocal(fn, timeoutMs = 900) {
+        const ric = typeof window !== 'undefined' ? window.requestIdleCallback : null;
+        if (typeof ric === 'function') ric(() => fn(), { timeout: timeoutMs });
+        else setTimeout(fn, Math.min(250, timeoutMs));
+    }
+
     function onSplitImageLoaded(event) {
-        const { src, ratio } = event.detail;
+        const { src, ratio, originalFile } = event.detail;
         loaderEl.style.display = 'block';
+
+        // Revoke previous mosaic blob to avoid leaks when replacing images.
+        try {
+            const prev = $editorSettings.splitImageSrc;
+            if (typeof prev === 'string' && prev.startsWith('blob:') && prev !== src) URL.revokeObjectURL(prev);
+        } catch {}
         
         editorSettings.update(s => ({ 
             ...s, 
@@ -424,6 +437,43 @@
         setTimeout(() => {
             calculateAndRenderSplitGrid(); 
         }, 50); 
+
+        // Normalize EXIF orientation in the background (canvas re-encode) so crop/render math
+        // stays consistent on iOS, without blocking the immediate swap UX.
+        const token = ++splitNormalizeToken;
+        if (originalFile) {
+            scheduleIdleLocal(async () => {
+                try {
+                    const { normalizeImageFileToBlobUrl } = await import('$lib/utils/normalizeImage.js');
+                    const norm = await normalizeImageFileToBlobUrl(originalFile, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
+                    if (token !== splitNormalizeToken) {
+                        if (norm?.url && typeof norm.url === 'string' && norm.url.startsWith('blob:')) {
+                            try { URL.revokeObjectURL(norm.url); } catch {}
+                        }
+                        return;
+                    }
+                    const nextUrl = norm?.url;
+                    if (!nextUrl || nextUrl === src) return;
+                    editorSettings.update((s) => {
+                        // Only swap if user hasn't already picked a different image since.
+                        if (s.splitImageSrc !== src) return s;
+                        const prev = s.splitImageSrc;
+                        const next = {
+                            ...s,
+                            splitImageSrc: nextUrl,
+                            splitImageRatio: norm?.ratio || s.splitImageRatio,
+                            currentEffect: 'original',
+                            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null }
+                        };
+                        try { if (typeof prev === 'string' && prev.startsWith('blob:')) URL.revokeObjectURL(prev); } catch {}
+                        return next;
+                    });
+                    setTimeout(() => calculateAndRenderSplitGrid(), 50);
+                } catch {
+                    // best-effort; keep raw URL if normalize fails
+                }
+            }, 1200);
+        }
     }
 
     let splitRenderFrame;

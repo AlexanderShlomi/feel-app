@@ -1,11 +1,24 @@
 <script>
     import { createEventDispatcher } from 'svelte';
-    import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
     
     export let mode = 'multi'; // 'multi' or 'split'
     export let uploadId = 'file-upload';
     
     const dispatch = createEventDispatcher();
+
+    function decodeRatioFromObjectUrl(url) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.decoding = 'async';
+            img.onload = () => {
+                const w = img.naturalWidth || 0;
+                const h = img.naturalHeight || 0;
+                resolve(w && h ? (w / h) : 1);
+            };
+            img.onerror = () => resolve(1);
+            img.src = url;
+        });
+    }
 
     async function handleChange(event) {
         const files = event.target.files;
@@ -19,24 +32,10 @@
         } else {
             // מצב פסיפס - טעינה מהירה
             const file = files[0];
-            // Normalize EXIF orientation so mosaic crop/render math stays consistent on iOS.
-            try {
-                const norm = await normalizeImageFileToBlobUrl(file, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
-                const src = norm?.url || URL.createObjectURL(file);
-                const ratio = norm?.ratio || 1;
-                dispatch('splitImageLoaded', { src, ratio, originalFile: file });
-            } catch {
-                const objectUrl = URL.createObjectURL(file);
-                const img = new Image();
-                img.onload = () => {
-                    dispatch('splitImageLoaded', {
-                        src: objectUrl,
-                        ratio: img.naturalWidth / img.naturalHeight,
-                        originalFile: file
-                    });
-                };
-                img.src = objectUrl;
-            }
+            // Show immediately (raw object URL). Any heavier normalization happens in the parent.
+            const objectUrl = URL.createObjectURL(file);
+            const ratio = await decodeRatioFromObjectUrl(objectUrl);
+            dispatch('splitImageLoaded', { src: objectUrl, ratio, originalFile: file });
         }
 
         event.target.value = ''; // מאפשר העלאה של אותו קובץ שוב
