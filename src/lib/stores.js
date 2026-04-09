@@ -454,43 +454,66 @@ export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
 
-    const normalized = await Promise.all(
-        list.map(async (f) => {
-            try {
-                // Normalize EXIF orientation once at upload so editor/grid math stays consistent on iOS.
-                const norm = await normalizeImageFileToBlobUrl(f, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
-                const url = norm?.url || URL.createObjectURL(f);
-                return ({
-                    id: crypto.randomUUID(),
-                    transform: { zoom: 1, xPct: 0, yPct: 0 },
-                    position: { x: 0, y: 0 },
-                    size: getFullMagnetSize(),
-                    originalSrc: url,
-                    src: url,
-                    activeEffectId: 'original',
-                    isSplitPart: false,
-                    hidden: false,
-                    processed: {}
-                });
-            } catch {
-                const url = URL.createObjectURL(f);
-                return ({
-                    id: crypto.randomUUID(),
-                    transform: { zoom: 1, xPct: 0, yPct: 0 },
-                    position: { x: 0, y: 0 },
-                    size: getFullMagnetSize(),
-                    originalSrc: url,
-                    src: url,
-                    activeEffectId: 'original',
-                    isSplitPart: false,
-                    hidden: false,
-                    processed: {}
-                });
+    // Fast path: add placeholders immediately so the uploader grid is responsive.
+    // Then normalize EXIF orientation in the background and swap the blob URL per magnet.
+    const pending = list.map((f) => {
+        const id = crypto.randomUUID();
+        const url = URL.createObjectURL(f);
+        return {
+            id,
+            file: f,
+            rawUrl: url,
+            magnet: {
+                id,
+                transform: { zoom: 1, xPct: 0, yPct: 0 },
+                position: { x: 0, y: 0 },
+                size: getFullMagnetSize(),
+                originalSrc: url,
+                src: url,
+                activeEffectId: 'original',
+                isSplitPart: false,
+                hidden: false,
+                processed: {}
             }
-        })
-    );
+        };
+    });
 
-    magnets.update((l) => [...l, ...normalized]);
+    magnets.update((l) => [...l, ...pending.map(p => p.magnet)]);
+
+    // Background normalize (one-by-one, idle) to avoid blocking UI on mobile.
+    scheduleIdle(async () => {
+        for (const p of pending) {
+            // If the magnet was deleted while we were waiting, skip.
+            const current = get(magnets).find(m => m.id === p.id);
+            if (!current) {
+                try { URL.revokeObjectURL(p.rawUrl); } catch {}
+                continue;
+            }
+            try {
+                const norm = await normalizeImageFileToBlobUrl(p.file, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
+                const nextUrl = norm?.url;
+                if (!nextUrl || nextUrl === p.rawUrl) continue;
+
+                let used = false;
+                magnets.update((l) => l.map((m) => {
+                    if (m.id !== p.id) return m;
+                    // Only swap if still pointing to the raw URL (user may have already replaced it).
+                    if (m.originalSrc !== p.rawUrl) return m;
+                    used = true;
+                    return { ...m, originalSrc: nextUrl, src: nextUrl };
+                }));
+
+                if (used) {
+                    try { URL.revokeObjectURL(p.rawUrl); } catch {}
+                } else {
+                    // Not used; prevent leaks.
+                    try { URL.revokeObjectURL(nextUrl); } catch {}
+                }
+            } catch {
+                // Keep raw URL on failure.
+            }
+        }
+    }, 800);
 }
 export function updateMagnetProcessedSrc(id, eff, src) {
     magnets.update(l => l.map(m => {
