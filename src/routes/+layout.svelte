@@ -8,7 +8,7 @@
     import CookiePolicy from '$lib/components/CookiePolicy.svelte';
     import { onMount, onDestroy } from 'svelte';
     import { OPEN_PRIVACY_EVENT, OPEN_COOKIE_POLICY_EVENT } from '$lib/privacyCheckoutConsent.js';
-    import { initApp, isGlobalLoading } from '$lib/stores.js'; // הוספת הייבוא של isGlobalLoading
+    import { initApp, isGlobalLoading } from '$lib/stores.js';
     import { initAuth } from '$lib/authStore';
     import { fetchCurrentPrivacyPolicy } from '$lib/privacyPolicyStore.js';
 
@@ -27,6 +27,15 @@
     let showPrivacy = false;
     let showCookiePolicy = false;
     let showAuth = false;
+
+    // Mobile-first UX: avoid loader flicker on quick operations.
+    // Show only if loading lasts long enough, and keep visible for a minimum duration.
+    let showGlobalLoader = false;
+    let loaderVisibleSince = 0;
+    let loaderShowTimer;
+    let loaderHideTimer;
+    const LOADER_SHOW_DELAY_MS = 160;
+    const LOADER_MIN_VISIBLE_MS = 260;
 
     function toggleMenu() {
         isMenuOpen = !isMenuOpen;
@@ -113,6 +122,27 @@
         initApp();
         initAuth();
         fetchCurrentPrivacyPolicy();
+        const unsub = isGlobalLoading.subscribe((loading) => {
+            // Clear any pending timers first.
+            if (loaderShowTimer) clearTimeout(loaderShowTimer);
+            if (loaderHideTimer) clearTimeout(loaderHideTimer);
+
+            if (loading) {
+                loaderShowTimer = setTimeout(() => {
+                    loaderVisibleSince = Date.now();
+                    showGlobalLoader = true;
+                }, LOADER_SHOW_DELAY_MS);
+                return;
+            }
+
+            const elapsed = Date.now() - loaderVisibleSince;
+            const remaining = Math.max(0, LOADER_MIN_VISIBLE_MS - elapsed);
+            loaderHideTimer = setTimeout(() => {
+                showGlobalLoader = false;
+                loaderVisibleSince = 0;
+            }, remaining);
+        });
+
         if (typeof window !== 'undefined') {
             window.addEventListener(OPEN_PRIVACY_EVENT, onOpenPrivacyEvent);
             window.addEventListener(OPEN_COOKIE_POLICY_EVENT, onOpenCookiePolicyEvent);
@@ -126,6 +156,12 @@
 
             initDockPadObservers();
         }
+
+        return () => {
+            try { unsub?.(); } catch {}
+            if (loaderShowTimer) clearTimeout(loaderShowTimer);
+            if (loaderHideTimer) clearTimeout(loaderHideTimer);
+        };
     });
 
     onDestroy(() => {
@@ -178,7 +214,7 @@
 
 <div class="page-container" dir="rtl">
     
-    {#if $isGlobalLoading}
+    {#if showGlobalLoader}
         <div class="global-loader-overlay">
             <div class="brand-loader-bar">
                 <div class="loader-progress"></div>

@@ -413,6 +413,20 @@
         else setTimeout(fn, Math.min(250, timeoutMs));
     }
 
+    function preloadImageUrl(url) {
+        return new Promise((resolve) => {
+            try {
+                const img = new Image();
+                img.decoding = 'async';
+                img.onload = () => resolve(true);
+                img.onerror = () => resolve(false);
+                img.src = url;
+            } catch {
+                resolve(false);
+            }
+        });
+    }
+
     function onSplitImageLoaded(event) {
         const { src, ratio, originalFile } = event.detail;
         loaderEl.style.display = 'block';
@@ -454,6 +468,21 @@
                     }
                     const nextUrl = norm?.url;
                     if (!nextUrl || nextUrl === src) return;
+
+                    // Prevent visible flicker: ensure the normalized image is already cached/decoded
+                    // before swapping src across the entire mosaic grid.
+                    const ok = await preloadImageUrl(nextUrl);
+                    if (!ok) return;
+
+                    // Swap settings + keep magnets in sync (mosaic tiles use `src` as background-image).
+                    magnets.update((list) =>
+                        list.map((m) =>
+                            m && m.originalSrc === src
+                                ? { ...m, originalSrc: nextUrl, src: nextUrl, processed: {} }
+                                : m
+                        )
+                    );
+
                     editorSettings.update((s) => {
                         // Only swap if user hasn't already picked a different image since.
                         if (s.splitImageSrc !== src) return s;
