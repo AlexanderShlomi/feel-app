@@ -20,6 +20,8 @@
         editorSettings, 
         isMobile,
         addUploadedMagnets,
+        setUploaderScrollActive,
+        waitForUploaderScrollIdle,
         updateMagnetProcessedSrc, 
         getCssFilter,
         getFullMagnetSize, 
@@ -61,6 +63,18 @@
     let canvasContainerEl;
     let isOpeningEditor = false;
     const UPLOADER_SCROLL_KEY = 'feel_uploader_scroll_v1';
+
+    // Mobile scroll activity → gate disruptive blob URL swaps during active scroll.
+    let uploaderScrollIdleTimer;
+    function onCanvasScroll() {
+        if (!get(isMobile)) return;
+        setUploaderScrollActive(true);
+        if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
+        uploaderScrollIdleTimer = setTimeout(() => {
+            uploaderScrollIdleTimer = null;
+            setUploaderScrollActive(false);
+        }, 320);
+    }
 
     function saveUploaderScroll() {
         try {
@@ -181,6 +195,13 @@
     onMount(() => {
         window.addEventListener('dragstart', preventDragStart);
         window.addEventListener('resize', handleResize);
+
+        // Scroll activity tracking (mobile-only).
+        try {
+            if (canvasContainerEl) {
+                canvasContainerEl.addEventListener('scroll', onCanvasScroll, { passive: true });
+            }
+        } catch {}
         
         // פתיחת מתנה אוטומטית אם צריך
         setTimeout(() => {
@@ -283,6 +304,11 @@
         return () => {
              window.removeEventListener('dragstart', preventDragStart);
              window.removeEventListener('resize', handleResize);
+             try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', onCanvasScroll); } catch {}
+             if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
+             uploaderScrollIdleTimer = null;
+             // Ensure we don't leave the gate stuck "active" when navigating away.
+             try { setUploaderScrollActive(false); } catch {}
         }
     });
 
@@ -473,6 +499,12 @@
                     // before swapping src across the entire mosaic grid.
                     const ok = await preloadImageUrl(nextUrl);
                     if (!ok) return;
+
+                    // Mobile-first: if user is actively scrolling, wait for a short idle window
+                    // before swapping mosaic URLs (prevents transient blanks on iOS Safari).
+                    if (get(isMobile)) {
+                        await waitForUploaderScrollIdle(260, 2500);
+                    }
 
                     // Swap settings + keep magnets in sync (mosaic tiles use `src` as background-image).
                     magnets.update((list) =>

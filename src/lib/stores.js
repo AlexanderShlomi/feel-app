@@ -52,6 +52,117 @@ if (typeof window !== 'undefined') {
     window.addEventListener('resize', () => isMobile.set(checkIsMobile()));
 }
 
+// --- Uploader scroll activity gate (mobile-first) ---
+// iOS Safari can briefly blank <img> when blob URLs are reassigned during active scroll.
+// We gate visually-disruptive swaps while the uploader scroll container is actively scrolling.
+export const uploaderScrollActive = writable(false);
+
+/** @type {Array<{ id: string, rawUrl: string, nextUrl: string }>} */
+let queuedNormalizeSwaps = [];
+let flushQueuedNormalizeSwapsTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+
+function isMobileViewportNow() {
+    try {
+        return typeof window !== 'undefined' && window.innerWidth <= 768;
+    } catch {
+        return false;
+    }
+}
+
+function scheduleFlushQueuedNormalizeSwaps(delayMs = 260) {
+    if (flushQueuedNormalizeSwapsTimer) clearTimeout(flushQueuedNormalizeSwapsTimer);
+    flushQueuedNormalizeSwapsTimer = setTimeout(() => {
+        flushQueuedNormalizeSwapsTimer = null;
+        flushQueuedNormalizeSwaps();
+    }, Math.max(0, delayMs));
+}
+
+export function setUploaderScrollActive(active) {
+    // Keep it mobile-only to avoid changing desktop behavior.
+    if (!isMobileViewportNow()) return;
+    uploaderScrollActive.set(!!active);
+    if (!active) scheduleFlushQueuedNormalizeSwaps(260);
+}
+
+export function waitForUploaderScrollIdle(idleMs = 260, timeoutMs = 2500) {
+    if (typeof window === 'undefined') return Promise.resolve(true);
+    if (!isMobileViewportNow()) return Promise.resolve(true);
+    if (!get(uploaderScrollActive)) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+        let idleTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+        let timeoutTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+        const unsub = uploaderScrollActive.subscribe((v) => {
+            if (v) {
+                if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+                return;
+            }
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                cleanup();
+                resolve(true);
+            }, idleMs);
+        });
+
+        function cleanup() {
+            try { unsub(); } catch {}
+            if (idleTimer) clearTimeout(idleTimer);
+            if (timeoutTimer) clearTimeout(timeoutTimer);
+        }
+
+        timeoutTimer = setTimeout(() => {
+            cleanup();
+            resolve(false);
+        }, Math.max(250, timeoutMs));
+    });
+}
+
+function enqueueNormalizeSwap(id, rawUrl, nextUrl) {
+    const MAX_QUEUE = 48;
+    queuedNormalizeSwaps.push({ id, rawUrl, nextUrl });
+    if (queuedNormalizeSwaps.length > MAX_QUEUE) {
+        const evicted = queuedNormalizeSwaps.splice(0, queuedNormalizeSwaps.length - MAX_QUEUE);
+        for (const s of evicted) {
+            try { if (typeof s.nextUrl === 'string' && s.nextUrl.startsWith('blob:')) URL.revokeObjectURL(s.nextUrl); } catch {}
+        }
+    }
+}
+
+function flushQueuedNormalizeSwaps() {
+    if (!queuedNormalizeSwaps.length) return;
+    // Only flush when idle.
+    if (get(uploaderScrollActive)) { scheduleFlushQueuedNormalizeSwaps(260); return; }
+
+    const batch = queuedNormalizeSwaps;
+    queuedNormalizeSwaps = [];
+
+    for (const s of batch) {
+        let used = false;
+        try {
+            magnets.update((l) =>
+                l.map((m) => {
+                    if (m.id !== s.id) return m;
+                    if (m.originalSrc !== s.rawUrl) return m;
+                    used = true;
+                    return { ...m, originalSrc: s.nextUrl, src: s.nextUrl };
+                })
+            );
+        } catch {
+            used = false;
+        }
+
+        if (used) {
+            setTimeout(() => {
+                try { if (typeof s.rawUrl === 'string' && s.rawUrl.startsWith('blob:')) URL.revokeObjectURL(s.rawUrl); } catch {}
+            }, 400);
+        } else {
+            // Not used (deleted/replaced). Prevent leaks.
+            try { if (typeof s.nextUrl === 'string' && s.nextUrl.startsWith('blob:')) URL.revokeObjectURL(s.nextUrl); } catch {}
+            try { if (typeof s.rawUrl === 'string' && s.rawUrl.startsWith('blob:')) URL.revokeObjectURL(s.rawUrl); } catch {}
+        }
+    }
+}
+
 export function getFilterStyle(effectId) {
     const f = getCssFilter(effectId);
     // iOS Safari still benefits from explicit -webkit-filter.
@@ -510,23 +621,28 @@ export async function addUploadedMagnets(files) {
                     continue;
                 }
 
+                // If user is actively scrolling (mobile), queue the swap and flush on scroll idle.
+                if (isMobileViewportNow() && get(uploaderScrollActive)) {
+                    enqueueNormalizeSwap(p.id, p.rawUrl, nextUrl);
+                    continue;
+                }
+
                 let used = false;
-                magnets.update((l) => l.map((m) => {
-                    if (m.id !== p.id) return m;
-                    // Only swap if still pointing to the raw URL (user may have already replaced it).
-                    if (m.originalSrc !== p.rawUrl) return m;
-                    used = true;
-                    return { ...m, originalSrc: nextUrl, src: nextUrl };
-                }));
+                magnets.update((l) =>
+                    l.map((m) => {
+                        if (m.id !== p.id) return m;
+                        // Only swap if still pointing to the raw URL (user may have already replaced it).
+                        if (m.originalSrc !== p.rawUrl) return m;
+                        used = true;
+                        return { ...m, originalSrc: nextUrl, src: nextUrl };
+                    })
+                );
 
                 if (used) {
-                    // Delay raw URL revocation slightly so the browser can safely promote the new
-                    // decoded image without a transient blank on low-memory mobile devices.
                     setTimeout(() => {
                         try { URL.revokeObjectURL(p.rawUrl); } catch {}
                     }, 400);
                 } else {
-                    // Not used; prevent leaks.
                     try { URL.revokeObjectURL(nextUrl); } catch {}
                 }
             } catch {
