@@ -444,6 +444,21 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
 
 export function getFullMagnetSize() { return BASE_MAGNET_SIZE * (get(editorSettings).currentDisplayScale || SCALE_DEFAULT); }
 export function getMargin() { return getFullMagnetSize() * MULTI_MARGIN_PERCENT; }
+
+function preloadImageUrl(url) {
+    return new Promise((resolve) => {
+        try {
+            const img = new Image();
+            img.decoding = 'async';
+            img.onload = () => resolve(true);
+            img.onerror = () => resolve(false);
+            img.src = url;
+        } catch {
+            resolve(false);
+        }
+    });
+}
+
 export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
@@ -488,6 +503,13 @@ export async function addUploadedMagnets(files) {
                 const nextUrl = norm?.url;
                 if (!nextUrl || nextUrl === p.rawUrl) continue;
 
+                // Mobile-first: prevent visible flicker by preloading the normalized URL before swapping.
+                const ok = await preloadImageUrl(nextUrl);
+                if (!ok) {
+                    try { URL.revokeObjectURL(nextUrl); } catch {}
+                    continue;
+                }
+
                 let used = false;
                 magnets.update((l) => l.map((m) => {
                     if (m.id !== p.id) return m;
@@ -498,7 +520,11 @@ export async function addUploadedMagnets(files) {
                 }));
 
                 if (used) {
-                    try { URL.revokeObjectURL(p.rawUrl); } catch {}
+                    // Delay raw URL revocation slightly so the browser can safely promote the new
+                    // decoded image without a transient blank on low-memory mobile devices.
+                    setTimeout(() => {
+                        try { URL.revokeObjectURL(p.rawUrl); } catch {}
+                    }, 400);
                 } else {
                     // Not used; prevent leaks.
                     try { URL.revokeObjectURL(nextUrl); } catch {}
