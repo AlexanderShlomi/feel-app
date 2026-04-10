@@ -1611,6 +1611,17 @@
             flex: 1 1 0;
             min-width: 0;
         }
+
+        /* Mobile: compact "select" (autocomplete) controls to avoid unnecessary inner scrolling */
+        .suggest-list {
+            max-height: min(320px, 55vh);
+            border-radius: 16px;
+        }
+
+        .suggest-item {
+            padding: clamp(8px, 2.6vw, 10px) clamp(10px, 3.2vw, 14px);
+            font-size: clamp(12px, 3.6vw, 14px);
+        }
     }
 </style>
 
