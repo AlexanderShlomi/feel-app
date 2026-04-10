@@ -1,5 +1,5 @@
 <script>
-    import { fade, fly } from 'svelte/transition';
+    import { fade } from 'svelte/transition';
     import { editorSettings, saveWorkspaceToCart, PRODUCT_TYPES } from '$lib/stores.js';
     import FileUploader from '$lib/components/FileUploader.svelte';
     import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
@@ -79,9 +79,9 @@
 </button>
 
 {#if isOpen}
-    <div class="gift-editor-overlay" use:portal transition:fade={{ duration: 200 }}>
+    <div class="gift-editor-overlay" use:portal transition:fade={{ duration: 220 }}>
         
-        <div class="gift-editor-container" transition:fly={{ y: 20, duration: 300 }}>
+        <div class="gift-editor-container" transition:fade={{ duration: 220 }}>
             
             <div class="gift-editor-header">
                 <h3>מתנה מאיתנו 🎁</h3>
