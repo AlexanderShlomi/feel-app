@@ -95,6 +95,7 @@
     .floating-panel {
         position: fixed;
         z-index: 4501;
+        box-sizing: border-box;
         
         /* עיצוב Glassmorphism */
         background: rgba(255, 255, 255, 0.95); /* קצת יותר אטום כדי שהטקסט בפאנל יהיה קריא */
@@ -118,6 +119,12 @@
         display: flex;
         flex-direction: column;
         direction: rtl;
+    }
+
+    .panel-content {
+        box-sizing: border-box;
+        max-width: 100%;
+        overflow-x: hidden;
     }
 
     .floating-panel-header {
