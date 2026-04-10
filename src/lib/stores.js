@@ -626,6 +626,12 @@ export async function addUploadedMagnets(files) {
 
     magnets.update((l) => [...l, ...pending.map(p => p.magnet)]);
 
+    // Mobile-first: uploaded images must look 100% like the original upload.
+    // Re-encoding via canvas (even at high quality) can subtly change brightness/color profiles,
+    // and swapping URLs one-by-one looks like "processing" per image. On mobile, keep the
+    // original blob URLs as-is (browsers generally handle EXIF orientation for <img> rendering).
+    if (isMobileViewportNow()) return;
+
     // Background normalize (one-by-one, idle) to avoid blocking UI on mobile.
     scheduleIdle(async () => {
         for (const p of pending) {
