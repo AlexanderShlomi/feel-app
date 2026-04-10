@@ -71,6 +71,23 @@ test('core flow: home -> select -> magnets -> upload -> cart -> checkout', async
     await expect(page.locator('.magnet-wrapper').first()).toBeVisible({ timeout: 20_000 });
   }
 
+  // Regression guard: mobile should not fade images in (perceived as "brightness processing").
+  const firstImg = page.locator('.magnet-wrapper img.magnet-image').first();
+  await expect(firstImg).toBeVisible();
+  const motion = await firstImg.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      transitionProperty: cs.transitionProperty,
+      transitionDuration: cs.transitionDuration,
+      imageRendering: cs.imageRendering,
+      opacity: cs.opacity
+    };
+  });
+  expect(motion.transitionDuration).toBe('0s');
+  expect(motion.transitionProperty).not.toContain('opacity');
+  expect(motion.opacity).toBe('1');
+  expect(motion.imageRendering).toBe('auto');
+
   // Add to cart via UpsellWidget (opens popover, then confirm)
   await page.locator('.widget-wrapper .trigger-circle').click({ force: true });
   await page.getByRole('button', { name: /הוסף להזמנה|עדכן הזמנה|שומר/ }).click();

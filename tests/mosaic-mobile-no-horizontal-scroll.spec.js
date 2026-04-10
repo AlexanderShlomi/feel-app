@@ -36,6 +36,12 @@ test('mosaic: grid size panel does not introduce horizontal scroll (mobile)', as
   // Open the "grid size" floating panel from the bottom dock.
   await page.getByRole('button', { name: 'גודל רשת' }).click({ force: true });
 
+  // Regression guard: mosaic tiles should not rely on -webkit-optimize-contrast (can flicker on iOS).
+  const firstTile = page.locator('.magnet-wrapper .split-image').first();
+  await expect(firstTile).toBeVisible();
+  const tileStyle = await firstTile.evaluate((el) => getComputedStyle(el).imageRendering);
+  expect(tileStyle).toBe('auto');
+
   // Acceptable: 0–1px due to subpixel rounding.
   const noHorizontalScroll = await page.evaluate(() => {
     const doc = document.documentElement;

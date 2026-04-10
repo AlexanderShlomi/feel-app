@@ -330,12 +330,12 @@
         height: var(--base-h);
         transform-origin: center center;
         will-change: transform;
-        opacity: 0;
-        transition: opacity 0.18s;
+        /* Mobile-first stability: avoid "brightness fade" perception on load.
+           We already gate blob-url swaps via decode, so a CSS fade is unnecessary and can flicker on iOS. */
+        opacity: 1;
         transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
     }
     
-    .magnet-image.loaded { opacity: 1; }
     .magnet-image.is-landscape { width: var(--base-w); height: var(--base-h); }
     .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); }
     
@@ -344,7 +344,7 @@
         .magnet.desktop-mode:hover .overlay { opacity: 1; }
     }
     
-    .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; image-rendering: -webkit-optimize-contrast; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }
+    .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }
     .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); backdrop-filter: blur(2px); opacity: 0; transition: opacity 0.2s; z-index: 20; pointer-events: none; }
     .overlay.force-visible { opacity: 1; background: rgba(255,255,255,0.2); pointer-events: auto; }
     .magnet:hover .overlay { pointer-events: auto; }
