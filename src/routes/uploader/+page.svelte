@@ -1140,7 +1140,6 @@
         }
         .mobile-grid-active img {
             display: block !important;
-            image-rendering: -webkit-optimize-contrast;
             pointer-events: none !important;
         }
         .mobile-grid-active .overlay,
