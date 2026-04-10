@@ -4,7 +4,6 @@ import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
-import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -600,8 +599,9 @@ export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
 
-    // Fast path: add placeholders immediately so the uploader grid is responsive.
-    // Then normalize EXIF orientation in the background and swap the blob URL per magnet.
+    // P0: Original blobs only for main surface rendering.
+    // We intentionally avoid any canvas-based normalization/resampling here, because it can
+    // cause brightness/sharpness loss and visible flicker during URL swaps.
     const pending = list.map((f) => {
         const id = crypto.randomUUID();
         const url = URL.createObjectURL(f);
@@ -625,63 +625,6 @@ export async function addUploadedMagnets(files) {
     });
 
     magnets.update((l) => [...l, ...pending.map(p => p.magnet)]);
-
-    // Mobile-first: uploaded images must look 100% like the original upload.
-    // Re-encoding via canvas (even at high quality) can subtly change brightness/color profiles,
-    // and swapping URLs one-by-one looks like "processing" per image. On mobile, keep the
-    // original blob URLs as-is (browsers generally handle EXIF orientation for <img> rendering).
-    if (isMobileViewportNow()) return;
-
-    // Background normalize (one-by-one, idle) to avoid blocking UI on mobile.
-    scheduleIdle(async () => {
-        for (const p of pending) {
-            // If the magnet was deleted while we were waiting, skip.
-            const current = get(magnets).find(m => m.id === p.id);
-            if (!current) {
-                try { URL.revokeObjectURL(p.rawUrl); } catch {}
-                continue;
-            }
-            try {
-                const norm = await normalizeImageFileToBlobUrl(p.file, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
-                const nextUrl = norm?.url;
-                if (!nextUrl || nextUrl === p.rawUrl) continue;
-
-                // Mobile-first: prevent visible flicker by preloading the normalized URL before swapping.
-                const ok = await preloadImageUrl(nextUrl);
-                if (!ok) {
-                    try { URL.revokeObjectURL(nextUrl); } catch {}
-                    continue;
-                }
-
-                // If user is actively scrolling (mobile), queue the swap and flush on scroll idle.
-                if (isMobileViewportNow() && get(uploaderScrollActive)) {
-                    enqueueNormalizeSwap(p.id, p.rawUrl, nextUrl);
-                    continue;
-                }
-
-                let used = false;
-                magnets.update((l) =>
-                    l.map((m) => {
-                        if (m.id !== p.id) return m;
-                        // Only swap if still pointing to the raw URL (user may have already replaced it).
-                        if (m.originalSrc !== p.rawUrl) return m;
-                        used = true;
-                        return { ...m, originalSrc: nextUrl, src: nextUrl };
-                    })
-                );
-
-                if (used) {
-                    setTimeout(() => {
-                        try { URL.revokeObjectURL(p.rawUrl); } catch {}
-                    }, 400);
-                } else {
-                    try { URL.revokeObjectURL(nextUrl); } catch {}
-                }
-            } catch {
-                // Keep raw URL on failure.
-            }
-        }
-    }, 800);
 }
 export function updateMagnetProcessedSrc(id, eff, src) {
     magnets.update(l => l.map(m => {

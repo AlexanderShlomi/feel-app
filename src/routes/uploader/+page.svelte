@@ -35,7 +35,7 @@
         SCALE_MIN,        
         SCALE_MAX,          
         SCALE_DEFAULT,
-        PACKAGES  
+        PACKAGES
     } from '$lib/stores.js';
 
     const effectsList = [
@@ -463,29 +463,8 @@
         else updateSurfaceHeight();
     }
     
-    let splitNormalizeToken = 0;
-    function scheduleIdleLocal(fn, timeoutMs = 900) {
-        const ric = typeof window !== 'undefined' ? window.requestIdleCallback : null;
-        if (typeof ric === 'function') ric(() => fn(), { timeout: timeoutMs });
-        else setTimeout(fn, Math.min(250, timeoutMs));
-    }
-
-    function preloadImageUrl(url) {
-        return new Promise((resolve) => {
-            try {
-                const img = new Image();
-                img.decoding = 'async';
-                img.onload = () => resolve(true);
-                img.onerror = () => resolve(false);
-                img.src = url;
-            } catch {
-                resolve(false);
-            }
-        });
-    }
-
     function onSplitImageLoaded(event) {
-        const { src, ratio, originalFile } = event.detail;
+        const { src, ratio } = event.detail;
         loaderEl.style.display = 'block';
 
         // Revoke previous mosaic blob to avoid leaks when replacing images.
@@ -508,64 +487,6 @@
         setTimeout(() => {
             calculateAndRenderSplitGrid(); 
         }, 50); 
-
-        // Normalize EXIF orientation in the background (canvas re-encode) so crop/render math
-        // stays consistent on iOS, without blocking the immediate swap UX.
-        const token = ++splitNormalizeToken;
-        if (originalFile) {
-            scheduleIdleLocal(async () => {
-                try {
-                    const { normalizeImageFileToBlobUrl } = await import('$lib/utils/normalizeImage.js');
-                    const norm = await normalizeImageFileToBlobUrl(originalFile, { maxDim: 5200, quality: 0.95, mimeType: 'image/jpeg' });
-                    if (token !== splitNormalizeToken) {
-                        if (norm?.url && typeof norm.url === 'string' && norm.url.startsWith('blob:')) {
-                            try { URL.revokeObjectURL(norm.url); } catch {}
-                        }
-                        return;
-                    }
-                    const nextUrl = norm?.url;
-                    if (!nextUrl || nextUrl === src) return;
-
-                    // Prevent visible flicker: ensure the normalized image is already cached/decoded
-                    // before swapping src across the entire mosaic grid.
-                    const ok = await preloadImageUrl(nextUrl);
-                    if (!ok) return;
-
-                    // Mobile-first: if user is actively scrolling, wait for a short idle window
-                    // before swapping mosaic URLs (prevents transient blanks on iOS Safari).
-                    if (get(isMobile)) {
-                        await waitForUploaderScrollIdle(260, 2500);
-                    }
-
-                    // Swap settings + keep magnets in sync (mosaic tiles use `src` as background-image).
-                    magnets.update((list) =>
-                        list.map((m) =>
-                            m && m.originalSrc === src
-                                ? { ...m, originalSrc: nextUrl, src: nextUrl, processed: {} }
-                                : m
-                        )
-                    );
-
-                    editorSettings.update((s) => {
-                        // Only swap if user hasn't already picked a different image since.
-                        if (s.splitImageSrc !== src) return s;
-                        const prev = s.splitImageSrc;
-                        const next = {
-                            ...s,
-                            splitImageSrc: nextUrl,
-                            splitImageRatio: norm?.ratio || s.splitImageRatio,
-                            currentEffect: 'original',
-                            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null }
-                        };
-                        try { if (typeof prev === 'string' && prev.startsWith('blob:')) URL.revokeObjectURL(prev); } catch {}
-                        return next;
-                    });
-                    setTimeout(() => calculateAndRenderSplitGrid(), 50);
-                } catch {
-                    // best-effort; keep raw URL if normalize fails
-                }
-            }, 1200);
-        }
     }
 
     let splitRenderFrame;
