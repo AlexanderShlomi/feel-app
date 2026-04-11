@@ -32,6 +32,27 @@ export function parseBirthdayDmyToIso(dmy) {
     return `${yyyy.toString().padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 }
 
+/**
+ * תאריך לידה מ־`<input type="date">` (YYYY-MM-DD) — אותם כללי תקינות כמו DD/MM/YYYY.
+ * @param {string} iso
+ * @returns {string | null} YYYY-MM-DD
+ */
+export function validateBirthdayIso(iso) {
+    const s = String(iso || '').trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) return null;
+    const yyyy = Number(m[1]);
+    const mm = Number(m[2]);
+    const dd = Number(m[3]);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31 || yyyy < 1900 || yyyy > 2100) return null;
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+    const today = new Date();
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    if (d.getTime() > todayUtc) return null;
+    return `${yyyy.toString().padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}
+
 export const authRegistrationSchema = z.object({
     fullName: z
         .string()
@@ -39,9 +60,9 @@ export const authRegistrationSchema = z.object({
         .min(2, 'יש להזין שם מלא')
         .max(120, 'שם ארוך מדי')
         .refine((val) => /^[\u0590-\u05FFa-zA-Z\s]+$/u.test(val), 'שם מכיל תווים לא חוקיים'),
-    birthdayDmy: z
+    birthdayIso: z
         .string()
         .trim()
-        .refine((val) => !!parseBirthdayDmyToIso(val), 'תאריך לידה לא תקין (DD/MM/YYYY)'),
+        .refine((val) => !!validateBirthdayIso(val), 'תאריך לידה לא תקין'),
     phone: z.string().refine((val) => !!normalizeIsraelMobileToE164(val), 'מספר נייד לא תקין')
 });
