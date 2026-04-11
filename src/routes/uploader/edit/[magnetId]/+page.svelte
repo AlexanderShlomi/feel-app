@@ -1,5 +1,5 @@
 <script>
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, tick } from 'svelte';
     import { get } from 'svelte/store';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
@@ -392,7 +392,7 @@
         applyEffect('original');
     }
 
-    function saveAndClose() {
+    async function saveAndClose() {
         // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1] עבור אותו zoom.
         // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
         const naturalW = baseNaturalW || (bgImageEl?.naturalWidth || 0);
@@ -406,8 +406,10 @@
             xPct: clamp(xPct, -1, 1),
             yPct: clamp(yPct, -1, 1)
         });
+        await tick();
         bumpWorkspaceLayoutRefreshSignal();
-        goto('/uploader', { noScroll: true });
+        await tick();
+        await goto('/uploader', { noScroll: true });
     }
 
     function applyEffect(effectId) {

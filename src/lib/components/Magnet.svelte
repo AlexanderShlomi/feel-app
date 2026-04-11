@@ -114,12 +114,7 @@
 
     // Legacy editor saved translation relative to FRAME_SIZE=300.
     const LEGACY_FRAME_SIZE = 300;
-    let translateX = 0;
-    let translateY = 0;
-    let zoom = 1;
-    let baseW = 0;
-    let baseH = 0;
-    
+
     $: hasTransform = transform && (
         (typeof transform.xPct === 'number' && transform.xPct !== 0) ||
         (typeof transform.yPct === 'number' && transform.yPct !== 0) ||
@@ -138,66 +133,82 @@
     // On desktop, using the store `size` avoids a ResizeObserver per tile and keeps uploads snappy.
     $: frameSize = $isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
 
-    function recomputeTransform() {
-        // Only for non-mosaic magnets, and only once we know image dimensions.
-        if (isSplitPart) return;
-        const z = transform?.zoom || 1;
-        zoom = z;
-
-        if (!imgElement || !isImageLoaded) {
-            translateX = 0;
-            translateY = 0;
-            return;
+    /** Derived from props + image geometry only (no separate mutable "transform cache"). */
+    $: cropForCss = (() => {
+        void layoutRefreshEpoch;
+        if (isSplitPart) return null;
+        const tr = transform;
+        const z = tr?.zoom ?? 1;
+        if (!imgElement || !isImageLoaded || !frameSize) {
+            return { z, tx: 0, ty: 0, bw: frameSize || 0, bh: frameSize || 0 };
         }
-
         const imgW = imgElement.naturalWidth || 0;
         const imgH = imgElement.naturalHeight || 0;
         if (!imgW || !imgH || !frameSize) {
-            translateX = 0;
-            translateY = 0;
-            return;
+            return { z, tx: 0, ty: 0, bw: frameSize, bh: frameSize };
         }
-        const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, frameSize, z);
-
-        // v2 (preferred): pct of allowed overflow range [-1..1]
-        if (typeof transform?.xPct === 'number' || typeof transform?.yPct === 'number') {
-            const t = pctToTranslate(transform?.xPct, transform?.yPct, maxX, maxY);
-            translateX = t.x;
-            translateY = t.y;
-            return;
-        }
-
-        // Legacy v1: stored relative to FRAME_SIZE=300, interpret as px in that space then clamp to current bounds.
-        const legacyX = typeof transform?.x === 'number' ? transform.x : 0;
-        const legacyY = typeof transform?.y === 'number' ? transform.y : 0;
-        translateX = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
-        translateY = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
-    }
-
-    function recomputeCoverBaseSize() {
-        if (isSplitPart) return;
-        if (!imgElement || !isImageLoaded) return;
-        const imgW = imgElement.naturalWidth || 0;
-        const imgH = imgElement.naturalHeight || 0;
-        if (!imgW || !imgH || !frameSize) return;
         const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, frameSize);
-        baseW = bw;
-        baseH = bh;
-    }
-    
+        const { maxX, maxY } = computeMaxTranslateFromBase(bw, bh, frameSize, z);
+        let tx = 0;
+        let ty = 0;
+        if (typeof tr?.xPct === 'number' || typeof tr?.yPct === 'number') {
+            const t = pctToTranslate(tr?.xPct, tr?.yPct, maxX, maxY);
+            tx = t.x;
+            ty = t.y;
+        } else {
+            const legacyX = typeof tr?.x === 'number' ? tr.x : 0;
+            const legacyY = typeof tr?.y === 'number' ? tr.y : 0;
+            tx = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
+            ty = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
+        }
+        return { z, tx, ty, bw, bh };
+    })();
+
     $: cssVars = (() => {
         void layoutRefreshEpoch;
+        const fw = frameSize || 150;
+        if (isSplitPart && transform) {
+            return `
+        --magnet-size: ${fw}px;
+        --zoom: 1;
+        --tx: 0px;
+        --ty: 0px;
+        --base-w: ${fw}px;
+        --base-h: ${fw}px;
+        --bg-w: ${transform.bgWidth}px;
+        --bg-h: ${transform.bgHeight}px;
+        --bg-x: ${transform.bgPosX}px;
+        --bg-y: ${transform.bgPosY}px;
+        --bg-url: url('${src}');
+    `;
+        }
+        const c = cropForCss;
+        if (!c) {
+            return `
+        --magnet-size: ${fw}px;
+        --zoom: 1;
+        --tx: 0px;
+        --ty: 0px;
+        --base-w: ${fw}px;
+        --base-h: ${fw}px;
+        --bg-w: 0px;
+        --bg-h: 0px;
+        --bg-x: 0px;
+        --bg-y: 0px;
+        --bg-url: url('${src}');
+    `;
+        }
         return `
-        --magnet-size: ${frameSize}px;
-        --zoom: ${(!isSplitPart && transform) ? (transform.zoom || 1) : 1};
-        --tx: ${(!isSplitPart && transform) ? translateX : 0}px;
-        --ty: ${(!isSplitPart && transform) ? translateY : 0}px;
-        --base-w: ${(!isSplitPart && baseW) ? baseW : frameSize}px;
-        --base-h: ${(!isSplitPart && baseH) ? baseH : frameSize}px;
-        --bg-w: ${(isSplitPart && transform) ? transform.bgWidth : 0}px;
-        --bg-h: ${(isSplitPart && transform) ? transform.bgHeight : 0}px;
-        --bg-x: ${(isSplitPart && transform) ? transform.bgPosX : 0}px;
-        --bg-y: ${(isSplitPart && transform) ? transform.bgPosY : 0}px;
+        --magnet-size: ${fw}px;
+        --zoom: ${c.z};
+        --tx: ${c.tx}px;
+        --ty: ${c.ty}px;
+        --base-w: ${c.bw}px;
+        --base-h: ${c.bh}px;
+        --bg-w: 0px;
+        --bg-h: 0px;
+        --bg-x: 0px;
+        --bg-y: 0px;
         --bg-url: url('${src}');
     `;
     })();
@@ -207,15 +218,6 @@
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
         hasLoadedOnce = true;
-        recomputeCoverBaseSize();
-        recomputeTransform();
-    }
-
-    // Recompute when transform / frame size changes after image load.
-    $: if (!isSplitPart && isImageLoaded && frameSize && transform) {
-        void layoutRefreshEpoch;
-        recomputeCoverBaseSize();
-        recomputeTransform();
     }
     
     // --- אירועים ---

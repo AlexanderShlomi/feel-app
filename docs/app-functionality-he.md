@@ -443,7 +443,15 @@
 
 **תכלית:** למנוע מאות כתיבות רצופות לדיסק בזמן גרירה/זום, ולשמור עקביות אחרי שהמשתמש «נח».
 
-**סנכרון ריאקטיבי אחרי שמירה בעורך (Persistent Layout):** משטח הקולקציה ב־`uploader/+layout.svelte` נשאר ב־DOM (מוסתר ב־`display:none` בזמן `/uploader/edit/...`). כדי ש־Zoom/Pan (ולמעשה כל עדכון transform) ישתקפו **מיד** בחזרה לקולקציה בלי להסיר אריחים או לטעון מחדש Blobs, קיים `lastWorkspaceLayoutRefreshSignal` ב־`stores.js` עם `bumpWorkspaceLayoutRefreshSignal()` — נקרא אחרי שמירה בעורך המגנט ובשמירת פסיפס (לפני רינדור מחדש של הרשת). הערך מועבר ל־`Magnet` כ־`layoutRefreshEpoch` ומאלץ חישוב מחדש של ה־CSS transforms (ללא remount).
+**סנכרון ריאקטיבי אחרי שמירה בעורך (Persistent Layout):** משטח הקולקציה ב־`uploader/+layout.svelte` נשאר ב־DOM (מוסתר ב־`display:none` בזמן `/uploader/edit/...`). כדי ש־Zoom/Pan ישתקפו **מיד ובדיוק מלא** (בלי «סטייה» בניסיון שמירה ראשון בגלל state ישן), נהוג **פרוטוקול שמירה אטומי** (בעורך המגנט: `saveAndClose`; בשמירת פסיפס: `handleSaveMosaic`):
+
+1. עדכון ה־store (`updateMagnetTransform` מחליף מערך מלא עם שכפול שורות; `editorSettings` בפסיפס).
+2. `await tick()` — להמתין לסינכרון ה־DOM/ריאקטיביות של Svelte אחרי עדכון ה־store.
+3. `bumpWorkspaceLayoutRefreshSignal()` — עדכון `lastWorkspaceLayoutRefreshSignal` כדי שהקולקציה תידע לאלץ סנכרון transform.
+4. `await tick()` נוסף — לאפשר ל־`Magnet` להשלים חישוב CSS (משתנה `layoutRefreshEpoch`) לפני מעבר מסך.
+5. רק אז ניווט (`goto` בעורך) או המשך רינדור רשת הפסיפס (`calculateAndRenderSplitGrid`).
+
+ב־`Magnet.svelte` משתני ה־crop ל־CSS נגזרים בבלוק ריאקטיבי מ־props (`transform`) + מימדי תמונה + `layoutRefreshEpoch`, בלי cache מקומי של transform שיכול להיצמד לערך ישן. אין הסרת אריחים ואין טעינת Blobs מחדש.
 
 **הערה:** הסל (`cart`) נשמר **מיד** בלי debounce (subscribe ישיר ל־`setItem`), כי כמות האירועים נמוכה יחסית וההשלכות כספיות דורשות עקביות.
 

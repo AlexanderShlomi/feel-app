@@ -673,5 +673,9 @@ export function updateMagnetProcessedSrc(id, eff, src) {
         return { ...m, processed, processedOrder: nextOrder };
     }));
 }
-export function updateMagnetTransform(id, tr) { magnets.update(l => l.map(m => m.id===id ? {...m, transform:tr} : m)); }
+export function updateMagnetTransform(id, tr) {
+    const nextTransform = { ...tr };
+    // New array + shallow-clone every row so downstream reactivity never reads a stale row reference.
+    magnets.update((l) => l.map((m) => (m.id === id ? { ...m, transform: nextTransform } : { ...m })));
+}
 export function updateMagnetActiveEffect(id, eff) { magnets.update(l => l.map(m => m.id===id ? {...m, activeEffectId:eff} : m)); }

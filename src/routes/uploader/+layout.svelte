@@ -613,11 +613,13 @@
         });
     }
 
-    function handleSaveMosaic(event) {
+    async function handleSaveMosaic(event) {
         const newTransform = event.detail;
         if (loaderEl) loaderEl.style.display = 'block';
         editorSettings.update(s => ({ ...s, splitTransform: newTransform }));
+        await tick();
         bumpWorkspaceLayoutRefreshSignal();
+        await tick();
         isSplitEditing = false;
         setTimeout(calculateAndRenderSplitGrid, 50);
     }
