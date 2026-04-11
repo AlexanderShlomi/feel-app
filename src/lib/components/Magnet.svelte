@@ -6,6 +6,8 @@
     
     export let id;
     export let src; 
+    /** Full-resolution blob/URL — same as editor; Law A accuracy */
+    export let originalSrc = null;
     export let size = 150; 
     export let transform = null;
     export let isSplitPart = false;
@@ -46,7 +48,9 @@
         editNavSawKitNavigating = false;
     }
 
-    let displaySrc = src;
+    /** Single source for raster: prefer original blob over any derived `src` */
+    $: baseUrl = originalSrc || src;
+    let displaySrc = '';
     let srcSwapToken = 0;
 
     function decodeImageUrl(url) {
@@ -137,16 +141,21 @@
     $: filterCss = presentation?.filterCss ?? '';
     $: cssVars = presentation?.cssVars ?? '';
 
-    $: if (!isSplitPart && browser && src !== displaySrc) {
-        swapDisplaySrcWhenReady(src);
+    $: if (!isSplitPart && browser && baseUrl !== displaySrc) {
+        swapDisplaySrcWhenReady(baseUrl);
     }
 
     $: frameSize = isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
 
     $: void layoutRefreshEpoch;
 
-    function handleImageLoad() {
+    async function handleImageLoad() {
         if (!imgElement) return;
+        if (typeof imgElement.decode === 'function') {
+            try {
+                await imgElement.decode();
+            } catch {}
+        }
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
         hasLoadedOnce = true;
@@ -219,7 +228,7 @@
                 draggable="false"
                 loading="eager"
                 decoding="async"
-                fetchpriority="auto"
+                fetchpriority={isMobile ? 'low' : 'auto'}
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}

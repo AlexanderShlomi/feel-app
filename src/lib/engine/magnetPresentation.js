@@ -38,6 +38,8 @@ export function computeMagnetPresentation(magnet, metrics, layoutRefreshEpoch = 
 	void layoutRefreshEpoch;
 	const tr = magnet.transform;
 	const isSplitPart = !!magnet.isSplitPart;
+	/** Law A: same full-res URL as editor (`originalSrc || src`), never a downscaled preview. */
+	const rasterUrl = magnet.originalSrc || magnet.src;
 	const activeEffectId = magnet.activeEffectId ?? 'original';
 	const filterCss = getFilterStyle(activeEffectId);
 
@@ -66,7 +68,7 @@ export function computeMagnetPresentation(magnet, metrics, layoutRefreshEpoch = 
         --bg-h: ${tr.bgHeight}px;
         --bg-x: ${tr.bgPosX}px;
         --bg-y: ${tr.bgPosY}px;
-        --bg-url: url('${magnet.src}');
+        --bg-url: url('${rasterUrl}');
     `
 		};
 	}
@@ -97,7 +99,7 @@ export function computeMagnetPresentation(magnet, metrics, layoutRefreshEpoch = 
         --bg-h: 0px;
         --bg-x: 0px;
         --bg-y: 0px;
-        --bg-url: url('${magnet.src}');
+        --bg-url: url('${rasterUrl}');
     `
 		};
 	}
@@ -132,7 +134,7 @@ export function computeMagnetPresentation(magnet, metrics, layoutRefreshEpoch = 
         --bg-h: 0px;
         --bg-x: 0px;
         --bg-y: 0px;
-        --bg-url: url('${magnet.src}');
+        --bg-url: url('${rasterUrl}');
     `
 	};
 }
