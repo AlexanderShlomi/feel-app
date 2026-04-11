@@ -191,6 +191,18 @@ export function getCssFilter(effectId) {
 export const magnets = writable([]); 
 export const editingItemId = writable(null);
 
+/**
+ * Bump when returning from embedded editors to the persistent uploader workspace.
+ * The workspace in `uploader/+layout.svelte` stays mounted (`display:none` during edit),
+ * so child `Magnet` tiles may miss transform/CSS sync; consumers pass this epoch into
+ * `Magnet` to force transform recompute without remounting or revoking blobs.
+ */
+export const lastWorkspaceLayoutRefreshSignal = writable(0);
+
+export function bumpWorkspaceLayoutRefreshSignal() {
+    lastWorkspaceLayoutRefreshSignal.set(Date.now());
+}
+
 export const editorSettings = writable({
     currentProductType: PRODUCT_TYPES.MAGNETS_PACK,
     currentDisplayScale: SCALE_DEFAULT, 

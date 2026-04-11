@@ -3,7 +3,7 @@
     import { get } from 'svelte/store';
     import { page } from '$app/stores';
     import { goto } from '$app/navigation';
-    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction, isMobile } from '$lib/stores.js';
+    import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction, isMobile, bumpWorkspaceLayoutRefreshSignal } from '$lib/stores.js';
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, translateToPct, clamp } from '$lib/utils/cropMath.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
@@ -406,6 +406,7 @@
             xPct: clamp(xPct, -1, 1),
             yPct: clamp(yPct, -1, 1)
         });
+        bumpWorkspaceLayoutRefreshSignal();
         goto('/uploader', { noScroll: true });
     }
 

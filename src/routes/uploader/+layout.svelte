@@ -18,7 +18,9 @@
     
     import { 
         magnets, 
-        editorSettings, 
+        editorSettings,
+        lastWorkspaceLayoutRefreshSignal,
+        bumpWorkspaceLayoutRefreshSignal,
         isMobile,
         addUploadedMagnets,
         setUploaderScrollActive,
@@ -211,6 +213,10 @@
     })();
     
     $: canAddToCartMosaic = !!$editorSettings.splitImageSrc;
+
+    // Persistent workspace stays mounted during `/uploader/edit/...`; `layoutRefreshEpoch` on each `Magnet`
+    // forces transform/CSS sync when `bumpWorkspaceLayoutRefreshSignal()` runs after editor save.
+    $: void $lastWorkspaceLayoutRefreshSignal;
 
     onMount(() => {
         window.addEventListener('dragstart', preventDragStart);
@@ -611,6 +617,7 @@
         const newTransform = event.detail;
         if (loaderEl) loaderEl.style.display = 'block';
         editorSettings.update(s => ({ ...s, splitTransform: newTransform }));
+        bumpWorkspaceLayoutRefreshSignal();
         isSplitEditing = false;
         setTimeout(calculateAndRenderSplitGrid, 50);
     }
@@ -738,6 +745,7 @@
                 <Magnet 
                     {...magnet}
                     position={{x:0, y:0}} 
+                    layoutRefreshEpoch={$lastWorkspaceLayoutRefreshSignal}
                     isSplitPart={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
                     hidden={magnet.hidden} 
                     on:delete={handleDeleteRequest}
