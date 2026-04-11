@@ -438,10 +438,12 @@
 **איפה:** `src/lib/stores.js`
 
 - על כל שינוי ב־`magnets` או ב־`editorSettings` נקראת `triggerAutoSave`.
-- **`setTimeout` של 1000ms (שנייה אחת):** ביטול הטיימר הקודם לפני תזמון חדש — דפוס **debounce**.
-- אחרי השהיה: אם יש מגנטים או `splitImageSrc`, נשמר ל־IndexedDB דרך `saveStateToStorage` (המרות Blob→Base64 לפי הצורך).
+- **Debounce:** השהיה תלוית־viewport (למשל ~8s במובייל, ~2s בדסקטופ — ראו `getAutosaveDelayMs` בקוד), וביטול הטיימר הקודם לפני תזמון חדש; לאחר מכן עבודה ב־`requestIdleCallback` (עם נפילה ל־`setTimeout`) כדי לא לחסום אינטראקציה.
+- אחרי ההשהיה: אם יש מגנטים או `splitImageSrc`, נשמר ל־IndexedDB דרך `saveStateToStorage` (המרות Blob→Base64 לפי הצורך).
 
 **תכלית:** למנוע מאות כתיבות רצופות לדיסק בזמן גרירה/זום, ולשמור עקביות אחרי שהמשתמש «נח».
+
+**סנכרון ריאקטיבי אחרי שמירה בעורך (Persistent Layout):** משטח הקולקציה ב־`uploader/+layout.svelte` נשאר ב־DOM (מוסתר ב־`display:none` בזמן `/uploader/edit/...`). כדי ש־Zoom/Pan (ולמעשה כל עדכון transform) ישתקפו **מיד** בחזרה לקולקציה בלי להסיר אריחים או לטעון מחדש Blobs, קיים `lastWorkspaceLayoutRefreshSignal` ב־`stores.js` עם `bumpWorkspaceLayoutRefreshSignal()` — נקרא אחרי שמירה בעורך המגנט ובשמירת פסיפס (לפני רינדור מחדש של הרשת). הערך מועבר ל־`Magnet` כ־`layoutRefreshEpoch` ומאלץ חישוב מחדש של ה־CSS transforms (ללא remount).
 
 **הערה:** הסל (`cart`) נשמר **מיד** בלי debounce (subscribe ישיר ל־`setItem`), כי כמות האירועים נמוכה יחסית וההשלכות כספיות דורשות עקביות.
 

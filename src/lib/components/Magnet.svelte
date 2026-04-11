@@ -11,6 +11,8 @@
     export let isSplitPart = false;
     export let hidden = false; 
     export let activeEffectId = 'original';
+    /** Incremented by parent after editor save so transforms re-sync while workspace stayed mounted. */
+    export let layoutRefreshEpoch = 0;
     
     const dispatch = createEventDispatcher();
     
@@ -183,7 +185,9 @@
         baseH = bh;
     }
     
-    $: cssVars = `
+    $: cssVars = (() => {
+        void layoutRefreshEpoch;
+        return `
         --magnet-size: ${frameSize}px;
         --zoom: ${(!isSplitPart && transform) ? (transform.zoom || 1) : 1};
         --tx: ${(!isSplitPart && transform) ? translateX : 0}px;
@@ -196,6 +200,7 @@
         --bg-y: ${(isSplitPart && transform) ? transform.bgPosY : 0}px;
         --bg-url: url('${src}');
     `;
+    })();
 
     function handleImageLoad() {
         if (!imgElement) return;
@@ -208,6 +213,7 @@
 
     // Recompute when transform / frame size changes after image load.
     $: if (!isSplitPart && isImageLoaded && frameSize && transform) {
+        void layoutRefreshEpoch;
         recomputeCoverBaseSize();
         recomputeTransform();
     }
