@@ -1,4 +1,5 @@
 <script>
+    import { fromStore } from 'svelte/store';
     import { page, navigating } from '$app/stores';
     import '../app.css'; 
     import Header from '$lib/components/Header.svelte';
@@ -6,22 +7,45 @@
     import AuthModal from '$lib/components/AuthModal.svelte';
     import PrivacyPolicy from '$lib/components/PrivacyPolicy.svelte';
     import CookiePolicy from '$lib/components/CookiePolicy.svelte';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, setContext } from 'svelte';
     import { OPEN_PRIVACY_EVENT, OPEN_COOKIE_POLICY_EVENT } from '$lib/privacyCheckoutConsent.js';
-    import { initApp, isGlobalLoading } from '$lib/stores.js';
+    import { initApp, isBlockingUi, bindEngine } from '$lib/stores.js';
+    import { createFeelEngine, FEEL_ENGINE_KEY } from '$lib/engine/FeelEngine.svelte.js';
+    import { setItem } from '$lib/utils/idb.js';
     import { initAuth } from '$lib/authStore';
     import { fetchCurrentPrivacyPolicy } from '$lib/privacyPolicyStore.js';
 
+    const feelEngine = createFeelEngine();
+    setContext(FEEL_ENGINE_KEY, feelEngine);
+    bindEngine(feelEngine);
+
+    const CART_DB_KEY = 'feel_cart_db_v1';
+
+    $effect(() => {
+        void feelEngine.magnets;
+        void feelEngine.editorSettings;
+        feelEngine.triggerAutoSave();
+    });
+
+    $effect(() => {
+        void feelEngine.cart;
+        setItem(CART_DB_KEY, feelEngine.cart).catch((e) => console.error('DB Save Error:', e));
+    });
+
     /** @type {{ siteUrl: string }} */
-    export let data;
+    let { data } = $props();
 
     const siteTitle = 'FEEL - LUXURY MEMORIES';
     const siteDescription = 'לעצור את הזמן – להרגיש את הרגע';
 
-    $: siteBase = (data?.siteUrl ?? '').replace(/\/$/, '');
-    $: ogImageAbsolute = siteBase ? `${siteBase}/FeelLogo.svg` : '';
-    $: canonicalUrl =
-        siteBase && $page?.url ? `${siteBase}${$page.url.pathname}${$page.url.search}` : '';
+    const siteBase = $derived((data?.siteUrl ?? '').replace(/\/$/, ''));
+    const ogImageAbsolute = $derived(siteBase ? `${siteBase}/FeelLogo.svg` : '');
+    const pageRef = fromStore(page);
+    const canonicalUrl = $derived.by(() => {
+        const p = pageRef.current;
+        const base = (data?.siteUrl ?? '').replace(/\/$/, '');
+        return base && p?.url ? `${base}${p.url.pathname}${p.url.search}` : '';
+    });
 
     let isMenuOpen = false;
     let showPrivacy = false;
@@ -122,7 +146,7 @@
         initApp();
         initAuth();
         fetchCurrentPrivacyPolicy();
-        const unsub = isGlobalLoading.subscribe((loading) => {
+        const unsub = isBlockingUi.subscribe((loading) => {
             // Clear any pending timers first.
             if (loaderShowTimer) clearTimeout(loaderShowTimer);
             if (loaderHideTimer) clearTimeout(loaderHideTimer);
@@ -274,7 +298,7 @@
         top: 0;
         left: 0;
         width: 100%;
-        height: 100%;
+        height: 100dvh;
         background-color: rgba(255, 255, 255, 0.5); /* רקע חצי שקוף */
         z-index: 10000; /* מעל הכל, כולל סל הקניות */
         pointer-events: none; /* כדי לא לחסום לחיצות אם זה נתקע, או auto כדי לחסום */

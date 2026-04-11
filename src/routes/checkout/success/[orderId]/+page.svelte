@@ -162,7 +162,7 @@
 
 <style>
     .success-page {
-        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
         min-height: calc(100dvh - 70px);
         background: #F2F0EC;
         padding: 26px 16px 40px;

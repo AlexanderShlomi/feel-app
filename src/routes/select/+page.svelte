@@ -75,7 +75,7 @@
 <style>
     /* --- הגדרות כלליות לעמוד --- */
     .selection-content {
-        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
         min-height: calc(100dvh - 70px);
         display: flex;
         flex-direction: column;
@@ -231,7 +231,7 @@
         /* 🔥 תיקון פס שחור - רקע בהיר לכל הדף */
         :global(.page-container) {
             background-color: var(--color-canvas-bg) !important;
-            min-height: 100vh;
+            min-height: 100dvh;
             min-height: 100dvh;
             height: auto;
         }
@@ -239,7 +239,7 @@
         .selection-content {
             padding-top: 20px;
             padding-bottom: 40px;
-            min-height: calc(100vh - 70px);
+            min-height: calc(100dvh - 70px);
             min-height: calc(100dvh - 70px);
             height: auto;
             flex: 1;

@@ -430,7 +430,7 @@
         inset: 0;
         width: auto;
         height: auto;
-        min-height: 100vh;
+        min-height: 100dvh;
         min-height: 100dvh;
         background: rgba(0, 0, 0, 0.4);
         z-index: 6500 !important;
@@ -443,7 +443,7 @@
         left: 0;
         width: 360px;
         max-width: 85%;
-        height: 100vh;
+        height: 100dvh;
         height: 100dvh;
         max-height: 100dvh;
         background: #fff;

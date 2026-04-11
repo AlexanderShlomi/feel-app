@@ -68,7 +68,7 @@
         inset: 0;
         width: auto;
         height: auto;
-        min-height: 100vh;
+        min-height: 100dvh;
         min-height: 100dvh;
         background: rgba(13, 13, 13, 0.8);
         backdrop-filter: blur(20px);
@@ -190,7 +190,7 @@
             align-items: stretch;
         }
         .privacy-modal {
-            height: 100vh;
+            height: 100dvh;
             height: 100dvh;
             max-height: 100dvh;
             border-radius: 0;
