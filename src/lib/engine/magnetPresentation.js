@@ -112,11 +112,14 @@ export function computeMagnetPresentation(magnet, metrics, layoutRefreshEpoch = 
 		const t = pctToTranslate(tr?.xPct, tr?.yPct, maxX, maxY);
 		tx = t.x;
 		ty = t.y;
-	} else {
+	} else if (typeof tr?.x === 'number' || typeof tr?.y === 'number') {
 		const legacyX = typeof tr?.x === 'number' ? tr.x : 0;
 		const legacyY = typeof tr?.y === 'number' ? tr.y : 0;
 		tx = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
 		ty = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
+	} else if (naturalH > naturalW) {
+		// Default portrait: top-align (same as editor applyDefaultPositioning / Law A)
+		ty = maxY;
 	}
 	const c = { z, tx, ty, bw, bh };
 	const fw = frameSize || 150;

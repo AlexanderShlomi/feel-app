@@ -26,8 +26,8 @@
     
     let imgElement;
     let isLandscape = true; 
+    /** True only after onload + decode — controls skeleton + fade-in */
     let isImageLoaded = false;
-    let hasLoadedOnce = false;
 
     let editNavPending = false;
     let editNavSawKitNavigating = false;
@@ -57,16 +57,19 @@
         return new Promise((resolve) => {
             if (!browser || !url) return resolve(false);
             try {
-                const pre = new Image();
-                pre.decoding = 'async';
-                pre.onload = async () => {
-                    try {
-                        if (typeof pre.decode === 'function') await pre.decode();
-                    } catch {}
-                    resolve(true);
+                const run = () => {
+                    const pre = new Image();
+                    pre.decoding = 'async';
+                    pre.onload = async () => {
+                        try {
+                            if (typeof pre.decode === 'function') await pre.decode();
+                        } catch {}
+                        resolve(true);
+                    };
+                    pre.onerror = () => resolve(false);
+                    pre.src = url;
                 };
-                pre.onerror = () => resolve(false);
-                pre.src = url;
+                requestAnimationFrame(() => requestAnimationFrame(run));
             } catch {
                 resolve(false);
             }
@@ -76,21 +79,15 @@
     async function swapDisplaySrcWhenReady(next) {
         const token = ++srcSwapToken;
         if (!next) {
-            displaySrc = next;
-            return;
-        }
-        if (!hasLoadedOnce || !displaySrc) {
-            displaySrc = next;
+            displaySrc = '';
+            isImageLoaded = false;
             return;
         }
         if (next === displaySrc) return;
 
-        const ok = await decodeImageUrl(next);
+        isImageLoaded = false;
+        await decodeImageUrl(next);
         if (token !== srcSwapToken) return;
-        if (!ok) {
-            displaySrc = next;
-            return;
-        }
         displaySrc = next;
     }
 
@@ -158,7 +155,6 @@
         }
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
-        hasLoadedOnce = true;
         try {
             getFeelEngine().reportMagnetMetrics(id, {
                 frameSize,
@@ -220,6 +216,9 @@
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
         {:else}
+            {#if !isImageLoaded && displaySrc}
+                <div class="raster-skeleton" aria-hidden="true"></div>
+            {/if}
             <img 
                 src={displaySrc} 
                 bind:this={imgElement}
@@ -228,11 +227,11 @@
                 draggable="false"
                 loading="eager"
                 decoding="async"
-                fetchpriority={isMobile ? 'low' : 'auto'}
+                fetchpriority="auto"
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}
-                class:loaded={hasLoadedOnce}
+                class:raster-visible={isImageLoaded}
                 style="{filterCss}" 
                 on:error={handleImageError} 
             />
@@ -277,6 +276,21 @@
     }
     .image-wrapper.is-edit-navigating .magnet-image { opacity: 0.72; filter: brightness(0.96); }
 
+    .raster-skeleton {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        border-radius: inherit;
+        background: linear-gradient(110deg, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.09) 45%, rgba(0,0,0,0.04) 90%);
+        background-size: 200% 100%;
+        animation: magnetSkeletonPulse 1.5s ease-in-out infinite;
+        pointer-events: none;
+    }
+    @keyframes magnetSkeletonPulse {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 0.55; }
+    }
+
     .edit-nav-overlay {
         position: absolute;
         inset: 0;
@@ -313,16 +327,23 @@
         height: var(--base-h);
         transform-origin: center center;
         will-change: transform;
-        opacity: 1;
+        opacity: 0;
+        transition: opacity 0.22s ease-out, transform 0.2s ease-out;
         transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
+    }
+    .magnet-image.raster-visible {
+        opacity: 1;
     }
     
     .magnet-image.is-landscape { width: var(--base-w); height: var(--base-h); }
-    .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); }
+    .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); object-position: top center; }
     
     @media (hover: hover) {
         .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
         .magnet.desktop-mode:hover .overlay { opacity: 1; }
+        .magnet.desktop-mode:hover .magnet-image.raster-visible {
+            transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(calc(var(--zoom) * 1.04));
+        }
     }
     
     .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }
