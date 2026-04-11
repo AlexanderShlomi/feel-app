@@ -272,7 +272,7 @@
                 on:load={handleImageLoad}
                 alt="" 
                 draggable="false"
-                loading="lazy"
+                loading="eager"
                 decoding="async"
                 fetchpriority="auto"
                 class="magnet-image"

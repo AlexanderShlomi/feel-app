@@ -68,7 +68,7 @@
         <div class="header-right" aria-hidden="true"></div>
         <div class="header-center">
             <a href="/" class="logo" on:click={closeMenu}>
-                <img src="/Logo.svg" alt="FEEL Logo" class="logo-img" />
+                <img src="/Logo.svg" alt="FEEL Logo" class="logo-img" loading="eager" decoding="async" />
             </a>
         </div>
         <div class="header-left">
@@ -89,6 +89,8 @@
                             alt=""
                             width="40"
                             height="40"
+                            loading="eager"
+                            decoding="async"
                         />
                     {:else}
                         <div class="user-avatar user-avatar-fallback" aria-hidden="true">

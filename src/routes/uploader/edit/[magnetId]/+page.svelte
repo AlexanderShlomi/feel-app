@@ -445,6 +445,7 @@
                         bind:this={bgImageEl}
                         on:load={(e) => { isImageDecoded = true; onBgImageLoad(e); }}
                         style="{resolvedFilterCss}; width: {coverBaseW ? `${coverBaseW}px` : 'auto'}; height: {coverBaseH ? `${coverBaseH}px` : 'auto'};"
+                        loading="eager"
                         decoding="async"
                         fetchpriority="high"
                         alt="editing source"

@@ -274,6 +274,8 @@
                         transform: translate({translateX}px, {translateY}px) scale({scale});
                     "
                     draggable="false"
+                    loading="eager"
+                    decoding="async"
                     alt="editing source"
                 />
 

@@ -17,7 +17,7 @@
     
     <div class="header-center">
         <a href="/" class="logo">
-            <img src="/Logo.svg" alt="FEEL Logo" class="logo-img">
+            <img src="/Logo.svg" alt="FEEL Logo" class="logo-img" loading="eager" decoding="async">
         </a>
     </div>
 

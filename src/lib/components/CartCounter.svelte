@@ -256,7 +256,7 @@
                         {#if item.type === PRODUCT_TYPES.GIFT}
                             <div class="cart-item gift-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image gift-border">
-                                    <img src={item.previewImage} alt="Gift" loading="lazy" decoding="async" />
+                                    <img src={item.previewImage} alt="Gift" loading="eager" decoding="async" />
                                     <div class="gift-icon-overlay">🎁</div>
                                 </div>
                                 <div class="item-details">
@@ -279,7 +279,7 @@
                         {:else if item.type === PRODUCT_TYPES.MOSAIC}
                             <div class="cart-item mosaic-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image mosaic-border">
-                                    <img src={item.previewImage} alt="Mosaic" loading="lazy" decoding="async" />
+                                    <img src={item.previewImage} alt="Mosaic" loading="eager" decoding="async" />
                                     <div class="type-badge">פסיפס</div>
                                 </div>
                                 <div class="item-details">
@@ -303,7 +303,7 @@
                             <div class="cart-item" transition:slide={{ duration: ($isMobile || prefersReducedMotion) ? 0 : 220 }}>
                                 <div class="item-image">
                                     {#if item.previewImage}
-                                        <img src={item.previewImage} alt="Preview" loading="lazy" decoding="async" />
+                                        <img src={item.previewImage} alt="Preview" loading="eager" decoding="async" />
                                     {:else}
                                         <div class="no-img">📷</div>
                                     {/if}
