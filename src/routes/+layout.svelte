@@ -47,14 +47,15 @@
         return base && p?.url ? `${base}${p.url.pathname}${p.url.search}` : '';
     });
 
-    let isMenuOpen = false;
-    let showPrivacy = false;
-    let showCookiePolicy = false;
-    let showAuth = false;
+    /** Runes $state — required so bind:isOpen / toggles update SideMenu & overlays (Svelte 5). */
+    let isMenuOpen = $state(false);
+    let showPrivacy = $state(false);
+    let showCookiePolicy = $state(false);
+    let showAuth = $state(false);
 
     // Mobile-first UX: avoid loader flicker on quick operations.
     // Show only if loading lasts long enough, and keep visible for a minimum duration.
-    let showGlobalLoader = false;
+    let showGlobalLoader = $state(false);
     let loaderVisibleSince = 0;
     let loaderShowTimer;
     let loaderHideTimer;

@@ -32,11 +32,13 @@
             ? !privacyNeedsReaccept($profile, $currentPrivacyPolicy) || privacyReadChecked
             : privacyReadChecked);
 
-    $: items = $cart;
+    /** Explicit subscribe — reliable with FeelEngine `toStore` bridge (Svelte 5). */
+    let items = [];
+    let total = 0;
     $: count = items.length;
-    $: total = $cartTotal;
 
-    let isOpen = false; 
+    let isOpen = false;
+    $: if (items.length === 0) isOpen = false; 
     let prefersReducedMotion = false;
 
     // iOS Safari: prevent viewport/scrollbar churn while the drawer is open.
@@ -84,16 +86,29 @@
     $: if (!isOpen) unlockBodyScroll();
 
     onMount(() => {
+        const unsubCart = cart.subscribe((v) => {
+            items = v;
+        });
+        const unsubTotal = cartTotal.subscribe((v) => {
+            total = v;
+        });
         try {
             const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
             if (mq) {
                 prefersReducedMotion = !!mq.matches;
                 const onChange = (e) => (prefersReducedMotion = !!e.matches);
                 mq.addEventListener?.('change', onChange);
-                return () => mq.removeEventListener?.('change', onChange);
+                return () => {
+                    unsubCart();
+                    unsubTotal();
+                    mq.removeEventListener?.('change', onChange);
+                };
             }
         } catch {}
-        return undefined;
+        return () => {
+            unsubCart();
+            unsubTotal();
+        };
     });
 
     onDestroy(() => {
@@ -150,7 +165,7 @@
     function handleDelete(itemId) {
         if (confirm('בטוח שאתה רוצה להסיר את הפריט מהסל?')) {
             removeCartItem(itemId);
-            if ($cart.length === 0) isOpen = false;
+            if (items.length === 0) isOpen = false;
         }
     }
 

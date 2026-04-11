@@ -211,7 +211,15 @@
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
 
-    function onEditorImageLoad(e) {
+    async function onEditorImageLoad(e) {
+        const el = e?.currentTarget;
+        if (el && typeof el.decode === 'function') {
+            try {
+                await el.decode();
+            } catch {
+                /* decode optional; onload already fired */
+            }
+        }
         editorImagePainted = true;
         onBgImageLoad(e);
     }
