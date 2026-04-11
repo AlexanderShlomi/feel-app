@@ -38,13 +38,37 @@ export const fileToBase64 = (blob) => {
     });
 };
 
+// Stable blob: URLs for repeated hydration (IndexedDB → workspace) — same data: URL must not create new object URLs each time.
+// No LRU eviction: revoking a cached URL while a magnet still references it would break thumbnails. Cleared in resetSystem only.
+const dataUrlToBlobUrlCache = new Map();
+
+function dataUrlCacheGet(key) {
+    if (!key) return null;
+    return dataUrlToBlobUrlCache.get(key) || null;
+}
+
+function dataUrlCacheSet(key, url) {
+    if (!key || !url) return;
+    dataUrlToBlobUrlCache.set(key, url);
+}
+
+/** Call after blob: URLs from this cache were revoked elsewhere (e.g. resetSystem). */
+export function clearDataUrlBlobUrlCache() {
+    dataUrlToBlobUrlCache.clear();
+}
+
 // המרה חזרה לתמונה לתצוגה
 export const base64ToBlobUrl = async (base64Data) => {
     if (!base64Data) return null;
+    if (typeof base64Data === 'string' && base64Data.startsWith('blob:')) return base64Data;
+    const hit = dataUrlCacheGet(base64Data);
+    if (hit) return hit;
     try {
         const res = await fetch(base64Data);
         const blob = await res.blob();
-        return URL.createObjectURL(blob);
+        const url = URL.createObjectURL(blob);
+        dataUrlCacheSet(base64Data, url);
+        return url;
     } catch (e) {
         console.error('Failed to convert base64 to blob', e);
         return null;

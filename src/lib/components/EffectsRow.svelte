@@ -22,7 +22,7 @@
           src="/effects.png"
           alt=""
           style="filter: {effect.css};"
-          loading="lazy"
+          loading="eager"
           decoding="async"
           fetchpriority="low"
           width={thumbPx}

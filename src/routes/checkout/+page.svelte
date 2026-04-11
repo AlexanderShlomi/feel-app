@@ -583,7 +583,7 @@
                             <div class="summary-item" role="listitem">
                                 <div class="item-img">
                                     {#if item.previewImage}
-                                        <img src={item.previewImage} alt={item.title} />
+                                        <img src={item.previewImage} alt={item.title} loading="eager" decoding="async" />
                                     {:else}
                                         <div class="no-img">—</div>
                                     {/if}

@@ -2,7 +2,7 @@
 
 import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
-import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl } from '$lib/utils/storage.js';
+import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl, clearDataUrlBlobUrlCache } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
 
 // 🔥 Store לניהול הטעינה הגלובלית
@@ -575,6 +575,7 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
         splitImageSrc: null, splitImageRatio: 1, gridBaseSize: 3, currentEffect: 'original',
         splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, splitImageCache: {}, giftImage: null
     });
+    try { clearDataUrlBlobUrlCache(); } catch {}
     clearStorage();
 }
 

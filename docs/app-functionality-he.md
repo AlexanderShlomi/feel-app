@@ -123,7 +123,15 @@
 
 ---
 
-## דף העריכה וההעלאה — קולקציית תמונות (`src/routes/uploader/+page.svelte`)
+## דף העריכה וההעלאה — קולקציית תמונות (`src/routes/uploader/+layout.svelte`, `+page.svelte`)
+
+**מחזור חיים (Lifecycle) — ביצועים:**
+
+- משטח הקולקציה, ה־`FileUploader`, ה־Dock והפאנלים חיים ב־**`src/routes/uploader/+layout.svelte`** ו־**לא עוברים unmount** במעבר ל־`/uploader/edit/[magnetId]`. המשטח מוסתר ב־`display: none` בזמן עריכת מגנט בודד, כדי לשמור על טעינת תמונות מקורית (Original Blobs) ועל פענוח בזיכרון ללא הבהוב בחזרה לקולקציה.
+- **`src/routes/uploader/+page.svelte`** ריק במכוון — התוכן נטען מה־layout. עמוד העורך (`edit/[magnetId]/+page.svelte`) מוצג ב־`<slot />` של אותו layout.
+- **שחזור גלילה:** חזרה מ־`/uploader/edit/...` ל־`/uploader` משחזרת את מיקום הגלילה דרך `afterNavigate` + `sessionStorage` (מפתח `feel_uploader_scroll_v1`).
+- **מטמון Blob להידרציה:** ב־`src/lib/utils/storage.js`, `base64ToBlobUrl` משתמש במפה גלובלית (מפתח: מחרוזת `data:`) כדי שלא ייווצרו `createObjectURL` כפולים לאותו מקור בעת טעינת Workspace מה־IndexedDB. המפה מתנקה ב־`resetSystem` (יחד עם `clearDataUrlBlobUrlCache`).
+- **תמונות:** רכיבי `<img>` רלוונטיים משתמשים ב־`decoding="async"` ו־`loading="eager"` במסלולי העורך/קולקציה כדי להפחית חסימת Main Thread ב־decode; על אריחי המגנט/פסיפס הוחלו `content-visibility: auto` ו־`contain-intrinsic-size` לסיוע בגלילה.
 
 ### מנוע הגריד החופשי (Layout Engine)
 
@@ -197,7 +205,7 @@
 
 ---
 
-## דף העריכה — פסיפס (אותו `uploader/+page.svelte`, מצב `PRODUCT_TYPES.MOSAIC`)
+## דף העריכה — פסיפס (אותו `uploader/+layout.svelte`, מצב `PRODUCT_TYPES.MOSAIC`)
 
 ### כללי
 

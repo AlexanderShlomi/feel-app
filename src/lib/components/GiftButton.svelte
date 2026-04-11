@@ -97,7 +97,7 @@
 
                 <div class="image-preview-area square-ratio" role="button" tabindex="0" aria-label="בחר או החלף תמונה למתנה" on:click={triggerUpload} on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && triggerUpload()}>
                     {#if $editorSettings.giftImage}
-                        <img src={$editorSettings.giftImage} alt="Gift" class="uploaded-gift-img" />
+                        <img src={$editorSettings.giftImage} alt="Gift" class="uploaded-gift-img" loading="eager" decoding="async" />
                         <div class="overlay-hint">לחץ להחלפה</div>
                     {:else}
                         <div class="placeholder-content">

@@ -625,7 +625,7 @@
                                             <img
                                                 src={line.thumbnail_url}
                                                 alt=""
-                                                loading="lazy"
+                                                loading="eager"
                                                 decoding="async"
                                             />
                                         {:else}

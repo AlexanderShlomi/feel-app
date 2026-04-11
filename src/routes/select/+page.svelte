@@ -39,7 +39,7 @@
             </h4>
 
             <div class="card-visual">
-                <img src="/magnets-pack.png" alt="מגנטים בודדים" />
+                <img src="/magnets-pack.png" alt="מגנטים בודדים" loading="eager" decoding="async" />
                 
                 <div class="hover-indicate">
                     <span>התחל לעצב</span>
@@ -61,7 +61,7 @@
             </h4>
 
             <div class="card-visual">
-                <img src="/mosaic-pack.png" alt="תמונת פסיפס" />
+                <img src="/mosaic-pack.png" alt="תמונת פסיפס" loading="eager" decoding="async" />
 
                 <div class="hover-indicate">
                     <span>התחל לעצב</span>
