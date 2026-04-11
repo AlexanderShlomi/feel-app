@@ -1,5 +1,6 @@
 <script>
     import { fade } from 'svelte/transition';
+    import { goto } from '$app/navigation';
     import { editorSettings, saveWorkspaceToCart, PRODUCT_TYPES } from '$lib/stores.js';
     import FileUploader from '$lib/components/FileUploader.svelte';
     import { normalizeImageFileToBlobUrl } from '$lib/utils/normalizeImage.js';
@@ -38,7 +39,8 @@
     async function handleSave() {
         toggleGift();
         if ($editorSettings.currentProductType === PRODUCT_TYPES.GIFT) {
-            await saveWorkspaceToCart();
+            const ok = await saveWorkspaceToCart();
+            if (ok) await goto('/select');
         }
     }
 

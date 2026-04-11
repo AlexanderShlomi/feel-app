@@ -1,4 +1,5 @@
 <script>
+    import { goto } from '$app/navigation';
     import { magnets, editorSettings, PACKAGES, EXTRA_MAGNET_PRICE, saveWorkspaceToCart, editingItemId, PRODUCT_TYPES } from '$lib/stores.js';
     import { fly, fade, scale } from 'svelte/transition';
 
@@ -93,7 +94,10 @@
             isSaving = true;
             const success = await saveWorkspaceToCart();
             isSaving = false;
-            if (success) close();
+            if (success) {
+                close();
+                await goto('/select');
+            }
         }
     }
 
@@ -251,7 +255,7 @@
         z-index: 4600;
         background: transparent;
         cursor: default;
-        min-height: 100vh;
+        min-height: 100dvh;
         min-height: 100dvh;
     }
     

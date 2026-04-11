@@ -548,7 +548,7 @@
         width: 100%;
         box-sizing: border-box;
         /* גובה אזור התוכן מתחת ל-header הקבוע */
-        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
         min-height: calc(100dvh - 70px);
         padding-bottom: max(var(--dock-pad, 0px), calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)));
     }

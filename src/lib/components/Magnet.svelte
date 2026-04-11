@@ -2,8 +2,7 @@
     import { createEventDispatcher } from 'svelte';
     import { browser } from '$app/environment';
     import { navigating, page } from '$app/stores';
-    import { getFilterStyle, isMobile } from '$lib/stores.js'; 
-    import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, clamp } from '$lib/utils/cropMath.js';
+    import { getFeelEngine } from '$lib/engine/FeelEngine.svelte.js';
     
     export let id;
     export let src; 
@@ -11,8 +10,14 @@
     export let transform = null;
     export let isSplitPart = false;
     export let hidden = false; 
+    /** Passed via `{...magnet}` — kept for API compatibility */
     export let activeEffectId = 'original';
-    /** Incremented by parent after editor save so transforms re-sync while workspace stayed mounted. */
+    $: void activeEffectId;
+    /** From FeelEngine — pixel-perfect CSS vars + filters */
+    export let presentation = null;
+    /** @type {boolean} */
+    export let isMobile = false;
+    /** Incremented by parent after editor save — triggers presentation refresh via engine */
     export let layoutRefreshEpoch = 0;
     
     const dispatch = createEventDispatcher();
@@ -22,7 +27,6 @@
     let isImageLoaded = false;
     let hasLoadedOnce = false;
 
-    /** מצב טעינה מקומי למעבר לעורך (לחיצה על עריכה / על המגנט במובייל) */
     let editNavPending = false;
     let editNavSawKitNavigating = false;
 
@@ -42,8 +46,6 @@
         editNavSawKitNavigating = false;
     }
 
-    // Keep previous image visible until the next src is decoded, to avoid
-    // transient blanks on iOS Safari when blob URLs are reassigned mid-scroll.
     let displaySrc = src;
     let srcSwapToken = 0;
 
@@ -73,7 +75,6 @@
             displaySrc = next;
             return;
         }
-        // First paint: no need to gate; just show it.
         if (!hasLoadedOnce || !displaySrc) {
             displaySrc = next;
             return;
@@ -83,20 +84,14 @@
         const ok = await decodeImageUrl(next);
         if (token !== srcSwapToken) return;
         if (!ok) {
-            // Fall back to immediate swap; better than getting stuck.
             displaySrc = next;
             return;
         }
         displaySrc = next;
     }
 
-    /** Actual CSS width of the tile (mobile grid uses 100% of cell, often ≠ store `size`). */
     let measuredFrame = 0;
 
-    /**
-     * @param {HTMLElement} node
-     * @param {boolean} active
-     */
     function bindFrameMeasure(node, active) {
         let ro;
         let raf = 0;
@@ -105,7 +100,12 @@
             raf = requestAnimationFrame(() => {
                 raf = 0;
                 const w = Math.round(node.clientWidth);
-                if (w > 0 && w !== measuredFrame) measuredFrame = w;
+                if (w > 0 && w !== measuredFrame) {
+                    measuredFrame = w;
+                    try {
+                        getFeelEngine().reportMagnetMetrics(id, { frameSize: w });
+                    } catch {}
+                }
             });
         }
         function start() {
@@ -133,128 +133,41 @@
         };
     }
 
-    // Legacy editor saved translation relative to FRAME_SIZE=300.
-    const LEGACY_FRAME_SIZE = 300;
+    $: hasTransform = presentation?.hasTransform ?? false;
+    $: filterCss = presentation?.filterCss ?? '';
+    $: cssVars = presentation?.cssVars ?? '';
 
-    $: hasTransform = transform && (
-        (typeof transform.xPct === 'number' && transform.xPct !== 0) ||
-        (typeof transform.yPct === 'number' && transform.yPct !== 0) ||
-        (typeof transform.x === 'number' && transform.x !== 0) ||
-        (typeof transform.y === 'number' && transform.y !== 0) ||
-        (transform.zoom !== 1)
-    );
-    $: filterCss = getFilterStyle(activeEffectId);
-
-    // Atomic src swap: only change the <img> src once the next image is decoded.
     $: if (!isSplitPart && browser && src !== displaySrc) {
         swapDisplaySrcWhenReady(src);
     }
 
-    // Measure only on mobile where the grid CSS overrides the tile width (100% of cell).
-    // On desktop, using the store `size` avoids a ResizeObserver per tile and keeps uploads snappy.
-    $: frameSize = $isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
+    $: frameSize = isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
 
-    /** Derived from props + image geometry only (no separate mutable "transform cache"). */
-    $: cropForCss = (() => {
-        void layoutRefreshEpoch;
-        if (isSplitPart) return null;
-        const tr = transform;
-        const z = tr?.zoom ?? 1;
-        if (!imgElement || !isImageLoaded || !frameSize) {
-            return { z, tx: 0, ty: 0, bw: frameSize || 0, bh: frameSize || 0 };
-        }
-        const imgW = imgElement.naturalWidth || 0;
-        const imgH = imgElement.naturalHeight || 0;
-        if (!imgW || !imgH || !frameSize) {
-            return { z, tx: 0, ty: 0, bw: frameSize, bh: frameSize };
-        }
-        const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, frameSize);
-        const { maxX, maxY } = computeMaxTranslateFromBase(bw, bh, frameSize, z);
-        let tx = 0;
-        let ty = 0;
-        if (typeof tr?.xPct === 'number' || typeof tr?.yPct === 'number') {
-            const t = pctToTranslate(tr?.xPct, tr?.yPct, maxX, maxY);
-            tx = t.x;
-            ty = t.y;
-        } else {
-            const legacyX = typeof tr?.x === 'number' ? tr.x : 0;
-            const legacyY = typeof tr?.y === 'number' ? tr.y : 0;
-            tx = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
-            ty = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
-        }
-        return { z, tx, ty, bw, bh };
-    })();
-
-    $: cssVars = (() => {
-        void layoutRefreshEpoch;
-        const fw = frameSize || 150;
-        if (isSplitPart && transform) {
-            return `
-        --magnet-size: ${fw}px;
-        --zoom: 1;
-        --tx: 0px;
-        --ty: 0px;
-        --base-w: ${fw}px;
-        --base-h: ${fw}px;
-        --bg-w: ${transform.bgWidth}px;
-        --bg-h: ${transform.bgHeight}px;
-        --bg-x: ${transform.bgPosX}px;
-        --bg-y: ${transform.bgPosY}px;
-        --bg-url: url('${src}');
-    `;
-        }
-        const c = cropForCss;
-        if (!c) {
-            return `
-        --magnet-size: ${fw}px;
-        --zoom: 1;
-        --tx: 0px;
-        --ty: 0px;
-        --base-w: ${fw}px;
-        --base-h: ${fw}px;
-        --bg-w: 0px;
-        --bg-h: 0px;
-        --bg-x: 0px;
-        --bg-y: 0px;
-        --bg-url: url('${src}');
-    `;
-        }
-        return `
-        --magnet-size: ${fw}px;
-        --zoom: ${c.z};
-        --tx: ${c.tx}px;
-        --ty: ${c.ty}px;
-        --base-w: ${c.bw}px;
-        --base-h: ${c.bh}px;
-        --bg-w: 0px;
-        --bg-h: 0px;
-        --bg-x: 0px;
-        --bg-y: 0px;
-        --bg-url: url('${src}');
-    `;
-    })();
+    $: void layoutRefreshEpoch;
 
     function handleImageLoad() {
         if (!imgElement) return;
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
         hasLoadedOnce = true;
+        try {
+            getFeelEngine().reportMagnetMetrics(id, {
+                frameSize,
+                naturalW: imgElement.naturalWidth,
+                naturalH: imgElement.naturalHeight
+            });
+        } catch {}
     }
     
-    // --- אירועים ---
-    // שיפור לוגיקה למניעת התנגשויות טאץ'/קליק
     function handleInteraction(e) {
         if (e && e.stopPropagation) e.stopPropagation();
         
-        // בפסיפס, לחיצה משנה נראות
         if (isSplitPart) { 
-            // מניעת הפעלת האירוע פעמיים אם המערכת יורה גם touch וגם click
             if (e.type === 'touchstart') e.preventDefault(); 
             dispatch('toggleVisibility', { id }); 
             return; 
         } 
         
-        // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
         beginEditNavigation();
         dispatch('openEdit', { id });
     }
@@ -281,8 +194,8 @@
     class="magnet magnet-container" 
     class:split-part={isSplitPart} 
     class:is-hidden={hidden}
-    class:desktop-mode={!$isMobile}
-    use:bindFrameMeasure={$isMobile && !isSplitPart}
+    class:desktop-mode={!isMobile}
+    use:bindFrameMeasure={isMobile && !isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
     role={isSplitPart ? undefined : 'button'}
@@ -322,14 +235,14 @@
             </div>
         {/if}
 
-        <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden}>
-            {#if !$isMobile && !isSplitPart && !hidden}
+        <div class="overlay" class:always-visible={isMobile} class:force-visible={hidden}>
+            {#if !isMobile && !isSplitPart && !hidden}
                 <button class="control-btn edit-btn" aria-label="ערוך תמונה" on:click={handleEditClick} on:mousedown|stopPropagation>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                 </button>
             {/if}
             {#if !hidden}
-                {#if isSplitPart || (!$isMobile && !isSplitPart)}
+                {#if isSplitPart || (!isMobile && !isSplitPart)}
                     <button class="control-btn delete-btn" aria-label="מחק תמונה" on:click={handleDeleteClick} on:mousedown|stopPropagation on:touchstart|stopPropagation>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
@@ -391,8 +304,6 @@
         height: var(--base-h);
         transform-origin: center center;
         will-change: transform;
-        /* Mobile-first stability: avoid "brightness fade" perception on load.
-           We already gate blob-url swaps via decode, so a CSS fade is unnecessary and can flicker on iOS. */
         opacity: 1;
         transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
     }
