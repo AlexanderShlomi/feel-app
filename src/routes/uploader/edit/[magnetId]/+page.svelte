@@ -258,10 +258,11 @@
                     const t = pctToTranslate(magnet.transform.xPct, magnet.transform.yPct, maxX, maxY);
                     bgTranslateX = t.x;
                     bgTranslateY = t.y;
-                } else {
-                    // Legacy: saved relative to FRAME_SIZE=300
+                } else if (typeof magnet.transform.x === 'number' || typeof magnet.transform.y === 'number') {
                     bgTranslateX = (magnet.transform.x || 0) * FRAME_SIZE;
                     bgTranslateY = (magnet.transform.y || 0) * FRAME_SIZE;
+                } else {
+                    applyDefaultPositioning(naturalW, naturalH);
                 }
             } else {
                 // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס

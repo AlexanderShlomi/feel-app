@@ -363,7 +363,7 @@ export class FeelEngine {
 				id,
 				magnet: {
 					id,
-					transform: { zoom: 1, xPct: 0, yPct: 0 },
+					transform: { zoom: 1 },
 					position: { x: 0, y: 0 },
 					size: this.getFullMagnetSize(),
 					originalSrc: url,
