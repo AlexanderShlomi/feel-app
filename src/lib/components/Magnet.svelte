@@ -1,6 +1,7 @@
 <script>
     import { createEventDispatcher } from 'svelte';
     import { browser } from '$app/environment';
+    import { navigating, page } from '$app/stores';
     import { getFilterStyle, isMobile } from '$lib/stores.js'; 
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, clamp } from '$lib/utils/cropMath.js';
     
@@ -20,6 +21,26 @@
     let isLandscape = true; 
     let isImageLoaded = false;
     let hasLoadedOnce = false;
+
+    /** מצב טעינה מקומי למעבר לעורך (לחיצה על עריכה / על המגנט במובייל) */
+    let editNavPending = false;
+    let editNavSawKitNavigating = false;
+
+    function beginEditNavigation() {
+        if (isSplitPart) return;
+        editNavPending = true;
+        editNavSawKitNavigating = false;
+    }
+
+    $: if (editNavPending && $navigating) editNavSawKitNavigating = true;
+    $: if (editNavPending && editNavSawKitNavigating && !$navigating) {
+        editNavPending = false;
+        editNavSawKitNavigating = false;
+    }
+    $: if (editNavPending && $page.url.pathname === `/uploader/edit/${id}`) {
+        editNavPending = false;
+        editNavSawKitNavigating = false;
+    }
 
     // Keep previous image visible until the next src is decoded, to avoid
     // transient blanks on iOS Safari when blob URLs are reassigned mid-scroll.
@@ -234,11 +255,13 @@
         } 
         
         // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
+        beginEditNavigation();
         dispatch('openEdit', { id });
     }
 
     function handleEditClick(e) {
         if (e) { e.stopPropagation(); }
+        beginEditNavigation();
         dispatch('openEdit', { id });
     }
 
@@ -270,6 +293,7 @@
         class:sharp-corners={isSplitPart}
         class:is-portrait={!isLandscape}
         class:has-transform={hasTransform}
+        class:is-edit-navigating={editNavPending}
     >
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
@@ -290,6 +314,12 @@
                 style="{filterCss}" 
                 on:error={handleImageError} 
             />
+        {/if}
+
+        {#if editNavPending && !isSplitPart}
+            <div class="edit-nav-overlay" aria-hidden="true">
+                <div class="edit-nav-spinner"></div>
+            </div>
         {/if}
 
         <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden}>
@@ -322,6 +352,29 @@
         width: 100%; height: 100%; position: relative; border-radius: 12px; overflow: hidden; background: #fff; 
         box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: box-shadow 0.3s, opacity 0.2s; z-index: 1; pointer-events: none; 
         display: flex; justify-content: center; align-items: center; 
+    }
+    .image-wrapper.is-edit-navigating .magnet-image { opacity: 0.72; filter: brightness(0.96); }
+
+    .edit-nav-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 15;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        background: rgba(255, 255, 255, 0.22);
+    }
+    .edit-nav-spinner {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2.5px solid rgba(63, 82, 79, 0.22);
+        border-top-color: var(--color-pink);
+        animation: magnetEditSpin 0.65s linear infinite;
+    }
+    @keyframes magnetEditSpin {
+        to { transform: rotate(360deg); }
     }
     
     .image-wrapper.is-portrait:not(.has-transform) { align-items: flex-start; }

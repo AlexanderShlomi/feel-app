@@ -1,5 +1,5 @@
 <script>
-    import { page } from '$app/stores';
+    import { page, navigating } from '$app/stores';
     import '../app.css'; 
     import Header from '$lib/components/Header.svelte';
     import SideMenu from '$lib/components/SideMenu.svelte';
@@ -213,7 +213,12 @@
 </svelte:head>
 
 <div class="page-container" dir="rtl">
-    
+    {#if $navigating}
+        <div class="route-nav-progress" aria-hidden="true">
+            <div class="route-nav-progress__bar"></div>
+        </div>
+    {/if}
+
     {#if showGlobalLoader}
         <div class="global-loader-overlay">
             <div class="brand-loader-bar">
@@ -238,6 +243,31 @@
 </div>
 
 <style>
+    /* מענה מיידי לניווט (SvelteKit navigating store) — פס מותג דק בראש המסך */
+    .route-nav-progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        z-index: 10020;
+        pointer-events: none;
+        overflow: hidden;
+    }
+    .route-nav-progress__bar {
+        height: 100%;
+        width: 100%;
+        transform-origin: 0 50%;
+        animation: routeNavIndeterminate 0.9s ease-in-out infinite;
+        background: linear-gradient(90deg, var(--color-pink), var(--color-gold), rgb(71, 81, 96), var(--color-pink));
+        background-size: 200% 100%;
+    }
+    @keyframes routeNavIndeterminate {
+        0% { transform: scaleX(0.18); opacity: 0.85; }
+        50% { transform: scaleX(0.72); opacity: 1; }
+        100% { transform: scaleX(0.22); opacity: 0.9; }
+    }
+
     /* 🔥 עיצוב הלאודר הגלובלי */
     .global-loader-overlay {
         position: fixed;

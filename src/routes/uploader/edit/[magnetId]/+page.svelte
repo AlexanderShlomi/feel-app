@@ -45,11 +45,15 @@
     let activePanel = null;
 
     let isImageDecoded = false;
+    /** לאחר on:load של ה־img בעורך — מפעיל fade-in בלי לשנות את גודל המיכל */
+    let editorImagePainted = false;
     let renderSrc = null; // never show a blank frame: swap only after decode
     let lastResolvedSrc = null;
     let preloadToken = 0;
     /** Set in decode done(); avoids reading `renderSrc` in the preload reactive (extra re-runs). */
     let committedFirstFrame = false;
+    /** דחיית preload/decode לריצה אחרי onMount — UI ראשוני עולה לפני עבודת תמונה */
+    let editorReady = false;
 
     let previewSrc = null;
     let previewSrcToRevoke = null;
@@ -76,6 +80,7 @@
         renderSrc = null;
         lastResolvedSrc = null;
         preloadToken++;
+        editorImagePainted = false;
         previewSrc = null;
         if (previewSrcToRevoke) {
             try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
@@ -83,7 +88,7 @@
         }
     }
 
-    $: if (resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
+    $: if (editorReady && resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
         // Only blank the stage before the first committed decode. When swapping to the desktop
         // preview blob, keep the current frame visible (no shimmer). Use `committedFirstFrame`,
@@ -113,6 +118,7 @@
     }
 
     onMount(() => {
+        editorReady = true;
         if (!magnet) { goto('/uploader'); return; }
 
         // Load original geometry once; iOS can differ between preview sizing and original sizing.
@@ -204,6 +210,11 @@
     }
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
+
+    function onEditorImageLoad(e) {
+        editorImagePainted = true;
+        onBgImageLoad(e);
+    }
 
     function onBgImageLoad() {
         if (!bgImageEl) return;
@@ -434,8 +445,8 @@
     <div class="editor-page" class:is-interacting={isInteracting}>
         <div class="editor-stage">
             {#if !isImageDecoded}
-                <div class="image-placeholder" aria-hidden="true">
-                    <div class="placeholder-shimmer"></div>
+                <div class="editor-skeleton-wrap" aria-hidden="true">
+                    <div class="editor-skeleton editor-skeleton--pulse"></div>
                 </div>
             {/if}
             <div class="image-layer">
@@ -444,9 +455,11 @@
                     style="transform: translate(-50%, -50%) translate({bgTranslateX}px, {bgTranslateY}px) scale({zoomMultiplier});"
                 >
                     <img
-                        src={renderSrc || resolvedEffectSrc}
+                        class="editor-source-img"
+                        class:editor-source-img--visible={editorImagePainted}
+                        src={editorReady ? (renderSrc || resolvedEffectSrc) : ''}
                         bind:this={bgImageEl}
-                        on:load={(e) => { isImageDecoded = true; onBgImageLoad(e); }}
+                        on:load={onEditorImageLoad}
                         style="{resolvedFilterCss}; width: {coverBaseW ? `${coverBaseW}px` : 'auto'}; height: {coverBaseH ? `${coverBaseH}px` : 'auto'};"
                         loading="eager"
                         decoding="async"
@@ -549,7 +562,8 @@
         justify-content: center;
     }
 
-    .image-placeholder {
+    /* Skeleton בגודל חיתוך העורך (300×300) — ללא קפיצות ביחס ל־mask-hole */
+    .editor-skeleton-wrap {
         position: absolute;
         inset: 0;
         z-index: 2;
@@ -557,24 +571,28 @@
         align-items: center;
         justify-content: center;
         background: var(--color-canvas-bg);
+        pointer-events: none;
     }
 
-    .placeholder-shimmer {
-        width: min(92vw, 340px);
-        height: min(92vw, 340px);
-        max-width: 340px;
-        max-height: 340px;
+    .editor-skeleton {
+        width: 300px;
+        height: 300px;
+        max-width: min(92vw, 300px);
+        max-height: min(92vw, 300px);
+        box-sizing: border-box;
         border-radius: 18px;
-        background: linear-gradient(
-            90deg,
-            rgba(0, 0, 0, 0.04),
-            rgba(0, 0, 0, 0.09),
-            rgba(0, 0, 0, 0.04)
-        );
-        background-size: 200% 100%;
-        animation: brandLoading 1.2s infinite linear;
         border: 1px solid rgba(0, 0, 0, 0.06);
         box-shadow: 0 10px 26px rgba(0, 0, 0, 0.06);
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    .editor-skeleton--pulse {
+        animation: editorSkeletonPulse 1.25s ease-in-out infinite;
+    }
+
+    @keyframes editorSkeletonPulse {
+        0%, 100% { opacity: 0.45; }
+        50% { opacity: 0.88; }
     }
 
     .image-layer {
@@ -599,6 +617,14 @@
     .movable-content img {
         max-width: none; max-height: none;
         display: block; user-select: none; pointer-events: none;
+    }
+
+    .editor-source-img {
+        opacity: 0;
+        transition: opacity 0.45s ease-out;
+    }
+    .editor-source-img.editor-source-img--visible {
+        opacity: 1;
     }
 
     .mask-layer {
