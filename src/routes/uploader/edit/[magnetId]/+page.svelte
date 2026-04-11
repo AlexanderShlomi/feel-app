@@ -44,9 +44,10 @@
     let bgImageEl; 
     let activePanel = null;
 
-    let isImageDecoded = false;
     /** לאחר on:load של ה־img בעורך — מפעיל fade-in בלי לשנות את גודל המיכל */
     let editorImagePainted = false;
+    /** Skeleton מוצג עד fade-out לאחר on:load; אז מוסר מה-DOM */
+    let showEditorSkeleton = true;
     let renderSrc = null; // never show a blank frame: swap only after decode
     let lastResolvedSrc = null;
     let preloadToken = 0;
@@ -81,6 +82,7 @@
         lastResolvedSrc = null;
         preloadToken++;
         editorImagePainted = false;
+        showEditorSkeleton = true;
         previewSrc = null;
         if (previewSrcToRevoke) {
             try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
@@ -93,7 +95,6 @@
         // Only blank the stage before the first committed decode. When swapping to the desktop
         // preview blob, keep the current frame visible (no shimmer). Use `committedFirstFrame`,
         // not `renderSrc`, so this reactive does not re-run on every `renderSrc` update.
-        if (!committedFirstFrame) isImageDecoded = false;
         const token = ++preloadToken;
         const img = new Image();
         img.decoding = 'async';
@@ -101,7 +102,6 @@
         const done = () => {
             if (token !== preloadToken) return;
             renderSrc = resolvedEffectSrc;
-            isImageDecoded = true;
             committedFirstFrame = true;
         };
         // decode() avoids blank frames on iOS when swapping large images.
@@ -214,6 +214,13 @@
     function onEditorImageLoad(e) {
         editorImagePainted = true;
         onBgImageLoad(e);
+    }
+
+    /** לאחר סיום fade-out של ה-Skeleton (opacity) — להסרה נקייה מה-DOM */
+    function onEditorSkeletonTransitionEnd(/** @param {TransitionEvent} e */ e) {
+        if (e.propertyName !== 'opacity') return;
+        if (!editorImagePainted || !showEditorSkeleton) return;
+        showEditorSkeleton = false;
     }
 
     function onBgImageLoad() {
@@ -444,8 +451,13 @@
 <div class="magnet-edit-layout">
     <div class="editor-page" class:is-interacting={isInteracting}>
         <div class="editor-stage">
-            {#if !isImageDecoded}
-                <div class="editor-skeleton-wrap" aria-hidden="true">
+            {#if showEditorSkeleton}
+                <div
+                    class="editor-skeleton-wrap"
+                    class:editor-skeleton-wrap--fade-out={editorImagePainted}
+                    aria-hidden="true"
+                    on:transitionend={onEditorSkeletonTransitionEnd}
+                >
                     <div class="editor-skeleton editor-skeleton--pulse"></div>
                 </div>
             {/if}
@@ -572,6 +584,16 @@
         justify-content: center;
         background: var(--color-canvas-bg);
         pointer-events: none;
+        opacity: 1;
+        transition: opacity 0.4s ease-out;
+    }
+
+    .editor-skeleton-wrap--fade-out {
+        opacity: 0;
+    }
+
+    .editor-skeleton-wrap--fade-out .editor-skeleton {
+        animation: none;
     }
 
     .editor-skeleton {
@@ -584,15 +606,20 @@
         border: 1px solid rgba(0, 0, 0, 0.06);
         box-shadow: 0 10px 26px rgba(0, 0, 0, 0.06);
         background: rgba(0, 0, 0, 0.06);
+        opacity: 1;
     }
 
     .editor-skeleton--pulse {
-        animation: editorSkeletonPulse 1.25s ease-in-out infinite;
+        animation: editorSkeletonPulse 1.5s ease-in-out infinite;
     }
 
     @keyframes editorSkeletonPulse {
-        0%, 100% { opacity: 0.45; }
-        50% { opacity: 0.88; }
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.5;
+        }
     }
 
     .image-layer {
