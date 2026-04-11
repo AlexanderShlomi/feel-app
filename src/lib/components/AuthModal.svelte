@@ -8,10 +8,10 @@
     import {
         authEmailSchema,
         authRegistrationSchema,
-        parseBirthdayDmyToIso,
+        validateBirthdayIso,
         authOtpSchema
     } from '$lib/validation/authSchema.js';
-    import { maskIsraelMobileInput, maskBirthdayDdMmYyyy } from '$lib/validation/inputMasks.js';
+    import { maskIsraelMobileInput } from '$lib/validation/inputMasks.js';
 
     export let isOpen = false;
     export let close = () => {};
@@ -24,8 +24,8 @@
     let email = '';
     let phone = '';
     let otpToken = '';
-    /** תצוגה DD/MM/YYYY עם מסכה */
-    let birthdayDmy = '';
+    /** YYYY-MM-DD מ־`<input type="date">` */
+    let birthdayIso = '';
     let fullName = '';
     let loading = false;
     let message = { text: '', type: '' };
@@ -75,7 +75,7 @@
 
     function applyZodFieldErrors(flat) {
         nameError = flat.fullName?.[0] ?? '';
-        birthdayError = flat.birthdayDmy?.[0] ?? '';
+        birthdayError = flat.birthdayIso?.[0] ?? '';
         phoneError = flat.phone?.[0] ?? '';
     }
 
@@ -117,7 +117,7 @@
         if (shouldOfferRegistrationAfterOtpDeny(error)) {
             lookupState = 'new';
             message = {
-                text: 'נרשמים בפעם הראשונה. מלאו שם, תאריך לידה (DD/MM/YYYY) וטלפון, ואז שלחו קוד אימות.',
+                text: 'נרשמים בפעם הראשונה. מלאו שם, תאריך לידה וטלפון, ואז שלחו קוד אימות.',
                 type: 'success'
             };
             return;
@@ -177,7 +177,7 @@
 
         const reg = authRegistrationSchema.safeParse({
             fullName,
-            birthdayDmy,
+            birthdayIso,
             phone
         });
         if (!reg.success) {
@@ -271,8 +271,8 @@
         if (data.user) {
             if (lookupState === 'new') {
                 const phoneE164 = normalizeIsraelMobileToE164(phone);
-                const birthdayIso = parseBirthdayDmyToIso(birthdayDmy);
-                if (!phoneE164 || !birthdayIso) {
+                const birthdayStored = validateBirthdayIso(birthdayIso);
+                if (!phoneE164 || !birthdayStored) {
                     message = { text: 'פרטי הרישום אינם תקינים. חזרו אחורה ועדכנו.', type: 'error' };
                     loading = false;
                     return;
@@ -280,7 +280,7 @@
                 const { error: profileError } = await supabase.from('profiles').upsert({
                     id: data.user.id,
                     full_name: fullName.trim() || null,
-                    birthday: birthdayIso,
+                    birthday: birthdayStored,
                     phone: phoneE164,
                     updated_at: new Date().toISOString()
                 });
@@ -326,7 +326,7 @@
         otpToken = '';
         phone = '';
         fullName = '';
-        birthdayDmy = '';
+        birthdayIso = '';
     }
 
     function goBackToEmail() {
@@ -344,9 +344,23 @@
         nameError = '';
     }
 
-    function onBirthdayInput(e) {
-        birthdayDmy = maskBirthdayDdMmYyyy(e.currentTarget.value);
+    function onBirthdayInput() {
         birthdayError = '';
+    }
+
+    /** מקסימום לבחירת תאריך — היום (מקומי) */
+    $: maxBirthdayIso = (() => {
+        const t = new Date();
+        return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    })();
+
+    /** גלילה למרכז ה-viewport כשהמקלדת פתוחה (משלים scroll-padding) */
+    function onAuthFieldFocusIn(e) {
+        const el = e.target;
+        if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return;
+        requestAnimationFrame(() => {
+            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
     }
 
     function onPhoneInputMasked(e) {
@@ -390,7 +404,7 @@
         email = '';
         phone = '';
         fullName = '';
-        birthdayDmy = '';
+        birthdayIso = '';
         message = { text: '', type: '' };
         loading = false;
         resetFieldErrors();
@@ -421,7 +435,7 @@
         
         <button class="close-btn" on:click={close} aria-label="סגור">&times;</button>
 
-        <div class="auth-container" dir="rtl">
+        <div class="auth-container" dir="rtl" on:focusin={onAuthFieldFocusIn}>
             <header class="auth-header">
                 <div class="brand-line">FEEL • LUXURY MEMORIES</div>
                 <h1>
@@ -515,6 +529,7 @@
                                 on:input={onNameInput}
                                 placeholder="למשל: יעל כהן"
                                 autocomplete="name"
+                                enterkeyhint="next"
                                 class:input-invalid={nameError}
                                 aria-invalid={nameError ? 'true' : 'false'}
                                 required
@@ -530,21 +545,22 @@
                                     type="button"
                                     class="auth-tooltip-trigger"
                                     dir="rtl"
-                                    data-tooltip="פורמט: יום / חודש / שנה (שתי ספרות לכל אחד). לא ניתן לבחור תאריך עתידי. נשמח לחגוג איתך ולהציע הטבות בהמשך."
+                                    data-tooltip="בוחרים תאריך בלוח השנה של המכשיר. לא ניתן לבחור תאריך עתידי. נשמח לחגוג איתך ולהציע הטבות בהמשך."
                                     aria-label="הסבר על תאריך הלידה"
                                 >
                                     <svg class="auth-tip-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
                                 </button>
                             </div>
                             <input
-                                type="text"
+                                type="date"
                                 id="reg-birthday"
-                                value={birthdayDmy}
+                                dir="ltr"
+                                min="1900-01-01"
+                                max={maxBirthdayIso}
+                                bind:value={birthdayIso}
                                 on:input={onBirthdayInput}
-                                placeholder="למשל: 15/08/1990"
-                                maxlength="10"
-                                inputmode="numeric"
                                 autocomplete="bday"
+                                class="input-date-native"
                                 class:input-invalid={birthdayError}
                                 aria-invalid={birthdayError ? 'true' : 'false'}
                                 required
@@ -658,16 +674,46 @@
 
 <style>
     .auth-overlay {
-        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(30, 30, 30, 0.8); backdrop-filter: blur(15px);
-        z-index: 9500; display: flex; justify-content: center; align-items: center; padding: 20px;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        max-width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+        box-sizing: border-box;
+        background: rgba(30, 30, 30, 0.8);
+        backdrop-filter: blur(15px);
+        z-index: 9500;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+            max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        scroll-padding-top: max(20px, env(safe-area-inset-top));
+        scroll-padding-bottom: max(100px, env(safe-area-inset-bottom), var(--vv-bottom-chrome, 0px));
+    }
+
+    @media (max-width: 768px) {
+        .auth-overlay {
+            align-items: flex-start;
+        }
     }
 
     .auth-modal {
-        background: #F2F0EC; color: #1E1E1E; width: 100%; max-width: 440px;
-        border-radius: 30px; position: relative;
+        background: #F2F0EC;
+        color: #1E1E1E;
+        width: 100%;
+        max-width: 440px;
+        border-radius: 30px;
+        position: relative;
         overflow: visible;
-        box-shadow: 0 40px 100px rgba(0,0,0,0.3);
+        box-shadow: 0 40px 100px rgba(0, 0, 0, 0.3);
+        box-sizing: border-box;
+        flex: 0 0 auto;
     }
 
     .close-btn {
@@ -675,7 +721,12 @@
         color: #846349; font-size: 35px; cursor: pointer; line-height: 1; z-index: 10;
     }
 
-    .auth-container { padding: 50px 40px; overflow: visible; }
+    .auth-container {
+        padding: 50px 40px max(48px, env(safe-area-inset-bottom), var(--vv-bottom-chrome, 0px), 72px);
+        overflow: visible;
+        box-sizing: border-box;
+        max-width: 100%;
+    }
 
     .auth-header { text-align: center; margin-bottom: 35px; }
     .brand-line { color: #846349; font-weight: 800; font-size: 10px; letter-spacing: 3px; margin-bottom: 8px; }
@@ -701,7 +752,14 @@
     .separator span { position: relative; background: #F2F0EC; padding: 0 15px; color: #999; font-size: 13px; }
 
     .auth-form { display: flex; flex-direction: column; gap: 20px; }
-    .input-group { display: flex; flex-direction: column; gap: 8px; }
+    .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        scroll-margin-block: 24px;
+        box-sizing: border-box;
+        max-width: 100%;
+    }
 
     .label-row {
         display: flex;
@@ -788,8 +846,28 @@
         word-break: break-all;
     }
     .input-group input {
-        padding: 15px; border-radius: 12px; border: 1px solid #DDD;
-        font-family: 'Assistant', sans-serif; font-size: 16px; transition: border-color 0.2s;
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid #ddd;
+        font-family: 'Assistant', sans-serif;
+        font-size: 16px;
+        transition: border-color 0.2s;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        min-height: 48px;
+    }
+
+    /* Native date picker — מינימום 16px נגד zoom אוטומטי ב-iOS */
+    .input-group input.input-date-native {
+        min-height: 48px;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+    .input-group input.input-date-native::-webkit-calendar-picker-indicator {
+        opacity: 0.85;
+        cursor: pointer;
+        padding-inline-start: 4px;
     }
     .input-group input:focus { border-color: #C6B29A; outline: none; }
     .input-group input.input-invalid {
@@ -829,7 +907,15 @@
     .text-btn { background: none; border: none; color: #846349; cursor: pointer; font-weight: 600; text-decoration: underline; margin-top: 10px; }
 
     @media (max-width: 768px) {
-        .auth-modal { height: 100vh; max-height: 100vh; border-radius: 0; }
-        .auth-container { padding: 80px 25px 40px; }
+        .auth-modal {
+            width: 100%;
+            max-width: 100%;
+            min-height: 100vh;
+            min-height: 100dvh;
+            border-radius: 0;
+        }
+        .auth-container {
+            padding: 80px 20px max(48px, env(safe-area-inset-bottom), var(--vv-bottom-chrome, 0px), 72px);
+        }
     }
 </style>
