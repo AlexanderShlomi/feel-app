@@ -336,8 +336,9 @@ a.info-card, button.info-card { cursor: pointer; }
     min-height: calc(100vh - 70px);
     min-height: calc(100dvh - 70px);
     box-sizing: border-box;
-    padding-bottom: var(--dock-pad, 0px);
-    scroll-padding-bottom: var(--dock-pad, 0px);
+    /* Avoid unnecessary nested vertical scroll on desktop when content fits. */
+    padding-bottom: 0;
+    scroll-padding-bottom: 0;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
 }

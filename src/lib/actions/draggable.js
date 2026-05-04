@@ -14,9 +14,19 @@ export function draggable(node, params = {}) {
     } = params;
 
     let isDragging = false;
+    let suppressNextClick = false;
     let startX, startY;
     let initialLeft, initialTop;
     let dragFrame;
+
+    function onClickCapture(event) {
+        if (!enabled) return;
+        if (!suppressNextClick) return;
+        suppressNextClick = false;
+        // Prevent accidental navigation/click handlers when the gesture was a drag.
+        try { event.preventDefault(); } catch {}
+        try { event.stopImmediatePropagation(); } catch {}
+    }
 
     function getClientPos(event) {
         // תמיכה אחודה בטאץ' ובעכבר
@@ -53,6 +63,7 @@ export function draggable(node, params = {}) {
         if (!isDragging) {
             if (Math.hypot(dx, dy) > dragThreshold) {
                 isDragging = true;
+                suppressNextClick = true;
                 node.classList.add('draggable-active');
             } else {
                 // עדיין לא הגענו לסף הגרירה - לא עושים כלום
@@ -132,6 +143,8 @@ export function draggable(node, params = {}) {
     node.addEventListener('mousedown', handleStart);
     // passive: true כאן כדי לא לפגוע בביצועי גלילה לפני שהגרירה התחילה
     node.addEventListener('touchstart', handleStart, { passive: true });
+    // Capture click early so nested click handlers (e.g. tile navigation) won't fire after a drag.
+    node.addEventListener('click', onClickCapture, true);
 
     return {
         update(newParams) {
@@ -147,6 +160,7 @@ export function draggable(node, params = {}) {
         destroy() {
             node.removeEventListener('mousedown', handleStart);
             node.removeEventListener('touchstart', handleStart);
+            node.removeEventListener('click', onClickCapture, true);
             removeGlobalListeners();
         }
     };
