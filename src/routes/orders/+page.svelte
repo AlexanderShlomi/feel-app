@@ -753,7 +753,7 @@
 
 <style>
     .orders-page {
-        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
         min-height: calc(100dvh - 70px);
         background: var(--color-canvas-bg);
         padding: 24px 16px 48px;

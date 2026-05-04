@@ -180,7 +180,7 @@
         top: 0;
         right: -300px;
         width: 300px;
-        height: 100vh;
+        height: 100dvh;
         height: 100dvh;
         background: #ffffff;
         z-index: 6000;

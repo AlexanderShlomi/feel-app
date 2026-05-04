@@ -12,6 +12,7 @@
     import { draggable } from '$lib/actions/draggable.js';
     import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
     import { resetSystem } from '$lib/stores.js';
+    import { getFeelEngine } from '$lib/engine/FeelEngine.svelte.js';
     import { goto, afterNavigate } from '$app/navigation';
     import { page } from '$app/stores';
     import { get } from 'svelte/store';
@@ -40,6 +41,8 @@
         SCALE_DEFAULT,
         PACKAGES
     } from '$lib/stores.js';
+
+    const engine = getFeelEngine();
 
     const effectsList = [
         { id: 'original', name: 'מקורי' },
@@ -705,10 +708,10 @@
         }));
     }
 
-    function handleAddToCartMosaic() {
-        if (canAddToCartMosaic) {
-            saveWorkspaceToCart();
-        }
+    async function handleAddToCartMosaic() {
+        if (!canAddToCartMosaic) return;
+        const ok = await saveWorkspaceToCart();
+        if (ok) await goto('/select');
     }
 </script>
 
@@ -747,6 +750,8 @@
                 <Magnet 
                     {...magnet}
                     position={{x:0, y:0}} 
+                    presentation={engine.getMagnetPresentation(magnet)}
+                    isMobile={$isMobile}
                     layoutRefreshEpoch={$lastWorkspaceLayoutRefreshSignal}
                     isSplitPart={$editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC}
                     hidden={magnet.hidden} 

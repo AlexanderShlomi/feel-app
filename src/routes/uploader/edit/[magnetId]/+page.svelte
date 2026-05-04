@@ -211,7 +211,15 @@
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
 
-    function onEditorImageLoad(e) {
+    async function onEditorImageLoad(e) {
+        const el = e?.currentTarget;
+        if (el && typeof el.decode === 'function') {
+            try {
+                await el.decode();
+            } catch {
+                /* decode optional; onload already fired */
+            }
+        }
         editorImagePainted = true;
         onBgImageLoad(e);
     }
@@ -250,10 +258,11 @@
                     const t = pctToTranslate(magnet.transform.xPct, magnet.transform.yPct, maxX, maxY);
                     bgTranslateX = t.x;
                     bgTranslateY = t.y;
-                } else {
-                    // Legacy: saved relative to FRAME_SIZE=300
+                } else if (typeof magnet.transform.x === 'number' || typeof magnet.transform.y === 'number') {
                     bgTranslateX = (magnet.transform.x || 0) * FRAME_SIZE;
                     bgTranslateY = (magnet.transform.y || 0) * FRAME_SIZE;
+                } else {
+                    applyDefaultPositioning(naturalW, naturalH);
                 }
             } else {
                 // אתחול ראשוני - משתמש באותה לוגיקה של כפתור האיפוס
@@ -548,7 +557,7 @@
         width: 100%;
         box-sizing: border-box;
         /* גובה אזור התוכן מתחת ל-header הקבוע */
-        min-height: calc(100vh - 70px);
+        min-height: calc(100dvh - 70px);
         min-height: calc(100dvh - 70px);
         padding-bottom: max(var(--dock-pad, 0px), calc(96px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px)));
     }

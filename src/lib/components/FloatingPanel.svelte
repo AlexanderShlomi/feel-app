@@ -84,7 +84,7 @@
     .panel-backdrop {
         position: fixed;
         inset: 0;
-        min-height: 100vh;
+        min-height: 100dvh;
         min-height: 100dvh;
         /* 🔥 שקוף לחלוטין כדי לראות את התמונה בבירור */
         background: transparent;

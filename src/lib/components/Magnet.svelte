@@ -2,27 +2,33 @@
     import { createEventDispatcher } from 'svelte';
     import { browser } from '$app/environment';
     import { navigating, page } from '$app/stores';
-    import { getFilterStyle, isMobile } from '$lib/stores.js'; 
-    import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, clamp } from '$lib/utils/cropMath.js';
+    import { getFeelEngine } from '$lib/engine/FeelEngine.svelte.js';
     
     export let id;
     export let src; 
+    /** Full-resolution blob/URL — same as editor; Law A accuracy */
+    export let originalSrc = null;
     export let size = 150; 
     export let transform = null;
     export let isSplitPart = false;
     export let hidden = false; 
+    /** Passed via `{...magnet}` — kept for API compatibility */
     export let activeEffectId = 'original';
-    /** Incremented by parent after editor save so transforms re-sync while workspace stayed mounted. */
+    $: void activeEffectId;
+    /** From FeelEngine — pixel-perfect CSS vars + filters */
+    export let presentation = null;
+    /** @type {boolean} */
+    export let isMobile = false;
+    /** Incremented by parent after editor save — triggers presentation refresh via engine */
     export let layoutRefreshEpoch = 0;
     
     const dispatch = createEventDispatcher();
     
     let imgElement;
     let isLandscape = true; 
+    /** True only after onload + decode — controls skeleton + fade-in */
     let isImageLoaded = false;
-    let hasLoadedOnce = false;
 
-    /** מצב טעינה מקומי למעבר לעורך (לחיצה על עריכה / על המגנט במובייל) */
     let editNavPending = false;
     let editNavSawKitNavigating = false;
 
@@ -42,25 +48,28 @@
         editNavSawKitNavigating = false;
     }
 
-    // Keep previous image visible until the next src is decoded, to avoid
-    // transient blanks on iOS Safari when blob URLs are reassigned mid-scroll.
-    let displaySrc = src;
+    /** Single source for raster: prefer original blob over any derived `src` */
+    $: baseUrl = originalSrc || src;
+    let displaySrc = '';
     let srcSwapToken = 0;
 
     function decodeImageUrl(url) {
         return new Promise((resolve) => {
             if (!browser || !url) return resolve(false);
             try {
-                const pre = new Image();
-                pre.decoding = 'async';
-                pre.onload = async () => {
-                    try {
-                        if (typeof pre.decode === 'function') await pre.decode();
-                    } catch {}
-                    resolve(true);
+                const run = () => {
+                    const pre = new Image();
+                    pre.decoding = 'async';
+                    pre.onload = async () => {
+                        try {
+                            if (typeof pre.decode === 'function') await pre.decode();
+                        } catch {}
+                        resolve(true);
+                    };
+                    pre.onerror = () => resolve(false);
+                    pre.src = url;
                 };
-                pre.onerror = () => resolve(false);
-                pre.src = url;
+                requestAnimationFrame(() => requestAnimationFrame(run));
             } catch {
                 resolve(false);
             }
@@ -70,33 +79,20 @@
     async function swapDisplaySrcWhenReady(next) {
         const token = ++srcSwapToken;
         if (!next) {
-            displaySrc = next;
-            return;
-        }
-        // First paint: no need to gate; just show it.
-        if (!hasLoadedOnce || !displaySrc) {
-            displaySrc = next;
+            displaySrc = '';
+            isImageLoaded = false;
             return;
         }
         if (next === displaySrc) return;
 
-        const ok = await decodeImageUrl(next);
+        isImageLoaded = false;
+        await decodeImageUrl(next);
         if (token !== srcSwapToken) return;
-        if (!ok) {
-            // Fall back to immediate swap; better than getting stuck.
-            displaySrc = next;
-            return;
-        }
         displaySrc = next;
     }
 
-    /** Actual CSS width of the tile (mobile grid uses 100% of cell, often ≠ store `size`). */
     let measuredFrame = 0;
 
-    /**
-     * @param {HTMLElement} node
-     * @param {boolean} active
-     */
     function bindFrameMeasure(node, active) {
         let ro;
         let raf = 0;
@@ -105,7 +101,12 @@
             raf = requestAnimationFrame(() => {
                 raf = 0;
                 const w = Math.round(node.clientWidth);
-                if (w > 0 && w !== measuredFrame) measuredFrame = w;
+                if (w > 0 && w !== measuredFrame) {
+                    measuredFrame = w;
+                    try {
+                        getFeelEngine().reportMagnetMetrics(id, { frameSize: w });
+                    } catch {}
+                }
             });
         }
         function start() {
@@ -133,128 +134,45 @@
         };
     }
 
-    // Legacy editor saved translation relative to FRAME_SIZE=300.
-    const LEGACY_FRAME_SIZE = 300;
+    $: hasTransform = presentation?.hasTransform ?? false;
+    $: filterCss = presentation?.filterCss ?? '';
+    $: cssVars = presentation?.cssVars ?? '';
 
-    $: hasTransform = transform && (
-        (typeof transform.xPct === 'number' && transform.xPct !== 0) ||
-        (typeof transform.yPct === 'number' && transform.yPct !== 0) ||
-        (typeof transform.x === 'number' && transform.x !== 0) ||
-        (typeof transform.y === 'number' && transform.y !== 0) ||
-        (transform.zoom !== 1)
-    );
-    $: filterCss = getFilterStyle(activeEffectId);
-
-    // Atomic src swap: only change the <img> src once the next image is decoded.
-    $: if (!isSplitPart && browser && src !== displaySrc) {
-        swapDisplaySrcWhenReady(src);
+    $: if (!isSplitPart && browser && baseUrl !== displaySrc) {
+        swapDisplaySrcWhenReady(baseUrl);
     }
 
-    // Measure only on mobile where the grid CSS overrides the tile width (100% of cell).
-    // On desktop, using the store `size` avoids a ResizeObserver per tile and keeps uploads snappy.
-    $: frameSize = $isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
+    $: frameSize = isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size;
 
-    /** Derived from props + image geometry only (no separate mutable "transform cache"). */
-    $: cropForCss = (() => {
-        void layoutRefreshEpoch;
-        if (isSplitPart) return null;
-        const tr = transform;
-        const z = tr?.zoom ?? 1;
-        if (!imgElement || !isImageLoaded || !frameSize) {
-            return { z, tx: 0, ty: 0, bw: frameSize || 0, bh: frameSize || 0 };
-        }
-        const imgW = imgElement.naturalWidth || 0;
-        const imgH = imgElement.naturalHeight || 0;
-        if (!imgW || !imgH || !frameSize) {
-            return { z, tx: 0, ty: 0, bw: frameSize, bh: frameSize };
-        }
-        const { baseW: bw, baseH: bh } = computeCoverBaseSize(imgW, imgH, frameSize);
-        const { maxX, maxY } = computeMaxTranslateFromBase(bw, bh, frameSize, z);
-        let tx = 0;
-        let ty = 0;
-        if (typeof tr?.xPct === 'number' || typeof tr?.yPct === 'number') {
-            const t = pctToTranslate(tr?.xPct, tr?.yPct, maxX, maxY);
-            tx = t.x;
-            ty = t.y;
-        } else {
-            const legacyX = typeof tr?.x === 'number' ? tr.x : 0;
-            const legacyY = typeof tr?.y === 'number' ? tr.y : 0;
-            tx = clamp(legacyX * LEGACY_FRAME_SIZE, -maxX, maxX);
-            ty = clamp(legacyY * LEGACY_FRAME_SIZE, -maxY, maxY);
-        }
-        return { z, tx, ty, bw, bh };
-    })();
+    $: void layoutRefreshEpoch;
 
-    $: cssVars = (() => {
-        void layoutRefreshEpoch;
-        const fw = frameSize || 150;
-        if (isSplitPart && transform) {
-            return `
-        --magnet-size: ${fw}px;
-        --zoom: 1;
-        --tx: 0px;
-        --ty: 0px;
-        --base-w: ${fw}px;
-        --base-h: ${fw}px;
-        --bg-w: ${transform.bgWidth}px;
-        --bg-h: ${transform.bgHeight}px;
-        --bg-x: ${transform.bgPosX}px;
-        --bg-y: ${transform.bgPosY}px;
-        --bg-url: url('${src}');
-    `;
-        }
-        const c = cropForCss;
-        if (!c) {
-            return `
-        --magnet-size: ${fw}px;
-        --zoom: 1;
-        --tx: 0px;
-        --ty: 0px;
-        --base-w: ${fw}px;
-        --base-h: ${fw}px;
-        --bg-w: 0px;
-        --bg-h: 0px;
-        --bg-x: 0px;
-        --bg-y: 0px;
-        --bg-url: url('${src}');
-    `;
-        }
-        return `
-        --magnet-size: ${fw}px;
-        --zoom: ${c.z};
-        --tx: ${c.tx}px;
-        --ty: ${c.ty}px;
-        --base-w: ${c.bw}px;
-        --base-h: ${c.bh}px;
-        --bg-w: 0px;
-        --bg-h: 0px;
-        --bg-x: 0px;
-        --bg-y: 0px;
-        --bg-url: url('${src}');
-    `;
-    })();
-
-    function handleImageLoad() {
+    async function handleImageLoad() {
         if (!imgElement) return;
+        if (typeof imgElement.decode === 'function') {
+            try {
+                await imgElement.decode();
+            } catch {}
+        }
         isLandscape = imgElement.naturalWidth >= imgElement.naturalHeight;
         isImageLoaded = true;
-        hasLoadedOnce = true;
+        try {
+            getFeelEngine().reportMagnetMetrics(id, {
+                frameSize,
+                naturalW: imgElement.naturalWidth,
+                naturalH: imgElement.naturalHeight
+            });
+        } catch {}
     }
     
-    // --- אירועים ---
-    // שיפור לוגיקה למניעת התנגשויות טאץ'/קליק
     function handleInteraction(e) {
         if (e && e.stopPropagation) e.stopPropagation();
         
-        // בפסיפס, לחיצה משנה נראות
         if (isSplitPart) { 
-            // מניעת הפעלת האירוע פעמיים אם המערכת יורה גם touch וגם click
             if (e.type === 'touchstart') e.preventDefault(); 
             dispatch('toggleVisibility', { id }); 
             return; 
         } 
         
-        // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
         beginEditNavigation();
         dispatch('openEdit', { id });
     }
@@ -281,8 +199,8 @@
     class="magnet magnet-container" 
     class:split-part={isSplitPart} 
     class:is-hidden={hidden}
-    class:desktop-mode={!$isMobile}
-    use:bindFrameMeasure={$isMobile && !isSplitPart}
+    class:desktop-mode={!isMobile}
+    use:bindFrameMeasure={isMobile && !isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
     role={isSplitPart ? undefined : 'button'}
@@ -298,6 +216,9 @@
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
         {:else}
+            {#if !isImageLoaded && displaySrc}
+                <div class="raster-skeleton" aria-hidden="true"></div>
+            {/if}
             <img 
                 src={displaySrc} 
                 bind:this={imgElement}
@@ -310,7 +231,7 @@
                 class="magnet-image"
                 class:is-landscape={isLandscape}
                 class:is-portrait={!isLandscape}
-                class:loaded={hasLoadedOnce}
+                class:raster-visible={isImageLoaded}
                 style="{filterCss}" 
                 on:error={handleImageError} 
             />
@@ -322,14 +243,14 @@
             </div>
         {/if}
 
-        <div class="overlay" class:always-visible={$isMobile} class:force-visible={hidden}>
-            {#if !$isMobile && !isSplitPart && !hidden}
+        <div class="overlay" class:always-visible={isMobile} class:force-visible={hidden}>
+            {#if !isMobile && !isSplitPart && !hidden}
                 <button class="control-btn edit-btn" aria-label="ערוך תמונה" on:click={handleEditClick} on:mousedown|stopPropagation>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                 </button>
             {/if}
             {#if !hidden}
-                {#if isSplitPart || (!$isMobile && !isSplitPart)}
+                {#if isSplitPart || (!isMobile && !isSplitPart)}
                     <button class="control-btn delete-btn" aria-label="מחק תמונה" on:click={handleDeleteClick} on:mousedown|stopPropagation on:touchstart|stopPropagation>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                     </button>
@@ -354,6 +275,21 @@
         display: flex; justify-content: center; align-items: center; 
     }
     .image-wrapper.is-edit-navigating .magnet-image { opacity: 0.72; filter: brightness(0.96); }
+
+    .raster-skeleton {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        border-radius: inherit;
+        background: linear-gradient(110deg, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.09) 45%, rgba(0,0,0,0.04) 90%);
+        background-size: 200% 100%;
+        animation: magnetSkeletonPulse 1.5s ease-in-out infinite;
+        pointer-events: none;
+    }
+    @keyframes magnetSkeletonPulse {
+        0%, 100% { opacity: 0.35; }
+        50% { opacity: 0.55; }
+    }
 
     .edit-nav-overlay {
         position: absolute;
@@ -391,18 +327,23 @@
         height: var(--base-h);
         transform-origin: center center;
         will-change: transform;
-        /* Mobile-first stability: avoid "brightness fade" perception on load.
-           We already gate blob-url swaps via decode, so a CSS fade is unnecessary and can flicker on iOS. */
-        opacity: 1;
+        opacity: 0;
+        transition: opacity 0.22s ease-out, transform 0.2s ease-out;
         transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(var(--zoom));
+    }
+    .magnet-image.raster-visible {
+        opacity: 1;
     }
     
     .magnet-image.is-landscape { width: var(--base-w); height: var(--base-h); }
-    .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); }
+    .magnet-image.is-portrait { width: var(--base-w); height: var(--base-h); object-position: top center; }
     
     @media (hover: hover) {
         .magnet.desktop-mode:hover .image-wrapper { box-shadow: 0 12px 24px rgba(0,0,0,0.15); }
         .magnet.desktop-mode:hover .overlay { opacity: 1; }
+        .magnet.desktop-mode:hover .magnet-image.raster-visible {
+            transform: translate(-50%, -50%) translate(var(--tx), var(--ty)) scale(calc(var(--zoom) * 1.04));
+        }
     }
     
     .split-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: var(--bg-url); background-size: var(--bg-w) var(--bg-h); background-position: var(--bg-x) var(--bg-y); background-repeat: no-repeat; }

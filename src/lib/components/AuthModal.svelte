@@ -678,7 +678,7 @@
         inset: 0;
         width: 100%;
         max-width: 100%;
-        min-height: 100vh;
+        min-height: 100dvh;
         min-height: 100dvh;
         box-sizing: border-box;
         background: rgba(30, 30, 30, 0.8);
@@ -910,7 +910,7 @@
         .auth-modal {
             width: 100%;
             max-width: 100%;
-            min-height: 100vh;
+            min-height: 100dvh;
             min-height: 100dvh;
             border-radius: 0;
         }

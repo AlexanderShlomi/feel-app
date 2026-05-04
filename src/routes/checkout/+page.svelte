@@ -1022,7 +1022,7 @@
             position: sticky;
             top: calc(70px + 16px);
             align-self: start;
-            max-height: calc(100vh - 70px - 32px);
+            max-height: calc(100dvh - 70px - 32px);
         }
     }
 
