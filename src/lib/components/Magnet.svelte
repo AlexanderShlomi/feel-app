@@ -110,18 +110,26 @@
     function bindFrameMeasure(node, active) {
         let ro;
         let raf = 0;
-        function measure() {
+        function measureSync() {
+            const w = Math.round(node.clientWidth);
+            if (w > 0 && w !== measuredFrame) measuredFrame = w;
+        }
+        function measureRaf() {
             if (raf) return;
             raf = requestAnimationFrame(() => {
                 raf = 0;
-                const w = Math.round(node.clientWidth);
-                if (w > 0 && w !== measuredFrame) measuredFrame = w;
+                measureSync();
             });
         }
         function start() {
-            measure();
+            // First measurement is synchronous so the very first crop computation uses the
+            // real CSS width (mobile grid: 100% of cell ≈ 50vw - gutters), not the store
+            // `size`. Otherwise a tile flashes one frame at the desktop size before the
+            // RAF correction lands — visible right after returning from the editor.
+            measureSync();
             if (!browser || typeof ResizeObserver === 'undefined') return;
-            ro = new ResizeObserver(measure);
+            // Subsequent updates throttle via RAF to avoid layout thrash during resize.
+            ro = new ResizeObserver(measureRaf);
             ro.observe(node);
         }
         function stop() {
