@@ -76,7 +76,13 @@
 
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src;
-    $: resolvedEffectSrc = previewSrc || displaySrc;
+    // Original-Blob-by-default per cursorrules ("Uncompromised Quality"). The downscaled
+    // `previewSrc` (created on desktop via `createPreview`) is only used while the user
+    // is actively dragging or zooming — that's the only window where the lag of
+    // transforming a 12MP bitmap is perceptible. As soon as interaction ends, the
+    // editor swaps back to the Original. The existing decode-then-commit pipeline
+    // (`renderSrc` reactive below) keeps the swap silent — no flash, no shimmer.
+    $: resolvedEffectSrc = (isInteracting && previewSrc) ? previewSrc : displaySrc;
     $: resolvedFilterCss = getFilterStyle(currentEffectId);
     $: isLoadingEffect = false;
 
