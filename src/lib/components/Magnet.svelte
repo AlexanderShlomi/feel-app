@@ -22,6 +22,16 @@
     let isImageLoaded = false;
     let hasLoadedOnce = false;
 
+    // Pulse skeleton kept in DOM while image decodes; fade-out + remove after on:load.
+    // Matches editor pattern (1.5s ease-in-out, opacity 1→0.5), avoids "white tile" perception
+    // when content-visibility:auto reveals an offscreen tile and the browser starts decoding.
+    let showTileSkeleton = true;
+    function onTileSkeletonTransitionEnd(/** @type {TransitionEvent} */ e) {
+        if (e.propertyName !== 'opacity') return;
+        if (!hasLoadedOnce) return;
+        showTileSkeleton = false;
+    }
+
     /** מצב טעינה מקומי למעבר לעורך (לחיצה על עריכה / על המגנט במובייל) */
     let editNavPending = false;
     let editNavSawKitNavigating = false;
@@ -301,6 +311,14 @@
         class:has-transform={hasTransform}
         class:is-edit-navigating={editNavPending}
     >
+        {#if !isSplitPart && showTileSkeleton}
+            <div
+                class="tile-skeleton"
+                class:tile-skeleton--fade-out={hasLoadedOnce}
+                aria-hidden="true"
+                on:transitionend={onTileSkeletonTransitionEnd}
+            ></div>
+        {/if}
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
         {:else}
@@ -363,6 +381,32 @@
         display: flex; justify-content: center; align-items: center; 
     }
     .image-wrapper.is-edit-navigating .magnet-image { opacity: 0.72; filter: brightness(0.96); }
+
+    /* Skeleton placeholder that pulses while the tile image decodes.
+       Matches the editor skeleton (1.5s ease-in-out, opacity 1→0.5) so the user
+       sees identical loading rhythm across the app. Stays underneath the image; on
+       :load() the image overlays it (opacity:1) and the skeleton fades out + is
+       removed from the DOM via transitionend (no layout shift, no flicker). */
+    .tile-skeleton {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background: rgba(0, 0, 0, 0.06);
+        pointer-events: none;
+        opacity: 1;
+        animation: tileSkeletonPulse 1.5s ease-in-out infinite;
+        transition: opacity 0.2s ease-out;
+    }
+
+    .tile-skeleton--fade-out {
+        opacity: 0;
+        animation: none;
+    }
+
+    @keyframes tileSkeletonPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
 
     .edit-nav-overlay {
         position: absolute;
