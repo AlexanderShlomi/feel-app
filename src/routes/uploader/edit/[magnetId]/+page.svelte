@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction, isMobile, bumpWorkspaceLayoutRefreshSignal } from '$lib/stores.js';
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, translateToPct, clamp } from '$lib/utils/cropMath.js';
+    import { decodeNaturalSize } from '$lib/utils/imageGeometry.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
 
@@ -63,6 +64,11 @@
     let baseNaturalW = 0;
     let baseNaturalH = 0;
     let baseGeomToken = 0;
+    /** Pending decode of the original src; awaited by `saveAndClose` to avoid
+     * a race where the user saves before `baseNaturalW/H` have been measured
+     * (in that race, the math would fall back to the preview's `naturalWidth`
+     * and store a slightly-off xPct/yPct). */
+    let baseGeomReady = /** @type {Promise<{ w: number, h: number }> | null} */ (null);
 
     // Cover base size (the same geometry the grid uses).
     let coverBaseW = 0;
@@ -88,6 +94,19 @@
             try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
             previewSrcToRevoke = null;
         }
+        // Re-prime base geometry for the new magnet so the next saveAndClose
+        // can await accurate natural dimensions instead of the previous one's.
+        baseNaturalW = 0;
+        baseNaturalH = 0;
+        const nextToken = ++baseGeomToken;
+        const nextSrc = displaySrc;
+        baseGeomReady = decodeNaturalSize(nextSrc).then(({ w, h }) => {
+            if (nextToken === baseGeomToken && w && h) {
+                baseNaturalW = w;
+                baseNaturalH = h;
+            }
+            return { w, h };
+        });
     }
 
     $: if (editorReady && resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
@@ -121,25 +140,10 @@
         editorReady = true;
         if (!magnet) { goto('/uploader'); return; }
 
-        // Load original geometry once; iOS can differ between preview sizing and original sizing.
-        // Using original naturalWidth/Height keeps xPct/yPct consistent with grid rendering.
-        (async () => {
-            const token = ++baseGeomToken;
-            try {
-                const src = displaySrc;
-                if (!src) return;
-                const img = new Image();
-                img.decoding = 'async';
-                img.src = src;
-                if (img.decode) await img.decode().catch(() => {});
-                if (token !== baseGeomToken) return;
-                baseNaturalW = img.naturalWidth || 0;
-                baseNaturalH = img.naturalHeight || 0;
-            } catch {
-                // best-effort; we'll fallback to bgImageEl dimensions
-            }
-        })();
-        
+        // Note: baseGeomReady is primed by the reactive block above (route-change branch),
+        // which fires on the initial mount as well — so the original-image decode is
+        // already in flight by the time we're here. No need to re-issue it.
+
         // Desktop: downscaled blob so pan/zoom stays light. Mobile skips this — a second
         // fetch+canvas pass duplicated work and stretched time-to-interactive on large photos.
         if (!get(isMobile)) {
@@ -413,6 +417,21 @@
     async function saveAndClose() {
         // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1] עבור אותו zoom.
         // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
+
+        // Wait for the original image's natural size before computing xPct/yPct.
+        // Otherwise, on a fast desktop save we can fall back to `bgImageEl.naturalWidth`
+        // which is the preview blob's dimensions (max 1600px), producing a slightly
+        // off ratio that drifts in the grid at the user's actual tile size.
+        if ((!baseNaturalW || !baseNaturalH) && baseGeomReady) {
+            try {
+                const { w, h } = await baseGeomReady;
+                if (w && h) {
+                    baseNaturalW = w;
+                    baseNaturalH = h;
+                }
+            } catch {}
+        }
+
         const naturalW = baseNaturalW || (bgImageEl?.naturalWidth || 0);
         const naturalH = baseNaturalH || (bgImageEl?.naturalHeight || 0);
         const { baseW, baseH } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
