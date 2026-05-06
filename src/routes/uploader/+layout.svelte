@@ -10,7 +10,7 @@
     import UpsellWidget from '$lib/components/UpsellWidget.svelte';
     
     import { draggable } from '$lib/actions/draggable.js';
-    import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
+    import { findBestTargetSlot, reflowMagnets, placeNewMagnets, reflowWithDraggedMagnet, isSlotOccupied } from '$lib/utils/grid.js';
     import { resetSystem } from '$lib/stores.js';
     import { goto, afterNavigate } from '$app/navigation';
     import { page } from '$app/stores';
@@ -250,10 +250,19 @@
             const entry = entries[0];
             if (!entry) return;
             const newWidth = entry.contentRect.width;
-            
+
+            // קריטי: כשהמסך עובר ל-/uploader/edit/[magnetId], ה-workspace נשאר ב-DOM
+            // אבל מקבל display:none. ה-ResizeObserver יורה אז עם width=0.
+            // אם נריץ במצב הזה את handleReflow, surfaceWidth יהיה 0, numCols יחושב
+            // כ-1, וכל המגנטים יידחסו לעמודה אחת — ובחזרה מהעריכה הסידור המותאם
+            // של המשתמש ייעלם. לכן: מתעלמים לחלוטין מאירועי width<=0 ושומרים על
+            // lastSurfaceWidth הקודם, כך שכשהמסך חוזר עם אותו רוחב — ה-delta יהיה
+            // 0 ולא יבוצע reflow מיותר.
+            if (newWidth <= 0) return;
+
             // מניעת חישובים מיותרים אם השינוי זניח (למשל גלילה שמשנה גובה במובייל)
-            if (Math.abs(newWidth - lastSurfaceWidth) < 2) return; 
-            
+            if (Math.abs(newWidth - lastSurfaceWidth) < 2) return;
+
             lastSurfaceWidth = newWidth;
             if ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
                 handleReflow();
@@ -270,13 +279,20 @@
                 const savedScale = $editorSettings.currentDisplayScale || SCALE_DEFAULT;
                 const newSize = BASE_MAGNET_SIZE * savedScale;
                 magnets.update(list => list.map(m => ({ ...m, size: newSize })));
-                
-                if (!$isMobile && $magnets.length > 0 && (!$magnets[0].position || $magnets[0].position.x === 0)) {
+
+                // אם ישנו ולו מגנט אחד ללא מיקום תקין (position חסר או שתיהן 0,0)
+                // — נפעיל מילוי חורים. בודקים את כל הרשימה, לא רק את האיבר הראשון,
+                // כי הידרציה חלקית או מיגרציה ישנה עלולים להשאיר חלק מהמגנטים בלי
+                // מיקום בעוד שאחרים כן נשמרו עם מיקום.
+                const hasUnplacedMagnet = $magnets.some(m =>
+                    !m.position || (m.position.x === 0 && m.position.y === 0)
+                );
+                if (!$isMobile && $magnets.length > 0 && hasUnplacedMagnet) {
                     fillEmptySlots();
                 } else {
                     updateSurfaceHeight();
                 }
-            } else if ($editorSettings.splitImageSrc) { 
+            } else if ($editorSettings.splitImageSrc) {
                 calculateAndRenderSplitGrid();
             }
         }, 100);
@@ -317,37 +333,48 @@
              updateSurfaceHeight();
              return;
         }
-        
+
         if ($magnets.length === 0 || $editorSettings.currentProductType !== PRODUCT_TYPES.MAGNETS_PACK || !surfaceEl) {
             updateSurfaceHeight();
             return;
         }
 
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        // הגנה: אם המסך מוסתר (display:none בזמן /uploader/edit/...) או טרם חושב,
+        // ה-clientWidth הוא 0. ריפלו במצב הזה ידחוס את כל המגנטים לעמודה אחת ויאבד
+        // את הסידור של המשתמש. עדיף לבטל את הריפלו הזה — בחזרה מהעריכה ResizeObserver
+        // ייכנס שוב עם הרוחב הנכון, ואם הוא זהה למה שהיה — לא יידרש ריפלו בכלל.
+        if (surfaceWidth <= 0) return;
+
         const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        
+
         const newLayout = reflowMagnets($magnets, surfaceWidth, itemFullSize, margin);
         magnets.set(newLayout);
-        
+
         setTimeout(updateSurfaceHeight, 0);
     }
 
     function fillEmptySlots() {
         if (!surfaceEl || $isMobile) return;
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
-        const itemFullSize = getFullMagnetSize(); 
+        // אותה הגנה כמו ב-handleReflow: אסור לחשב placement כשהמסך מוסתר/טרם נמדד.
+        if (surfaceWidth <= 0) return;
+        const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        
+
         const newLayout = placeNewMagnets($magnets, surfaceWidth, itemFullSize, margin);
         magnets.set(newLayout);
-        
+
         setTimeout(updateSurfaceHeight, 0);
     }
 
+    /** Clearance תחתון מתחת למגנט האחרון בדסקטופ — כדי שהשורה האחרונה לא תיחבא מאחורי ה-Glass Dock. */
+    const DESKTOP_DOCK_CLEARANCE_PX = 140;
+
     function updateSurfaceHeight() {
         if (!surfaceEl) return;
-        let items = $magnets; 
+        let items = $magnets;
         let margin = ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) ? getMargin() : 50;
 
         if (items.length === 0) {
@@ -358,7 +385,7 @@
         if ($isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
             // חישוב גובה משוער לגריד במובייל
             const rows = Math.ceil(items.length / 2);
-            const approxRowHeight = (window.innerWidth / 2) + 16; 
+            const approxRowHeight = (window.innerWidth / 2) + 16;
             const totalHeight = (rows * approxRowHeight) + 100;
             editorSettings.update(s => ({ ...s, surfaceMinHeight: `${totalHeight}px` }));
         } else {
@@ -367,9 +394,70 @@
                 const bottomPosition = item.position.y + item.size;
                 if (bottomPosition > maxBottom) maxBottom = bottomPosition;
             });
-            const totalHeight = maxBottom + margin;
+            const isDesktopPack = !$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK;
+            const dockClearance = isDesktopPack ? DESKTOP_DOCK_CLEARANCE_PX : 0;
+            const totalHeight = maxBottom + margin + dockClearance;
             const containerHeight = surfaceEl.parentElement.clientHeight;
             editorSettings.update(s => ({ ...s, surfaceMinHeight: `${Math.max(totalHeight, containerHeight)}px` }));
+        }
+    }
+
+    /**
+     * מחשב גבולות גרירה אופקיים כדי למנוע יציאה ימינה/שמאלה ממרחב המשטח.
+     * אנכית: מאפשרים גרירה כלפי מטה ללא חסם עליון, כדי לאפשר הרחבת המשטח דינמית.
+     */
+    function getMagnetDragBounds() {
+        if (!surfaceEl || !surfaceEl.parentElement) return null;
+        const itemFullSize = getFullMagnetSize();
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        return {
+            minX: 0,
+            maxX: Math.max(0, surfaceWidth - itemFullSize),
+            minY: 0,
+            maxY: Number.MAX_SAFE_INTEGER
+        };
+    }
+
+    /**
+     * Baseline maxBottom (לא כולל המגנט הנגרר) — מחושב פעם אחת ב-onDragStart
+     * כדי שב-onDragMove נוכל לבדוק אם הגרירה מאריכה את המשטח, בלי לסרוק את כל
+     * המגנטים על כל פריים.
+     */
+    let dragBaselineMaxBottom = 0;
+
+    function onMagnetDragStart(event) {
+        if ($isMobile) return;
+        const draggedId = event?.id;
+        const itemFullSize = getFullMagnetSize();
+        let maxBottom = 0;
+        for (const m of $magnets) {
+            if (draggedId && m.id === draggedId) continue;
+            const bottom = (m.position?.y || 0) + (m.size || itemFullSize);
+            if (bottom > maxBottom) maxBottom = bottom;
+        }
+        dragBaselineMaxBottom = maxBottom;
+    }
+
+    /**
+     * מגדיל את surfaceMinHeight בזמן אמת אם המגנט הנגרר עובר את הגבול התחתון
+     * הקיים — כדי לאפשר גלילה אנכית חלקה תוך כדי גרירה (במקום עיכוב של 300ms
+     * אחרי השחרור). אנחנו רק מגדילים, לא מקטינים, כדי למנוע ריצוד אם המשתמש
+     * חוזר למעלה רגעית באמצע הגרירה.
+     */
+    function onMagnetDragMove(event) {
+        if ($isMobile) return;
+        if ($editorSettings.currentProductType !== PRODUCT_TYPES.MAGNETS_PACK) return;
+
+        const itemFullSize = getFullMagnetSize();
+        const margin = getMargin();
+        const draggedBottom = (event?.y || 0) + itemFullSize;
+        const effectiveMaxBottom = Math.max(dragBaselineMaxBottom, draggedBottom);
+        const neededHeight = effectiveMaxBottom + margin + DESKTOP_DOCK_CLEARANCE_PX;
+
+        const currentRaw = parseFloat($editorSettings.surfaceMinHeight);
+        const currentMinHeight = Number.isFinite(currentRaw) ? currentRaw : 0;
+        if (neededHeight > currentMinHeight + 1) {
+            editorSettings.update(s => ({ ...s, surfaceMinHeight: `${neededHeight}px` }));
         }
     }
 
@@ -378,22 +466,30 @@
         const { x, y, id } = event;
         const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        const gridStep = itemFullSize + margin; 
+        const gridStep = itemFullSize + margin;
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
         const cols = Math.floor((surfaceWidth - margin) / gridStep);
         const numCols = Math.max(1, cols);
 
         const bestSlot = findBestTargetSlot(x, y, margin, gridStep, numCols);
-        
-        let snapX, snapY;
-        if (bestSlot) {
-            snapX = margin + (bestSlot.col * gridStep);
-            snapY = margin + (bestSlot.row * gridStep);
+
+        // התנגשות: אם הסלוט המבוקש תפוס ע"י מגנט אחר — מפעילים Reflow שדוחף קדימה
+        // ושומר על סדר reading-order (משמאל-לימין, מלמעלה-למטה) בלי חורים ובלי חפיפות.
+        // אחרת — הצמדה רגילה (snap-to-grid) למיקום שנבחר.
+        const collides = isSlotOccupied($magnets, bestSlot.col, bestSlot.row, margin, gridStep, id);
+
+        if (collides) {
+            const newLayout = reflowWithDraggedMagnet(
+                $magnets, id, bestSlot.col, bestSlot.row,
+                surfaceWidth, itemFullSize, margin
+            );
+            magnets.set(newLayout);
         } else {
-            snapX = x; snapY = y;
+            const snapX = margin + (bestSlot.col * gridStep);
+            const snapY = margin + (bestSlot.row * gridStep);
+            magnets.update(list => list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m));
         }
 
-        magnets.update(list => list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m));
         setTimeout(updateSurfaceHeight, 300);
     }
 
@@ -653,6 +749,9 @@
                 style="left: {magnet.position.x}px; top: {magnet.position.y}px; width: {magnet.size}px; height: {magnet.size}px;"
                 use:draggable={{
                     enabled: $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK && !$isMobile,
+                    containerBounds: getMagnetDragBounds,
+                    onDragStart: (e) => onMagnetDragStart({ ...e, id: magnet.id }),
+                    onDragMove: (e) => onMagnetDragMove({ ...e, id: magnet.id }),
                     onDragEnd: (e) => onMagnetDragEnd({ ...e, id: magnet.id })
                 }}
             >
@@ -992,6 +1091,15 @@
         }
     }
     
+    /* Desktop Magnets Pack: גלילה אופקית אסורה לחלוטין (Law B ב-.cursorrules).
+       בזמן גרירה, ה-bounds ב-draggable שומר על המגנט בתוך גבולות המשטח, אבל אנחנו
+       גם חוסמים overflow-x ברמת ה-canvas-container כקו הגנה שני. */
+    @media (min-width: 769px) {
+        .canvas-container:not(.split-center) {
+            overflow-x: hidden !important;
+        }
+    }
+
     /* Desktop Mosaic Final Fix */
     @media (min-width: 769px) {
         .canvas-container.split-center {

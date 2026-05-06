@@ -136,6 +136,7 @@
 - משטח הקולקציה, ה־`FileUploader`, ה־Dock והפאנלים חיים ב־**`src/routes/uploader/+layout.svelte`** ו־**לא עוברים unmount** במעבר ל־`/uploader/edit/[magnetId]`. המשטח מוסתר ב־`display: none` בזמן עריכת מגנט בודד, כדי לשמור על טעינת תמונות מקורית (Original Blobs) ועל פענוח בזיכרון ללא הבהוב בחזרה לקולקציה.
 - **`src/routes/uploader/+page.svelte`** ריק במכוון — התוכן נטען מה־layout. עמוד העורך (`edit/[magnetId]/+page.svelte`) מוצג ב־`<slot />` של אותו layout.
 - **שחזור גלילה:** חזרה מ־`/uploader/edit/...` ל־`/uploader` משחזרת את מיקום הגלילה דרך `afterNavigate` + `sessionStorage` (מפתח `feel_uploader_scroll_v1`).
+- **שימור סידור הגריד אחרי עריכה (Critical):** כשהמסך עובר ל־`display:none`, ה-`ResizeObserver` המאזין ל־`canvas-container` מקבל `contentRect.width = 0`. ב-`+layout.svelte` יש הגנה מפורשת — `if (newWidth <= 0) return;` בתוך ה-callback, וכן `if (surfaceWidth <= 0) return;` ב־`handleReflow` ו־`fillEmptySlots` — שמונעת ריפלו במצב מוסתר. ללא הגנה זו, `numCols` היה מחושב כ-1, וכל המגנטים היו נדחסים לעמודה אחת — ואז בחזרה מהעריכה הסידור המותאם של המשתמש היה נמחק.
 - **מטמון Blob להידרציה:** ב־`src/lib/utils/storage.js`, `base64ToBlobUrl` משתמש במפה גלובלית (מפתח: מחרוזת `data:`) כדי שלא ייווצרו `createObjectURL` כפולים לאותו מקור בעת טעינת Workspace מה־IndexedDB. המפה מתנקה ב־`resetSystem` (יחד עם `clearDataUrlBlobUrlCache`).
 - **תמונות:** רכיבי `<img>` רלוונטיים משתמשים ב־`decoding="async"` ו־`loading="eager"` במסלולי העורך/קולקציה כדי להפחית חסימת Main Thread ב־decode; על אריחי המגנט/פסיפס הוחלו `content-visibility: auto` ו־`contain-intrinsic-size` לסיוע בגלילה.
 
@@ -147,21 +148,23 @@
 
 - טעינה מ־IndexedDB (רק בנתיב `/uploader` דרך `initApp`) או קבצים חדשים מ־`FileUploader` / `addUploadedMagnets`.
 - **`placeNewMagnets`** (בלוגיקת הדף): מחפש סלוטים פנויים לפי מפת תפוסה וממקם תמונות חדשות בלי חפיפה.
+- **היוריסטיקת השמה ראשונית עמידה:** בטעינה ראשונית, אם **לפחות מגנט אחד** ברשימה חסר מיקום תקין (`!m.position` או `x === 0 && y === 0`) — מופעל `fillEmptySlots`. הבדיקה רצה על כל המערך (`$magnets.some(...)`), ולא רק על המגנט הראשון, כדי שמיגרציה ישנה או הידרציה חלקית לא ישאירו מגנטים "תלויים" בלי מיקום.
 
 ### לוגיקה מתמטית (Reflow & Snap)
 
-- **`draggable.js`:** אקשן Svelte ל־`mousedown` / `mousemove` (ודומים), חישוב `dx`/`dy` בזמן אמת.
-- **Snap-to-Grid:** אחרי גרירה — `findBestTargetSlot` מעגל למיקום לפי `GridStep`.
-- **מניעת חפיפה / Reflow:** גרירה לתא תפוס מפעילה סידור מחדש (דחיפה קדימה) לפי סדר לוגי (שורות ואז עמודות).
-- **גלילה:** נמנעת גלילה מיותרת עד שמלאים את המשטח; אז גלילה אנכית.
+- **`draggable.js`:** אקשן Svelte ל־`mousedown` / `mousemove` (ודומים), חישוב `dx`/`dy` בזמן אמת. בדסקטופ-pack מקבל `containerBounds` שמונע יציאה אופקית מגבולות המשטח (Law B — אין גלילה אופקית).
+- **Snap-to-Grid:** אחרי גרירה — `findBestTargetSlot` מעגל למיקום לפי `GridStep` (תמיד מחזיר את הסלוט הקרוב ביותר מתמטית, ללא בדיקת תפוסה).
+- **מניעת חפיפה / Reflow:** ב-`onMagnetDragEnd` נבדקת התנגשות באמצעות `isSlotOccupied` (פרט למגנט הנגרר). אם הסלוט פנוי — snap רגיל. אם תפוס — `reflowWithDraggedMagnet` משבצת את המגנט הנגרר באינדקס reading-order של היעד, ודוחפת את שאר המגנטים קדימה ב-1, וממקמת את כולם רציף משמאל-לימין, מלמעלה-למטה.
+- **גלילה:** נמנעת גלילה מיותרת עד שמלאים את המשטח; אז גלילה אנכית. בדסקטופ נוסף `clearance` תחתון של 140px ב-`updateSurfaceHeight` כדי שהשורה האחרונה לא תיחבא מאחורי ה-Glass Dock. בזמן גרירה, `onDragMove` מגדיל את `surfaceMinHeight` בזמן אמת כדי לאפשר גלילה אנכית חלקה (`onDragStart` מחשב baseline בודד פעם אחת לחיסכון).
 - **יחידת בסיס:** `BASE_MAGNET_SIZE = 150` פיקסלים; גודל תצוגה = `150 × currentDisplayScale` (ברירת מחדל `SCALE_DEFAULT = 1.44` ⇒ ~216px).
 - **Margin:** `MULTI_MARGIN_PERCENT = 0.1` (10% מגודל המגנט הסופי).
 - **GridStep:** `FullSize + Margin`.
 - **עמודות דסקטופ:** לפי `surfaceWidth`, נוסחה: `(width - margin) / gridStep`.
 - **מיקום אבסולוטי:** `x = Margin + col × GridStep`, `y = Margin + row × GridStep`.
 - **מעקב בגרירה:** עדכון סטייל בזמן אמת; בשחרור — הצמדה לרשת.
-- **Occupancy:** `Set` של מפתחות `"col,row"`.
+- **Occupancy:** `Set` של מפתחות `"col,row"` (משמש ב-`placeNewMagnets`); ב-`isSlotOccupied` הבדיקה מבוצעת ע"י סריקה ישירה של המגנטים והשוואת הסלוטים שלהם.
 - **`reflowMagnets`:** כפתור «סדר מחדש» — מיון לפי Y ואז X ומילוי רציף.
+- **`reflowWithDraggedMagnet`:** וריאנט מיוחד שנקרא מ-`onMagnetDragEnd` כשיש התנגשות; משלב את המגנט הנגרר באינדקס reading-order המבוקש לפני המיקום מחדש הרציף.
 
 ### מובייל — דריסת גריד
 
@@ -173,12 +176,17 @@
 
 ### לוגיקת תמונה בתוך המגנט (`Magnet.svelte`)
 
-- `overflow: hidden` על wrapper; משתני CSS דינמיים (`--pos-x`, `--pos-y`, `--zoom`).
+- `overflow: hidden` על wrapper; משתני CSS דינמיים מוזרקים ל-`style` של המגנט: `--magnet-size`, `--zoom`, `--tx`/`--ty` (תרגום בפיקסלים על אחרי scale), `--base-w`/`--base-h` (גודל הבסיס לפני זום, מחושב לפי `computeCoverBaseSize`), ו-`--bg-url`. בעבר התיעוד הזכיר `--pos-x`/`--pos-y` — אלה הוחלפו ב-`--tx`/`--ty` המבוססים על נוסחת המרה אחידה (`computeMaxTranslateFromBase` + `pctToTranslate`).
+- בפסיפס בלבד נוספים `--bg-w`/`--bg-h`/`--bg-x`/`--bg-y` לרקע שנוסע כתמונה אחת בין התאים.
 - **Cover** כברירת מחדל כשאין עריכה ידנית; יישור Portrait לרוב למעלה, Landscape למרכז.
 
 ### פעולות על תמונה (דסקטופ — hover)
 
-- מחיקה, עריכה, גרירה על הגריד עם snap.
+- **מחיקה** ו**עריכה** מתגלות בהובר על המגנט (כפתורים בפינות העליונות של ה-overlay).
+- **גרירה חופשית על הגריד עם snap:** המגנט נגרר עם העכבר, מתעדכן בזמן אמת, ובשחרור מתבצעת הצמדה לסלוט הקרוב ביותר ב-Grid (`findBestTargetSlot`).
+- **גבולות גרירה (`containerBounds`):** הגרירה מוגבלת אופקית ל-`[0, surfaceWidth - itemFullSize]` — לא ניתן לגרור מעבר לקצה הימני/שמאלי של המשטח, כדי שלא תיווצר גלילה אופקית רגעית (Law B). אנכית — מאפשרים גרירה ללא חסם עליון, כדי לאפשר הרחבת המשטח דינמית.
+- **הצמדת התנגשות (Push-Forward):** בעת drop על סלוט שכבר תפוס ע"י מגנט אחר — ה-`reflowWithDraggedMagnet` שם את המגנט הנגרר באינדקס reading-order של היעד ודוחף את כל היתר ב-1 קדימה. כל המגנטים מסודרים מחדש רציף משמאל-לימין, מלמעלה-למטה — בלי חורים ובלי חפיפות. אם הסלוט פנוי, נשמרת ההתנהגות של snap-רגיל בלי לגעת בשאר המגנטים (חופש לסידור עם רווחים, "כמו מגנטים על מקרר").
+- **גלילה חיה בזמן גרירה:** `onDragMove` מגדיל את `surfaceMinHeight` בזמן אמת אם המגנט יורד מתחת לגבול הקיים — `onDragStart` מחשב baseline פעם אחת בלבד מ־`maxBottom` של שאר המגנטים, ב-`onDragMove` משווים מולו ומעדכנים את ה-store רק כשצריך (גובה רק עולה, לא יורד באמצע גרירה — מונע ריצוד).
 
 ### תפריט פעולות (Glass Dock)
 
@@ -188,9 +196,11 @@
 
 **סטנדרטים מחייבים למסך זה (סיכום):**
 
-- **אין גלילה אופקית** (לא במשטח ולא בדוק/פאנלים).
+- **אין גלילה אופקית** (לא במשטח ולא בדוק/פאנלים). מוגן בשני מנגנונים: `containerBounds` ב-`draggable.js` בזמן גרירה, ו-`overflow-x: hidden` על `.canvas-container:not(.split-center)` בדסקטופ כקו הגנה שני.
+- **השורה האחרונה תמיד נגישה:** clearance תחתון של **140px** (`DESKTOP_DOCK_CLEARANCE_PX`) נוסף ל-`surfaceMinHeight` בדסקטופ-pack — כדי שהשורה התחתונה לא תיחבא מאחורי ה-Glass Dock הצף.
 - **הפעולות העיקריות זמינות תמיד** בלי צורך בגלילה כדי “למצוא כפתור”.
-- **תנועתיות חלקה** בזמן גרירה/זום/רינדור; כל עיבוד כבד עם Loader קצר וברור.
+- **תנועתיות חלקה** בזמן גרירה/זום/רינדור; כל עיבוד כבד עם Loader קצר וברור. בגרירה — `onDragMove` מתבצעת בתוך `requestAnimationFrame` של ה-`draggable` action ולא דורשת throttle נוסף.
+- **שימור הסידור על פני מעברי מסכים:** המעבר ל-`/uploader/edit/[magnetId]` ובחזרה לא משנה את מיקומי המגנטים (ראו "שימור סידור הגריד אחרי עריכה" בסעיף ה-Lifecycle לעיל).
 
 ---
 
