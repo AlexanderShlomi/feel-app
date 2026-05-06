@@ -4,6 +4,7 @@ import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl, clearDataUrlBlobUrlCache } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
+import { createGridPreviewFromBlob } from '$lib/utils/imagePreview.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -612,9 +613,15 @@ export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
 
-    // P0: Original blobs only for main surface rendering.
-    // We intentionally avoid any canvas-based normalization/resampling here, because it can
-    // cause brightness/sharpness loss and visible flicker during URL swaps.
+    // Two-tier rendering:
+    //   • `originalSrc` — full-resolution blob URL, source of truth for the
+    //     editor / order thumbnails / cart hydration. Never resampled here.
+    //   • `src` — what the grid `<Magnet>` actually renders. On mobile this is
+    //     a downscaled preview (~900px max, JPEG q=0.85) generated lazily so the
+    //     phone never decodes a 12MP bitmap per tile while scrolling. On desktop
+    //     decode is cheap enough that we keep `src === originalSrc`.
+    const isMobileNow = isMobileViewportNow();
+
     const pending = list.map((f) => {
         const id = crypto.randomUUID();
         const url = URL.createObjectURL(f);
@@ -628,7 +635,10 @@ export async function addUploadedMagnets(files) {
                 position: { x: 0, y: 0 },
                 size: getFullMagnetSize(),
                 originalSrc: url,
-                src: url,
+                // Mobile: leave `src` empty so the tile shows the pulse skeleton
+                // (Magnet.svelte) instead of forcing a heavy original decode while
+                // we generate a preview off the main paint path.
+                src: isMobileNow ? null : url,
                 activeEffectId: 'original',
                 isSplitPart: false,
                 hidden: false,
@@ -638,6 +648,28 @@ export async function addUploadedMagnets(files) {
     });
 
     magnets.update((l) => [...l, ...pending.map(p => p.magnet)]);
+
+    if (!isMobileNow) return;
+
+    // Mobile: generate previews in parallel. Each one resolves independently
+    // and updates only its own magnet, so the grid fills in tile-by-tile
+    // without any all-or-nothing wait.
+    for (const p of pending) {
+        createGridPreviewFromBlob(p.file).then((previewUrl) => {
+            if (previewUrl && previewUrl !== p.rawUrl) {
+                magnets.update((l) =>
+                    l.map((m) => (m.id === p.id ? { ...m, src: previewUrl } : m))
+                );
+                return;
+            }
+            // Fallback: preview generation failed (Safari memory cap, OOM, broken
+            // image). Show the original blob so the tile is at least visible —
+            // skeleton stays on screen until the heavier decode completes.
+            magnets.update((l) =>
+                l.map((m) => (m.id === p.id ? { ...m, src: p.rawUrl } : m))
+            );
+        });
+    }
 }
 export function updateMagnetProcessedSrc(id, eff, src) {
     magnets.update(l => l.map(m => {

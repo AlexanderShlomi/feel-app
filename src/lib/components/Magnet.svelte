@@ -329,7 +329,7 @@
         {/if}
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
-        {:else}
+        {:else if displaySrc}
             <img 
                 src={displaySrc} 
                 bind:this={imgElement}
