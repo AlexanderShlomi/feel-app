@@ -82,7 +82,7 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
         const serializedMagnets = await Promise.all(magnets.map(async (m) => {
             // בפסיפס: לא שומרים את התמונה בתוך המגנט (חוסך מקום)
             if (m.isSplitPart) {
-                return { ...m, originalSrc: null, src: null, processed: {} };
+                return { ...m, originalSrc: null, src: null };
             }
 
             // במגנטים רגילים: שומרים את התמונה
@@ -98,11 +98,13 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
                 base64Src = m.originalSrc || m.src;
             }
 
-            return { ...m, originalSrc: base64Src, src: base64Src, processed: {} };
+            return { ...m, originalSrc: base64Src, src: base64Src };
         }));
 
         // הכנת ההגדרות (כולל תמונת פסיפס ראשית)
         const serializedSettings = { ...settings };
+        // splitImageCache הוסר מהמודל — אם הגיע מ-storage ישן, נסיר אותו לפני שמירה.
+        delete serializedSettings.splitImageCache;
         
         if (settings.splitImageSrc && settings.splitImageSrc.startsWith('blob:')) {
             const cached = cacheGet(settings.splitImageSrc);
@@ -127,8 +129,6 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
                 serializedSettings.giftImage = b64;
              }
         }
-        
-        serializedSettings.splitImageCache = {}; 
 
         const workspaceData = {
             magnets: serializedMagnets,
@@ -154,6 +154,8 @@ export const loadStateFromStorage = async () => {
         if (!data) return null;
 
         const hydratedSettings = { ...data.settings };
+        // ניקוי שדה ישן מ-storage שמור (אם המשתמש לא ניקה את ה-IndexedDB).
+        delete hydratedSettings.splitImageCache;
 
         // שחזור תמונות הגדרות
         if (hydratedSettings.splitImageSrc && hydratedSettings.splitImageSrc.startsWith('data:')) {
@@ -170,8 +172,7 @@ export const loadStateFromStorage = async () => {
                 return {
                     ...m,
                     src: hydratedSettings.splitImageSrc,
-                    originalSrc: hydratedSettings.splitImageSrc,
-                    processed: {}
+                    originalSrc: hydratedSettings.splitImageSrc
                 };
             }
 
@@ -180,7 +181,9 @@ export const loadStateFromStorage = async () => {
             if (m.originalSrc && m.originalSrc.startsWith('data:')) {
                 objectUrl = await base64ToBlobUrl(m.originalSrc);
             }
-            return { ...m, originalSrc: objectUrl, src: objectUrl, processed: {} };
+            // הסרת שדה processed שאולי שרד ב-storage ישן (worker pipeline הוסר).
+            const { processed: _legacyProcessed, processedOrder: _legacyOrder, ...rest } = m;
+            return { ...rest, originalSrc: objectUrl, src: objectUrl };
         }));
 
         return {

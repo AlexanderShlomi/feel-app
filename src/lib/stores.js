@@ -214,7 +214,6 @@ export const editorSettings = writable({
     splitImageRatio: 1,
     gridBaseSize: 3,
     splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
-    splitImageCache: {},
     giftImage: null 
 });
 
@@ -361,12 +360,12 @@ export async function saveWorkspaceToCart() {
 
         const serializeMagnets = async (list) => { 
              return Promise.all(list.map(async (m) => {
-                if (type === PRODUCT_TYPES.MOSAIC) return { ...m, originalSrc: null, src: null, processed: {} };
+                if (type === PRODUCT_TYPES.MOSAIC) return { ...m, originalSrc: null, src: null };
                 let safeSrc = m.originalSrc || m.src;
                 if (safeSrc && safeSrc.startsWith('blob:')) {
                     try { const blob = await fetch(safeSrc).then(r => r.blob()); safeSrc = await fileToBase64(blob); } catch (e) {}
                 }
-                return { ...m, originalSrc: safeSrc, src: safeSrc, processed: {} };
+                return { ...m, originalSrc: safeSrc, src: safeSrc };
             }));
         };
 
@@ -464,7 +463,7 @@ export async function editCartItem(itemId) {
             return Promise.all(list.map(async (m) => {
                 let validSrc = m.originalSrc;
                 if (validSrc && validSrc.startsWith('data:')) validSrc = await base64ToBlobUrl(validSrc);
-                return { ...m, originalSrc: validSrc, src: validSrc, processed: {} };
+                return { ...m, originalSrc: validSrc, src: validSrc };
             }));
         };
 
@@ -502,7 +501,7 @@ export async function editCartItem(itemId) {
             let recoveredMagnets;
             if (item.type === PRODUCT_TYPES.MOSAIC) {
                 recoveredMagnets = item.data.magnets.map(m => ({
-                    ...m, src: hydratedSettings.splitImageSrc, originalSrc: hydratedSettings.splitImageSrc, processed: {}
+                    ...m, src: hydratedSettings.splitImageSrc, originalSrc: hydratedSettings.splitImageSrc
                 }));
             } else {
                 recoveredMagnets = await hydrateMagnetsPack(item.data.magnets);
@@ -565,28 +564,19 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
     const currentList = get(magnets);
     if (currentList.length > 0) currentList.forEach(m => {
         if (m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc);
-        if (m.src?.startsWith('blob:')) URL.revokeObjectURL(m.src);
-        if (m.processed) {
-            Object.values(m.processed).forEach(v => {
-                if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
-            });
-        }
+        // src may be a separate downscaled preview blob on mobile (two-tier rendering).
+        if (m.src && m.src !== m.originalSrc && m.src.startsWith('blob:')) URL.revokeObjectURL(m.src);
     });
     magnets.set([]);
     editingItemId.set(null);
     const s = get(editorSettings);
     if (s.splitImageSrc?.startsWith('blob:')) URL.revokeObjectURL(s.splitImageSrc);
     if (s.giftImage?.startsWith('blob:')) URL.revokeObjectURL(s.giftImage);
-    if (s.splitImageCache) {
-        Object.values(s.splitImageCache).forEach(v => {
-            if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
-        });
-    }
-    
+
     editorSettings.set({
         currentProductType: targetType, currentDisplayScale: SCALE_DEFAULT, surfaceMinHeight: '100%', isSurfaceDark: false,
         splitImageSrc: null, splitImageRatio: 1, gridBaseSize: 3, currentEffect: 'original',
-        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, splitImageCache: {}, giftImage: null
+        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, giftImage: null
     });
     try { clearDataUrlBlobUrlCache(); } catch {}
     clearStorage();
@@ -641,8 +631,7 @@ export async function addUploadedMagnets(files) {
                 src: isMobileNow ? null : url,
                 activeEffectId: 'original',
                 isSplitPart: false,
-                hidden: false,
-                processed: {}
+                hidden: false
             }
         };
     });
@@ -670,40 +659,6 @@ export async function addUploadedMagnets(files) {
             );
         });
     }
-}
-export function updateMagnetProcessedSrc(id, eff, src) {
-    magnets.update(l => l.map(m => {
-        if (m.id !== id) return m;
-        const MAX_EFFECT_BLOBS_PER_MAGNET = 2;
-        const processed = { ...(m.processed || {}) };
-
-        // Track effect insertion order for eviction (kept on the magnet object).
-        const order = Array.isArray(m.processedOrder) ? [...m.processedOrder] : [];
-        const nextOrder = order.filter(k => k !== eff);
-        nextOrder.push(eff);
-
-        const prev = processed?.[eff];
-        if (prev && prev !== src && typeof prev === 'string' && prev.startsWith('blob:')) {
-            try { URL.revokeObjectURL(prev); } catch {}
-        }
-
-        processed[eff] = src;
-
-        // Evict older blob URLs so effect processing doesn't grow memory unbounded on mobile.
-        const blobKeys = nextOrder.filter((k) => typeof processed[k] === 'string' && processed[k].startsWith('blob:'));
-        while (blobKeys.length > MAX_EFFECT_BLOBS_PER_MAGNET) {
-            const evictEff = blobKeys.shift();
-            const evictVal = processed[evictEff];
-            if (typeof evictVal === 'string' && evictVal.startsWith('blob:')) {
-                try { URL.revokeObjectURL(evictVal); } catch {}
-            }
-            delete processed[evictEff];
-            const idx = nextOrder.indexOf(evictEff);
-            if (idx >= 0) nextOrder.splice(idx, 1);
-        }
-
-        return { ...m, processed, processedOrder: nextOrder };
-    }));
 }
 export function updateMagnetTransform(id, tr) {
     const nextTransform = { ...tr };

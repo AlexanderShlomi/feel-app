@@ -25,7 +25,6 @@
         addUploadedMagnets,
         setUploaderScrollActive,
         waitForUploaderScrollIdle,
-        updateMagnetProcessedSrc, 
         getCssFilter,
         getFullMagnetSize, 
         getMargin,
@@ -49,11 +48,12 @@
         { id: 'dramatic', name: 'דרמטי' }
     ].map(e => ({ ...e, css: getCssFilter(e.id) }));
 
-    let effectsWorker;
-    let effectsWorkerUnsupported = false;
-    let effectsQueue = [];
-    let effectsActiveEffect = null;
-    let effectsProcessing = false;
+    // Effects pipeline note (Phase 4):
+    //   The previous Web-Worker pipeline that pre-baked per-effect Blob URLs has been removed.
+    //   Effects are now applied as pure CSS filters at render time (see `getCssFilter` /
+    //   `getFilterStyle` in `$lib/stores.js`). The original blob is the only image data the
+    //   client tracks; final, print-quality processing happens server-side at fulfillment time
+    //   from the original on S3 (Admin / print pipeline).
     let activePanel = null;
     let loaderEl;
     let surfaceEl;
@@ -246,54 +246,6 @@
             editorSettings.update(s => ({ ...s, currentDisplayScale: SCALE_DEFAULT }));
         }
 
-        if (window.Worker) {
-            effectsWorker = new Worker('/effects.worker.js');
-            effectsWorker.onmessage = (event) => {
-                const { status, magnetId, effectId, blob } = event.data;
-                // Allow queue to send next item after any response.
-                effectsProcessing = false;
-
-                // If user already switched effects, ignore stale worker results (avoid thrash/memory).
-                if (effectsActiveEffect && effectId !== effectsActiveEffect) {
-                    if (status === 'success' && blob) {
-                        // Drop result promptly.
-                        try { /* no-op */ } catch {}
-                    }
-                    // Continue draining queue for the current effect.
-                    drainEffectsQueue();
-                    return;
-                }
-                if (status === 'success') {
-                    const newSrc = URL.createObjectURL(blob);
-                    if (magnetId === 'split-master') {
-                        editorSettings.update(s => {
-                            const prev = s.splitImageCache?.[effectId];
-                            if (prev && prev !== newSrc && typeof prev === 'string' && prev.startsWith('blob:')) {
-                                try { URL.revokeObjectURL(prev); } catch {}
-                            }
-                            const newCache = { ...s.splitImageCache, [effectId]: newSrc };
-                            return { ...s, splitImageCache: newCache };
-                        });
-                        if (loaderEl) loaderEl.style.display = 'none';
-                    } else {
-                        updateMagnetProcessedSrc(magnetId, effectId, newSrc);
-                    }
-                    drainEffectsQueue();
-                    return;
-                }
-                if (status === 'unsupported') {
-                    effectsWorkerUnsupported = true;
-                    if (loaderEl) loaderEl.style.display = 'none';
-                    effectsQueue = [];
-                    effectsProcessing = false;
-                }
-                if (status === 'error') {
-                    // Avoid infinite blocking if a single item fails.
-                    drainEffectsQueue();
-                }
-            };
-        }
-
         resizeObserver = new ResizeObserver((entries) => {
             const entry = entries[0];
             if (!entry) return;
@@ -350,7 +302,6 @@
     });
 
     onDestroy(() => {
-        if (effectsWorker) effectsWorker.terminate();
         if (resizeObserver && surfaceEl && surfaceEl.parentElement) resizeObserver.unobserve(surfaceEl.parentElement);
     });
     
@@ -486,7 +437,6 @@
             gridBaseSize: MIN_GRID_BASE,
             currentEffect: 'original',
             splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
-            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null },
             surfaceMinHeight: '0px' 
         }));
 
@@ -634,42 +584,11 @@
     }
 
     function applyEffectToAllMagnets(effectId) {
+        // Effects are GPU-accelerated CSS filters now (see getCssFilter in stores.js).
+        // No off-main-thread baking, no per-tile blob churn — only metadata changes,
+        // and the renderer reads the filter style from `activeEffectId`.
         editorSettings.update(s => ({ ...s, currentEffect: effectId }));
         magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
-        
-        effectsActiveEffect = effectId;
-        effectsQueue = [];
-        effectsProcessing = false;
-        if (effectId === 'original') return;
-
-        if ($editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC) {
-            if (!$editorSettings.splitImageCache || !$editorSettings.splitImageCache[effectId]) {
-                effectsQueue.push({ magnetId: 'split-master', effectId, originalSrc: $editorSettings.splitImageSrc });
-                drainEffectsQueue();
-            }
-        } else {
-            for (const magnet of $magnets) {
-                if (!magnet.processed || !magnet.processed[effectId]) {
-                    updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
-                    effectsQueue.push({ magnetId: magnet.id, effectId, originalSrc: magnet.originalSrc });
-                }
-            }
-            drainEffectsQueue();
-        }
-    }
-
-    function drainEffectsQueue() {
-        if (!effectsWorker || effectsWorkerUnsupported) return;
-        if (effectsProcessing) return;
-        const next = effectsQueue.shift();
-        if (!next) return;
-        effectsProcessing = true;
-        try {
-            effectsWorker.postMessage(next);
-        } finally {
-            // processing flag is normally released on worker response; this is just a safety net.
-            setTimeout(() => { effectsProcessing = false; drainEffectsQueue(); }, 15000);
-        }
     }
 
     function incrementGrid() { 
