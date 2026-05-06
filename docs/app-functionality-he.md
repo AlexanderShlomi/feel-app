@@ -358,27 +358,44 @@
 
 ### יצירת הזמנה בשרת
 
-- **לפני ה־RPC:** העלאת **תמונות ממוזערות (thumbnails)** לכל פריט בסל ל־Supabase Storage (באקט `order-thumbnails`), דרך `src/lib/orderThumbnails.js` — JPEG מוקטן; כשל בעלאה לא חוסם יצירת הזמנה.
-- קריאה ל־**RPC** `create_complete_order` עם:
+תהליך יצירת ההזמנה מתוכנן לעמידות מקסימלית מול תקלות רשת/PostgREST עוברות. הלוגיקה ב־**`src/lib/orderPlacement.js`** (לקוח) ובמגרציה **`20260507000100_create_complete_order_v2_with_order_number.sql`** (שרת).
 
-  - `p_order_id`, `p_shipping_data`, `p_gift_data`, `p_items`, `p_subtotal`, `p_total`
+**הזרימה (Round-trip יחיד עד למסך התשלום):**
 
-- בכל פריט ב־`p_items` נשלח גם **`thumbnail_url`** (כתובת ציבורית אחרי העלאה) לצד **`configuration`**.
+1. **בניית `itemsPayload` מטא־בלבד** (Law C): `buildOrderItemConfiguration` בודק תחילית `data:` באופן **פוזיטיבי** (ולא לפי סף אורך) למניעת חלחול data URL קצר ל־configuration. `magnetsMeta` נכלל רק עבור `magnets_pack` (בפסיפס מספיק `count`). השדה `thumbnail_url` **לא נשלח** ב־payload (מוזרק ברקע אחרי יצירה).
+2. **קריאה ל־RPC `create_complete_order`** דרך `createCompleteOrderResilient`:
+   - **Timeout 30 שניות** (`Promise.race` עם טיימר). אם עבר — `Error('order_creation_timeout')` עם דגל `isTimeout`.
+   - **`slow warning` רך אחרי 8 שניות** — UI מציג "החיבור איטי כעת — ממשיכים לנסות". לא מבטל את הקריאה, רק מרגיע את המשתמש.
+   - **Retry יחיד (700ms backoff)** רק לכשלים *לפני שהשרת ענה* (timeout / `failed to fetch` / `AbortError`). שגיאות לוגיות (validation/auth/mismatch) **לא** מעוררות retry.
+   - **התאוששות אידמפוטנטית מ־unique violation:** אם הניסיון הראשון התקבל בשרת אבל התשובה אבדה ברשת, ה־retry יתנגש על ה־PK (`23505`). במקרה כזה הקליינט קורא `orders` + `order_items` ובונה את אותה תשובה לוגית. אותו `p_order_id` שנוצר ב־`crypto.randomUUID()` הוא בעצם idempotency key.
+3. **ה־RPC חדש (v2 — מגרציה `20260507000100`):**
+   - **מעבר אחד (single-pass)** על `p_items` שמבצע גם guardrail (50KB + `data:image`), גם תמחור שרתי (`compute_order_item_unit_price`), וגם צובר את `subtotal`. ה־`unit/qty` נשמרים במערכים ומשמשים בלולאת ה־INSERT השנייה — בלי לחשב מחדש (חצי מהעבודה לעומת `20260411120000`).
+   - **`order_number` מוחזר ישירות** בתוך ה־jsonb (`{ order_id, order_number, item_ids[], subtotal, total }`). אין יותר `select('order_number')` נפרד — זה היה round-trip מיותר שהכפיל סיכוי כשל.
+   - שמירה על Server-Authoritative Pricing (Law D): `client_subtotal_mismatch` / `client_total_mismatch` נדחים.
+4. **סנכרון מצב התשלום ל־`sessionStorage`** (`feel_checkout_payment_v1`): `{ orderId, orderNumber, amount }`. ב־refresh בטעות — `tryRestorePaymentSession` ב־`+page.svelte` מאמת מול ה־DB ש־`status='pending'` ושיש התאמה ב־`user_id`, ומחזיר את המשתמש למסך התשלום במקום לסל ריק.
+5. **העלאת thumbnails ברקע (לא חוסמת UI):** `backfillOrderThumbnailsInBackground` מעלה את כל ה־thumbnails ב־`Promise.all` (`uploadOrderItemThumbnails`) ואז קורא ל־**RPC חדש `patch_order_item_thumbnails`** (פלורלי, מגרציה `20260507000200`) שמעדכן את כל השורות במכה אחת תחת RLS — במקום RPC נפרד לכל פריט.
 
-- פריטי ההזמנה נשלחים עם **`configuration` מצומצם** (מטא־דאטה בלי Base64 כבד) — ראו `buildOrderItemConfiguration` בדף הצ'ק-אאוט (מניעת timeout / מגבלות גודל).
+**טבלת שגיאות → טקסטים בעברית** (`orderCreationErrorMessage` בדף הצ'ק־אאוט):
 
-- **Timeout רשת** (~45 שניות) סביב ה־RPC למניעת UI תקוע.
+| מקור שגיאה | טקסט למשתמש |
+|------------|--------------|
+| `order_creation_timeout` / `isTimeout` | "החיבור לשרת איטי כעת. נסו שוב — ההזמנה לא חויבה." |
+| `failed to fetch` / `network` | "תקלת רשת זמנית. בדקו את החיבור לאינטרנט ונסו שוב." |
+| `client_subtotal_mismatch` / `client_total_mismatch` | "הסכום בעגלה השתנה. רעננו את הדף ונסו שוב." |
+| `not_authenticated` | "יש להתחבר כדי להשלים את ההזמנה." |
+| `configuration_too_large` / `configuration_contains_data_image` | "אחד הפריטים כבד מדי. ערכו אותו מחדש בעורך ושמרו לעגלה." |
 
 **דרישות ביצועים למסך זה (מחייב):**
 
-- שלב יצירת ההזמנה חייב להציג מצב טעינה ברור, לא להקפיא את המסך, ולהסתיים מהר ככל האפשר (כולל העלאת thumbnails).
+- שלב יצירת ההזמנה חייב להציג מצב טעינה ברור, לא להקפיא את המסך, ולהסתיים מהר ככל האפשר.
 - כשלי רשת צריכים להציג הודעה קצרה וברורה עם אפשרות חזרה/ניסיון חוזר (מבלי לאבד את הסל/הטיוטה).
-
-- **אחרי הצלחת ה־RPC:** קריאת `select('order_number')` על אותה הזמנה — להצגת **מספר הזמנה ציבורי** (`order_number`) במסך התשלום ובהמשך. ה־**UUID** (`id`) נשמר לשימוש פנימי (למשל `update` ל־`paid`).
+- **Anti double-click:** `if (placeOrderLoading) return` בתחילת `handlePlaceOrder` — מונע יצירת שתי הזמנות בלחיצה כפולה במכשירים איטיים, גם אם ה־`disabled` עוד לא הסתנכרן.
 
 ### תשלום (דמו)
 
-- רכיב **`PaymentMock`** (`src/lib/components/PaymentMock.svelte`): מציג **מספר הזמנה** (`#order_number`) ולא את ה־UUID; מדמה אישור תשלום; לאחר אישור — עדכון `orders.status` ל־`'paid'` לפי `id` וריקון `cart`.
+- רכיב **`PaymentMock`** (`src/lib/components/PaymentMock.svelte`): מציג **מספר הזמנה** (`#order_number`) ולא את ה־UUID; מדמה אישור תשלום.
+- **אישור תשלום עובר דרך RPC `confirm_order_payment(p_order_id)`** ולא דרך `update` ישיר. UPDATE על `orders` נחסם מצד הלקוח במגרציה `20260411120000` (`revoke update on table public.orders from anon, authenticated`) כדי שלא ניתן יהיה לסמן הזמנה כ־`paid` בלי המעבר המבוקר.
+- אחרי אישור: `clearPaymentSession()` מנקה את `feel_checkout_payment_v1`, `cart.set([])` מרוקן עגלה, וה־UI מנווט ל־`/checkout/success/[orderId]`.
 - במסך **הצלחה** אחרי תשלום מוצג גם מספר ההזמנה כשזמין.
 
 ---
@@ -496,12 +513,15 @@
 
 ## מסד נתונים (Supabase) — הערות ארכיטקטורה
 
-- טבלאות/פונקציות רלוונטיות מהמיגרציות בפרויקט (למשל): **`orders`**, **`order_items`**, **`profiles`**, **`privacy_policies`**, RPC **`create_complete_order`**, **`record_privacy_consent`** (ושמות מדויקים לפי קבצי ה־SQL).
-- **`orders.id`:** מפתח ראשי מסוג UUID — לפעולות פנימיות, עדכון סטטוס, וקישורים טכניים.
-- **`orders.order_number`:** מספר שלם עולה **ייחודי** (`UNIQUE`), נוצר מרצף **`order_number_seq`** ו־`DEFAULT nextval` — להצגה ללקוח, למסכי תשלום/הצלחה ולתמיכה.
-- **`order_items.thumbnail_url`:** כתובת ציבורית לתמונה ממוזערת לאחר העלאה ל־Storage.
-- **Storage:** באקט **`order-thumbnails`** עם מדיניות RLS (העלאה תחת קידומת `user_id` בנתיב).
-- פירוט מלא של סכימה — `supabase/migrations/` (למשל `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, מיגרציות פרטיות, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`).
+- טבלאות/פונקציות רלוונטיות מהמיגרציות בפרויקט: **`orders`**, **`order_items`**, **`profiles`**, **`privacy_policies`**, RPC **`create_complete_order`** (v2), **`patch_order_item_thumbnails`** (batch), **`patch_order_item_thumbnail`** (single, legacy), **`confirm_order_payment`**, **`compute_order_item_unit_price`**, **`my_orders_dashboard`**, **`record_privacy_consent`** (שמות מדויקים לפי קבצי ה־SQL).
+- **`orders.id`:** מפתח ראשי מסוג UUID — לפעולות פנימיות, עדכון סטטוס, וקישורים טכניים. ה־UUID נוצר בקליינט (`crypto.randomUUID()`) ומשמש כ־**idempotency key** לבקשת `create_complete_order` — `unique_violation` ב־retry מסמן שהניסיון הראשון התקבל ומאפשר התאוששות.
+- **`orders.order_number`:** מספר שלם עולה **ייחודי** (`UNIQUE`), נוצר מרצף **`order_number_seq`** ו־`DEFAULT nextval` — להצגה ללקוח, למסכי תשלום/הצלחה ולתמיכה. **מוחזר ישירות מ־RPC v2** (אין `select` נפרד).
+- **Server-authoritative pricing (Law D):** `compute_order_item_unit_price` מחשב מחיר לפי `type + configuration.count`. סטיה בין הסכום של הקליינט לתחשיב השרתי = `client_subtotal_mismatch` / `client_total_mismatch`. **אין** `update` ישיר על `orders` מצד הלקוח — מעבר ל־`paid` רק דרך `confirm_order_payment` (security definer).
+- **Configuration guardrail (50KB + ללא `data:image`):** מאוכף הן ב־CHECK constraint (`order_items_configuration_guardrail_chk`, מגרציה `20260411130000`) והן בכל קריאה ל־RPC v2 — defense in depth.
+- **`order_items.thumbnail_url`:** כתובת ציבורית לתמונה ממוזערת לאחר העלאה ל־Storage. backfill ברקע אחרי יצירת ההזמנה — call יחיד דרך `patch_order_item_thumbnails` (batch).
+- **Storage:** באקט **`order-thumbnails`** (public read; insert/update/delete רק תחת קידומת `auth.uid()`).
+- **`/orders` perf:** RPC `my_orders_dashboard(limit, offset)` מאחד הזמנות + שורות (בלי `configuration` הכבד) באגרגציה אחת, עם אינדקסים מותאמים על `(user_id, placed_at desc)` ו־`(order_id, created_at)`.
+- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, **`20260507000100_create_complete_order_v2_with_order_number.sql`**, **`20260507000200_patch_order_item_thumbnails_batch.sql`**.
 
 ---
 
@@ -549,6 +569,7 @@
 | עורך פסיפס | `src/lib/components/MosaicEditor.svelte` |
 | סל | `src/lib/components/CartCounter.svelte` |
 | צ'ק-אאוט | `src/routes/checkout/+page.svelte` |
+| יצירת הזמנה חסינה (timeout/retry/idempotency) | `src/lib/orderPlacement.js` |
 | הזמנות שלי | `src/routes/orders/+page.svelte` |
 | תמונות ממוזערות להזמנה | `src/lib/orderThumbnails.js` |
 | תשלום דמו | `src/lib/components/PaymentMock.svelte` |
