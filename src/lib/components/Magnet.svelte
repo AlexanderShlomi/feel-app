@@ -22,6 +22,16 @@
     let isImageLoaded = false;
     let hasLoadedOnce = false;
 
+    // Pulse skeleton kept in DOM while image decodes; fade-out + remove after on:load.
+    // Matches editor pattern (1.5s ease-in-out, opacity 1→0.5), avoids "white tile" perception
+    // when content-visibility:auto reveals an offscreen tile and the browser starts decoding.
+    let showTileSkeleton = true;
+    function onTileSkeletonTransitionEnd(/** @type {TransitionEvent} */ e) {
+        if (e.propertyName !== 'opacity') return;
+        if (!hasLoadedOnce) return;
+        showTileSkeleton = false;
+    }
+
     /** מצב טעינה מקומי למעבר לעורך (לחיצה על עריכה / על המגנט במובייל) */
     let editNavPending = false;
     let editNavSawKitNavigating = false;
@@ -100,18 +110,26 @@
     function bindFrameMeasure(node, active) {
         let ro;
         let raf = 0;
-        function measure() {
+        function measureSync() {
+            const w = Math.round(node.clientWidth);
+            if (w > 0 && w !== measuredFrame) measuredFrame = w;
+        }
+        function measureRaf() {
             if (raf) return;
             raf = requestAnimationFrame(() => {
                 raf = 0;
-                const w = Math.round(node.clientWidth);
-                if (w > 0 && w !== measuredFrame) measuredFrame = w;
+                measureSync();
             });
         }
         function start() {
-            measure();
+            // First measurement is synchronous so the very first crop computation uses the
+            // real CSS width (mobile grid: 100% of cell ≈ 50vw - gutters), not the store
+            // `size`. Otherwise a tile flashes one frame at the desktop size before the
+            // RAF correction lands — visible right after returning from the editor.
+            measureSync();
             if (!browser || typeof ResizeObserver === 'undefined') return;
-            ro = new ResizeObserver(measure);
+            // Subsequent updates throttle via RAF to avoid layout thrash during resize.
+            ro = new ResizeObserver(measureRaf);
             ro.observe(node);
         }
         function stop() {
@@ -252,7 +270,13 @@
             if (e.type === 'touchstart') e.preventDefault(); 
             dispatch('toggleVisibility', { id }); 
             return; 
-        } 
+        }
+
+        // בדסקטופ: פתיחת העורך מתבצעת אך ורק דרך כפתור העריכה המפורש (handleEditClick).
+        // גרירה מפעילה click לאחר שחרור, ואנחנו לא רוצים שזה יפתח את העורך.
+        // במובייל magnets-pack: pointer-events:none על ה-tile מונע הגעה לכאן,
+        // ה-tap מטופל במערכת pointer-events של ה-layout.
+        if (!$isMobile) return;
         
         // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
         beginEditNavigation();
@@ -285,8 +309,8 @@
     use:bindFrameMeasure={$isMobile && !isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
-    role={isSplitPart ? undefined : 'button'}
-    aria-label={isSplitPart ? undefined : 'פתח עריכת תמונה'}
+    role={isSplitPart ? undefined : ($isMobile ? 'button' : undefined)}
+    aria-label={isSplitPart ? undefined : ($isMobile ? 'פתח עריכת תמונה' : undefined)}
 >
     <div 
         class="image-wrapper" 
@@ -295,9 +319,17 @@
         class:has-transform={hasTransform}
         class:is-edit-navigating={editNavPending}
     >
+        {#if !isSplitPart && showTileSkeleton}
+            <div
+                class="tile-skeleton"
+                class:tile-skeleton--fade-out={hasLoadedOnce}
+                aria-hidden="true"
+                on:transitionend={onTileSkeletonTransitionEnd}
+            ></div>
+        {/if}
         {#if isSplitPart && transform}
             <div class="split-image" style="{filterCss}"></div>
-        {:else}
+        {:else if displaySrc}
             <img 
                 src={displaySrc} 
                 bind:this={imgElement}
@@ -346,6 +378,9 @@
 
 <style>
     .magnet { width: 100%; height: 100%; position: relative; touch-action: none; user-select: none; cursor: pointer; padding: 0; box-sizing: border-box; }
+    /* Desktop: the tile itself is draggable, not directly "clickable" to edit — only the overlay button opens edit */
+    .magnet.desktop-mode { cursor: grab; }
+    .magnet.desktop-mode:active { cursor: grabbing; }
     .magnet.is-hidden .image-wrapper { opacity: 0.3; filter: grayscale(100%); border: 1px dashed #ccc; }
     
     .image-wrapper { 
@@ -354,6 +389,32 @@
         display: flex; justify-content: center; align-items: center; 
     }
     .image-wrapper.is-edit-navigating .magnet-image { opacity: 0.72; filter: brightness(0.96); }
+
+    /* Skeleton placeholder that pulses while the tile image decodes.
+       Matches the editor skeleton (1.5s ease-in-out, opacity 1→0.5) so the user
+       sees identical loading rhythm across the app. Stays underneath the image; on
+       :load() the image overlays it (opacity:1) and the skeleton fades out + is
+       removed from the DOM via transitionend (no layout shift, no flicker). */
+    .tile-skeleton {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background: rgba(0, 0, 0, 0.06);
+        pointer-events: none;
+        opacity: 1;
+        animation: tileSkeletonPulse 1.5s ease-in-out infinite;
+        transition: opacity 0.2s ease-out;
+    }
+
+    .tile-skeleton--fade-out {
+        opacity: 0;
+        animation: none;
+    }
+
+    @keyframes tileSkeletonPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
 
     .edit-nav-overlay {
         position: absolute;

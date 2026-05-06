@@ -4,21 +4,39 @@ import { get } from 'svelte/store';
 
 /**
  * מחשב את המיקום הקרוב ביותר (סלוט) ברשת עבור נקודה נתונה (פיקסלים).
+ * הפונקציה מחזירה תמיד את הסלוט הקרוב ביותר מתמטית — הטיפול בהתנגשות (Reflow / Push)
+ * נעשה בקריאה הקוראת (`onMagnetDragEnd`) באמצעות `isSlotOccupied` + `reflowWithDraggedMagnet`.
  */
-export function findBestTargetSlot(pixelX, pixelY, margin, gridStep, numCols, occupiedSlotsFn) {
-    // occupiedSlotsFn: פונקציה שמחזירה Set של סלוטים תפוסים ("col,row")
-    // כדי לא לנחות על עצמנו או על אחרים אם אסור (כרגע מותר להחליף מקומות, אז נבדוק את הלוגיקה בהמשך)
-    
-    // הערכה גסה של השורה והעמודה
+export function findBestTargetSlot(pixelX, pixelY, margin, gridStep, numCols) {
     const approxCol = Math.round((pixelX - margin) / gridStep);
     const approxRow = Math.round((pixelY - margin) / gridStep);
-    
-    // חיפוש הסלוט הפנוי/המתאים ביותר בסביבה הקרובה
-    // כרגע הפונקציה מחזירה את הסלוט הקרוב ביותר מתמטית, הטיפול בהתנגשות ייעשה בחוץ
+
     let bestCol = Math.max(0, Math.min(approxCol, numCols - 1));
     let bestRow = Math.max(0, approxRow);
 
     return { col: bestCol, row: bestRow };
+}
+
+/**
+ * עזר פנימי: ממיר מיקום פיקסלים לסלוט (col, row) לפי מערכת הצירים של הגריד.
+ */
+function pixelsToSlot(position, margin, gridStep) {
+    const col = Math.round((position.x - margin) / gridStep);
+    const row = Math.round((position.y - margin) / gridStep);
+    return { col: Math.max(0, col), row: Math.max(0, row) };
+}
+
+/**
+ * בודק האם הסלוט (col, row) תפוס ע"י מגנט אחר — מתעלם מה-`excludeId` (זה שנגרר כרגע).
+ */
+export function isSlotOccupied(magnets, col, row, margin, gridStep, excludeId = null) {
+    for (const m of magnets) {
+        if (excludeId && m.id === excludeId) continue;
+        if (!m.position) continue;
+        const slot = pixelsToSlot(m.position, margin, gridStep);
+        if (slot.col === col && slot.row === row) return true;
+    }
+    return false;
 }
 
 /**
@@ -42,6 +60,67 @@ export function reflowMagnets(magnets, surfaceWidth, magnetSize, margin) {
 
     // מסדרים מחדש ללא חורים
     return sorted.map((magnet, index) => {
+        const row = Math.floor(index / numCols);
+        const col = index % numCols;
+        return {
+            ...magnet,
+            position: {
+                x: margin + (col * gridStep),
+                y: margin + (row * gridStep)
+            }
+        };
+    });
+}
+
+/**
+ * Reflow על התנגשות: כשמגנט נשמט לסלוט תפוס, אנחנו ממקמים אותו ב"אינדקס reading-order"
+ * המבוקש (row × cols + col), דוחפים את שאר המגנטים קדימה ב-1, וממקמים את כולם
+ * רציף משמאל-לימין, מלמעלה-למטה — בלי חורים ובלי חפיפות.
+ *
+ * @param {Array} magnets - רשימת המגנטים הנוכחית
+ * @param {string} draggedId - מזהה המגנט שנגרר
+ * @param {number} targetCol - עמודת היעד שנבחרה ע"י findBestTargetSlot
+ * @param {number} targetRow - שורת היעד שנבחרה ע"י findBestTargetSlot
+ * @param {number} surfaceWidth - רוחב המשטח לחישוב מספר עמודות
+ * @param {number} magnetSize - גודל מגנט סופי (FullSize)
+ * @param {number} margin - מרווח בין מגנטים
+ * @returns {Array} מערך מגנטים חדש עם מיקומים מעודכנים
+ */
+export function reflowWithDraggedMagnet(magnets, draggedId, targetCol, targetRow, surfaceWidth, magnetSize, margin) {
+    const gridStep = magnetSize + margin;
+    const cols = Math.floor((surfaceWidth - margin) / gridStep);
+    const numCols = Math.max(1, cols);
+
+    const dragged = magnets.find(m => m.id === draggedId);
+    if (!dragged) return magnets;
+
+    const others = magnets.filter(m => m.id !== draggedId);
+
+    // ממיינים את שאר המגנטים לפי המיקום הנוכחי שלהם (reading order: שורה ואז עמודה)
+    others.sort((a, b) => {
+        const slotA = pixelsToSlot(a.position || { x: 0, y: 0 }, margin, gridStep);
+        const slotB = pixelsToSlot(b.position || { x: 0, y: 0 }, margin, gridStep);
+        if (slotA.row !== slotB.row) return slotA.row - slotB.row;
+        return slotA.col - slotB.col;
+    });
+
+    // מחשבים את האינדקס בסדר הקריאה לתוך הסלוט המבוקש
+    const clampedCol = Math.max(0, Math.min(targetCol, numCols - 1));
+    const clampedRow = Math.max(0, targetRow);
+    const targetIndex = clampedRow * numCols + clampedCol;
+
+    // אם המשתמש שמט מעבר לסוף הרשימה, פשוט מצרפים בסוף
+    const insertIndex = Math.min(targetIndex, others.length);
+
+    // משלבים את המגנט הנגרר ב-targetIndex; שאר המגנטים נדחפים אוטומטית קדימה ב-1
+    const finalOrder = [
+        ...others.slice(0, insertIndex),
+        dragged,
+        ...others.slice(insertIndex)
+    ];
+
+    // ממקמים מחדש רציף — בלי חורים ובלי חפיפות (משמאל-לימין, מלמעלה-למטה)
+    return finalOrder.map((magnet, index) => {
         const row = Math.floor(index / numCols);
         const col = index % numCols;
         return {

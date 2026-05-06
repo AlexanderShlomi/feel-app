@@ -10,7 +10,7 @@
     import UpsellWidget from '$lib/components/UpsellWidget.svelte';
     
     import { draggable } from '$lib/actions/draggable.js';
-    import { findBestTargetSlot, reflowMagnets, placeNewMagnets } from '$lib/utils/grid.js';
+    import { findBestTargetSlot, reflowMagnets, placeNewMagnets, reflowWithDraggedMagnet, isSlotOccupied } from '$lib/utils/grid.js';
     import { resetSystem } from '$lib/stores.js';
     import { goto, afterNavigate } from '$app/navigation';
     import { page } from '$app/stores';
@@ -25,7 +25,6 @@
         addUploadedMagnets,
         setUploaderScrollActive,
         waitForUploaderScrollIdle,
-        updateMagnetProcessedSrc, 
         getCssFilter,
         getFullMagnetSize, 
         getMargin,
@@ -49,11 +48,12 @@
         { id: 'dramatic', name: 'דרמטי' }
     ].map(e => ({ ...e, css: getCssFilter(e.id) }));
 
-    let effectsWorker;
-    let effectsWorkerUnsupported = false;
-    let effectsQueue = [];
-    let effectsActiveEffect = null;
-    let effectsProcessing = false;
+    // Effects pipeline note (Phase 4):
+    //   The previous Web-Worker pipeline that pre-baked per-effect Blob URLs has been removed.
+    //   Effects are now applied as pure CSS filters at render time (see `getCssFilter` /
+    //   `getFilterStyle` in `$lib/stores.js`). The original blob is the only image data the
+    //   client tracks; final, print-quality processing happens server-side at fulfillment time
+    //   from the original on S3 (Admin / print pipeline).
     let activePanel = null;
     let loaderEl;
     let surfaceEl;
@@ -79,29 +79,21 @@
         } catch {}
     });
 
-    // Mobile scroll activity → gate disruptive blob URL swaps during active scroll.
+    // Mobile-only: gate disruptive blob URL swaps while any scroll-like motion
+    // is in progress. We treat both container scroll and visualViewport movement
+    // (iOS address-bar shrink/expand, in-app overlays) as "scrolling" because
+    // both can briefly blank an `<img>` mid-swap on Safari. A single shared
+    // timer is enough — repeated activity simply pushes the idle deadline out.
+    const SCROLL_IDLE_MS = 460;
     let uploaderScrollIdleTimer;
-    function onCanvasScroll() {
+    function bumpUploaderScrollActive() {
         if (!get(isMobile)) return;
         setUploaderScrollActive(true);
         if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
         uploaderScrollIdleTimer = setTimeout(() => {
             uploaderScrollIdleTimer = null;
             setUploaderScrollActive(false);
-        }, 460);
-    }
-
-    // iOS Safari: address-bar / overlay animations can shift visualViewport without firing container scroll.
-    // Treat visualViewport movement as "active" to defer swaps during viewport churn.
-    let vvIdleTimer;
-    function onVisualViewportActivity() {
-        if (!get(isMobile)) return;
-        setUploaderScrollActive(true);
-        if (vvIdleTimer) clearTimeout(vvIdleTimer);
-        vvIdleTimer = setTimeout(() => {
-            vvIdleTimer = null;
-            setUploaderScrollActive(false);
-        }, 460);
+        }, SCROLL_IDLE_MS);
     }
 
     function saveUploaderScroll() {
@@ -219,13 +211,16 @@
     $: void $lastWorkspaceLayoutRefreshSignal;
 
     onMount(() => {
-        window.addEventListener('dragstart', preventDragStart);
+        // Scope dragstart-prevent to the configurator surface only. Previously this
+        // ran on `window`, which broke text selection drag and (in future code) any
+        // legitimate native drag gesture elsewhere on the uploader page.
+        try { surfaceEl?.addEventListener('dragstart', preventDragStart); } catch {}
         window.addEventListener('resize', handleResize);
 
         // Scroll activity tracking (mobile-only).
         try {
             if (canvasContainerEl) {
-                canvasContainerEl.addEventListener('scroll', onCanvasScroll, { passive: true });
+                canvasContainerEl.addEventListener('scroll', bumpUploaderScrollActive, { passive: true });
             }
         } catch {}
 
@@ -233,8 +228,8 @@
         try {
             const vv = window.visualViewport;
             if (vv) {
-                vv.addEventListener('resize', onVisualViewportActivity, { passive: true });
-                vv.addEventListener('scroll', onVisualViewportActivity, { passive: true });
+                vv.addEventListener('resize', bumpUploaderScrollActive, { passive: true });
+                vv.addEventListener('scroll', bumpUploaderScrollActive, { passive: true });
             }
         } catch {}
         
@@ -251,62 +246,23 @@
             editorSettings.update(s => ({ ...s, currentDisplayScale: SCALE_DEFAULT }));
         }
 
-        if (window.Worker) {
-            effectsWorker = new Worker('/effects.worker.js');
-            effectsWorker.onmessage = (event) => {
-                const { status, magnetId, effectId, blob } = event.data;
-                // Allow queue to send next item after any response.
-                effectsProcessing = false;
-
-                // If user already switched effects, ignore stale worker results (avoid thrash/memory).
-                if (effectsActiveEffect && effectId !== effectsActiveEffect) {
-                    if (status === 'success' && blob) {
-                        // Drop result promptly.
-                        try { /* no-op */ } catch {}
-                    }
-                    // Continue draining queue for the current effect.
-                    drainEffectsQueue();
-                    return;
-                }
-                if (status === 'success') {
-                    const newSrc = URL.createObjectURL(blob);
-                    if (magnetId === 'split-master') {
-                        editorSettings.update(s => {
-                            const prev = s.splitImageCache?.[effectId];
-                            if (prev && prev !== newSrc && typeof prev === 'string' && prev.startsWith('blob:')) {
-                                try { URL.revokeObjectURL(prev); } catch {}
-                            }
-                            const newCache = { ...s.splitImageCache, [effectId]: newSrc };
-                            return { ...s, splitImageCache: newCache };
-                        });
-                        if (loaderEl) loaderEl.style.display = 'none';
-                    } else {
-                        updateMagnetProcessedSrc(magnetId, effectId, newSrc);
-                    }
-                    drainEffectsQueue();
-                    return;
-                }
-                if (status === 'unsupported') {
-                    effectsWorkerUnsupported = true;
-                    if (loaderEl) loaderEl.style.display = 'none';
-                    effectsQueue = [];
-                    effectsProcessing = false;
-                }
-                if (status === 'error') {
-                    // Avoid infinite blocking if a single item fails.
-                    drainEffectsQueue();
-                }
-            };
-        }
-
         resizeObserver = new ResizeObserver((entries) => {
             const entry = entries[0];
             if (!entry) return;
             const newWidth = entry.contentRect.width;
-            
+
+            // קריטי: כשהמסך עובר ל-/uploader/edit/[magnetId], ה-workspace נשאר ב-DOM
+            // אבל מקבל display:none. ה-ResizeObserver יורה אז עם width=0.
+            // אם נריץ במצב הזה את handleReflow, surfaceWidth יהיה 0, numCols יחושב
+            // כ-1, וכל המגנטים יידחסו לעמודה אחת — ובחזרה מהעריכה הסידור המותאם
+            // של המשתמש ייעלם. לכן: מתעלמים לחלוטין מאירועי width<=0 ושומרים על
+            // lastSurfaceWidth הקודם, כך שכשהמסך חוזר עם אותו רוחב — ה-delta יהיה
+            // 0 ולא יבוצע reflow מיותר.
+            if (newWidth <= 0) return;
+
             // מניעת חישובים מיותרים אם השינוי זניח (למשל גלילה שמשנה גובה במובייל)
-            if (Math.abs(newWidth - lastSurfaceWidth) < 2) return; 
-            
+            if (Math.abs(newWidth - lastSurfaceWidth) < 2) return;
+
             lastSurfaceWidth = newWidth;
             if ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
                 handleReflow();
@@ -323,13 +279,20 @@
                 const savedScale = $editorSettings.currentDisplayScale || SCALE_DEFAULT;
                 const newSize = BASE_MAGNET_SIZE * savedScale;
                 magnets.update(list => list.map(m => ({ ...m, size: newSize })));
-                
-                if (!$isMobile && $magnets.length > 0 && (!$magnets[0].position || $magnets[0].position.x === 0)) {
+
+                // אם ישנו ולו מגנט אחד ללא מיקום תקין (position חסר או שתיהן 0,0)
+                // — נפעיל מילוי חורים. בודקים את כל הרשימה, לא רק את האיבר הראשון,
+                // כי הידרציה חלקית או מיגרציה ישנה עלולים להשאיר חלק מהמגנטים בלי
+                // מיקום בעוד שאחרים כן נשמרו עם מיקום.
+                const hasUnplacedMagnet = $magnets.some(m =>
+                    !m.position || (m.position.x === 0 && m.position.y === 0)
+                );
+                if (!$isMobile && $magnets.length > 0 && hasUnplacedMagnet) {
                     fillEmptySlots();
                 } else {
                     updateSurfaceHeight();
                 }
-            } else if ($editorSettings.splitImageSrc) { 
+            } else if ($editorSettings.splitImageSrc) {
                 calculateAndRenderSplitGrid();
             }
         }, 100);
@@ -337,27 +300,24 @@
         restoreUploaderScroll();
         
         return () => {
-             window.removeEventListener('dragstart', preventDragStart);
+             try { surfaceEl?.removeEventListener('dragstart', preventDragStart); } catch {}
              window.removeEventListener('resize', handleResize);
-             try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', onCanvasScroll); } catch {}
+             try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', bumpUploaderScrollActive); } catch {}
              if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
              uploaderScrollIdleTimer = null;
              try {
                  const vv = window.visualViewport;
                  if (vv) {
-                     vv.removeEventListener('resize', onVisualViewportActivity);
-                     vv.removeEventListener('scroll', onVisualViewportActivity);
+                     vv.removeEventListener('resize', bumpUploaderScrollActive);
+                     vv.removeEventListener('scroll', bumpUploaderScrollActive);
                  }
              } catch {}
-             if (vvIdleTimer) clearTimeout(vvIdleTimer);
-             vvIdleTimer = null;
              // Ensure we don't leave the gate stuck "active" when navigating away.
              try { setUploaderScrollActive(false); } catch {}
         }
     });
 
     onDestroy(() => {
-        if (effectsWorker) effectsWorker.terminate();
         if (resizeObserver && surfaceEl && surfaceEl.parentElement) resizeObserver.unobserve(surfaceEl.parentElement);
     });
     
@@ -373,37 +333,48 @@
              updateSurfaceHeight();
              return;
         }
-        
+
         if ($magnets.length === 0 || $editorSettings.currentProductType !== PRODUCT_TYPES.MAGNETS_PACK || !surfaceEl) {
             updateSurfaceHeight();
             return;
         }
 
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        // הגנה: אם המסך מוסתר (display:none בזמן /uploader/edit/...) או טרם חושב,
+        // ה-clientWidth הוא 0. ריפלו במצב הזה ידחוס את כל המגנטים לעמודה אחת ויאבד
+        // את הסידור של המשתמש. עדיף לבטל את הריפלו הזה — בחזרה מהעריכה ResizeObserver
+        // ייכנס שוב עם הרוחב הנכון, ואם הוא זהה למה שהיה — לא יידרש ריפלו בכלל.
+        if (surfaceWidth <= 0) return;
+
         const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        
+
         const newLayout = reflowMagnets($magnets, surfaceWidth, itemFullSize, margin);
         magnets.set(newLayout);
-        
+
         setTimeout(updateSurfaceHeight, 0);
     }
 
     function fillEmptySlots() {
         if (!surfaceEl || $isMobile) return;
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
-        const itemFullSize = getFullMagnetSize(); 
+        // אותה הגנה כמו ב-handleReflow: אסור לחשב placement כשהמסך מוסתר/טרם נמדד.
+        if (surfaceWidth <= 0) return;
+        const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        
+
         const newLayout = placeNewMagnets($magnets, surfaceWidth, itemFullSize, margin);
         magnets.set(newLayout);
-        
+
         setTimeout(updateSurfaceHeight, 0);
     }
 
+    /** Clearance תחתון מתחת למגנט האחרון בדסקטופ — כדי שהשורה האחרונה לא תיחבא מאחורי ה-Glass Dock. */
+    const DESKTOP_DOCK_CLEARANCE_PX = 140;
+
     function updateSurfaceHeight() {
         if (!surfaceEl) return;
-        let items = $magnets; 
+        let items = $magnets;
         let margin = ($editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) ? getMargin() : 50;
 
         if (items.length === 0) {
@@ -414,7 +385,7 @@
         if ($isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK) {
             // חישוב גובה משוער לגריד במובייל
             const rows = Math.ceil(items.length / 2);
-            const approxRowHeight = (window.innerWidth / 2) + 16; 
+            const approxRowHeight = (window.innerWidth / 2) + 16;
             const totalHeight = (rows * approxRowHeight) + 100;
             editorSettings.update(s => ({ ...s, surfaceMinHeight: `${totalHeight}px` }));
         } else {
@@ -423,9 +394,70 @@
                 const bottomPosition = item.position.y + item.size;
                 if (bottomPosition > maxBottom) maxBottom = bottomPosition;
             });
-            const totalHeight = maxBottom + margin;
+            const isDesktopPack = !$isMobile && $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK;
+            const dockClearance = isDesktopPack ? DESKTOP_DOCK_CLEARANCE_PX : 0;
+            const totalHeight = maxBottom + margin + dockClearance;
             const containerHeight = surfaceEl.parentElement.clientHeight;
             editorSettings.update(s => ({ ...s, surfaceMinHeight: `${Math.max(totalHeight, containerHeight)}px` }));
+        }
+    }
+
+    /**
+     * מחשב גבולות גרירה אופקיים כדי למנוע יציאה ימינה/שמאלה ממרחב המשטח.
+     * אנכית: מאפשרים גרירה כלפי מטה ללא חסם עליון, כדי לאפשר הרחבת המשטח דינמית.
+     */
+    function getMagnetDragBounds() {
+        if (!surfaceEl || !surfaceEl.parentElement) return null;
+        const itemFullSize = getFullMagnetSize();
+        const surfaceWidth = surfaceEl.parentElement.clientWidth;
+        return {
+            minX: 0,
+            maxX: Math.max(0, surfaceWidth - itemFullSize),
+            minY: 0,
+            maxY: Number.MAX_SAFE_INTEGER
+        };
+    }
+
+    /**
+     * Baseline maxBottom (לא כולל המגנט הנגרר) — מחושב פעם אחת ב-onDragStart
+     * כדי שב-onDragMove נוכל לבדוק אם הגרירה מאריכה את המשטח, בלי לסרוק את כל
+     * המגנטים על כל פריים.
+     */
+    let dragBaselineMaxBottom = 0;
+
+    function onMagnetDragStart(event) {
+        if ($isMobile) return;
+        const draggedId = event?.id;
+        const itemFullSize = getFullMagnetSize();
+        let maxBottom = 0;
+        for (const m of $magnets) {
+            if (draggedId && m.id === draggedId) continue;
+            const bottom = (m.position?.y || 0) + (m.size || itemFullSize);
+            if (bottom > maxBottom) maxBottom = bottom;
+        }
+        dragBaselineMaxBottom = maxBottom;
+    }
+
+    /**
+     * מגדיל את surfaceMinHeight בזמן אמת אם המגנט הנגרר עובר את הגבול התחתון
+     * הקיים — כדי לאפשר גלילה אנכית חלקה תוך כדי גרירה (במקום עיכוב של 300ms
+     * אחרי השחרור). אנחנו רק מגדילים, לא מקטינים, כדי למנוע ריצוד אם המשתמש
+     * חוזר למעלה רגעית באמצע הגרירה.
+     */
+    function onMagnetDragMove(event) {
+        if ($isMobile) return;
+        if ($editorSettings.currentProductType !== PRODUCT_TYPES.MAGNETS_PACK) return;
+
+        const itemFullSize = getFullMagnetSize();
+        const margin = getMargin();
+        const draggedBottom = (event?.y || 0) + itemFullSize;
+        const effectiveMaxBottom = Math.max(dragBaselineMaxBottom, draggedBottom);
+        const neededHeight = effectiveMaxBottom + margin + DESKTOP_DOCK_CLEARANCE_PX;
+
+        const currentRaw = parseFloat($editorSettings.surfaceMinHeight);
+        const currentMinHeight = Number.isFinite(currentRaw) ? currentRaw : 0;
+        if (neededHeight > currentMinHeight + 1) {
+            editorSettings.update(s => ({ ...s, surfaceMinHeight: `${neededHeight}px` }));
         }
     }
 
@@ -434,22 +466,30 @@
         const { x, y, id } = event;
         const itemFullSize = getFullMagnetSize();
         const margin = getMargin();
-        const gridStep = itemFullSize + margin; 
+        const gridStep = itemFullSize + margin;
         const surfaceWidth = surfaceEl.parentElement.clientWidth;
         const cols = Math.floor((surfaceWidth - margin) / gridStep);
         const numCols = Math.max(1, cols);
 
         const bestSlot = findBestTargetSlot(x, y, margin, gridStep, numCols);
-        
-        let snapX, snapY;
-        if (bestSlot) {
-            snapX = margin + (bestSlot.col * gridStep);
-            snapY = margin + (bestSlot.row * gridStep);
+
+        // התנגשות: אם הסלוט המבוקש תפוס ע"י מגנט אחר — מפעילים Reflow שדוחף קדימה
+        // ושומר על סדר reading-order (משמאל-לימין, מלמעלה-למטה) בלי חורים ובלי חפיפות.
+        // אחרת — הצמדה רגילה (snap-to-grid) למיקום שנבחר.
+        const collides = isSlotOccupied($magnets, bestSlot.col, bestSlot.row, margin, gridStep, id);
+
+        if (collides) {
+            const newLayout = reflowWithDraggedMagnet(
+                $magnets, id, bestSlot.col, bestSlot.row,
+                surfaceWidth, itemFullSize, margin
+            );
+            magnets.set(newLayout);
         } else {
-            snapX = x; snapY = y;
+            const snapX = margin + (bestSlot.col * gridStep);
+            const snapY = margin + (bestSlot.row * gridStep);
+            magnets.update(list => list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m));
         }
 
-        magnets.update(list => list.map(m => m.id === id ? { ...m, position: { x: snapX, y: snapY } } : m));
         setTimeout(updateSurfaceHeight, 300);
     }
 
@@ -493,7 +533,6 @@
             gridBaseSize: MIN_GRID_BASE,
             currentEffect: 'original',
             splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
-            splitImageCache: { original: null, silver: null, noir: null, vivid: null, dramatic: null },
             surfaceMinHeight: '0px' 
         }));
 
@@ -641,42 +680,11 @@
     }
 
     function applyEffectToAllMagnets(effectId) {
+        // Effects are GPU-accelerated CSS filters now (see getCssFilter in stores.js).
+        // No off-main-thread baking, no per-tile blob churn — only metadata changes,
+        // and the renderer reads the filter style from `activeEffectId`.
         editorSettings.update(s => ({ ...s, currentEffect: effectId }));
         magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
-        
-        effectsActiveEffect = effectId;
-        effectsQueue = [];
-        effectsProcessing = false;
-        if (effectId === 'original') return;
-
-        if ($editorSettings.currentProductType === PRODUCT_TYPES.MOSAIC) {
-            if (!$editorSettings.splitImageCache || !$editorSettings.splitImageCache[effectId]) {
-                effectsQueue.push({ magnetId: 'split-master', effectId, originalSrc: $editorSettings.splitImageSrc });
-                drainEffectsQueue();
-            }
-        } else {
-            for (const magnet of $magnets) {
-                if (!magnet.processed || !magnet.processed[effectId]) {
-                    updateMagnetProcessedSrc(magnet.id, effectId, 'processing');
-                    effectsQueue.push({ magnetId: magnet.id, effectId, originalSrc: magnet.originalSrc });
-                }
-            }
-            drainEffectsQueue();
-        }
-    }
-
-    function drainEffectsQueue() {
-        if (!effectsWorker || effectsWorkerUnsupported) return;
-        if (effectsProcessing) return;
-        const next = effectsQueue.shift();
-        if (!next) return;
-        effectsProcessing = true;
-        try {
-            effectsWorker.postMessage(next);
-        } finally {
-            // processing flag is normally released on worker response; this is just a safety net.
-            setTimeout(() => { effectsProcessing = false; drainEffectsQueue(); }, 15000);
-        }
     }
 
     function incrementGrid() { 
@@ -741,6 +749,9 @@
                 style="left: {magnet.position.x}px; top: {magnet.position.y}px; width: {magnet.size}px; height: {magnet.size}px;"
                 use:draggable={{
                     enabled: $editorSettings.currentProductType === PRODUCT_TYPES.MAGNETS_PACK && !$isMobile,
+                    containerBounds: getMagnetDragBounds,
+                    onDragStart: (e) => onMagnetDragStart({ ...e, id: magnet.id }),
+                    onDragMove: (e) => onMagnetDragMove({ ...e, id: magnet.id }),
                     onDragEnd: (e) => onMagnetDragEnd({ ...e, id: magnet.id })
                 }}
             >
@@ -1080,6 +1091,15 @@
         }
     }
     
+    /* Desktop Magnets Pack: גלילה אופקית אסורה לחלוטין (Law B ב-.cursorrules).
+       בזמן גרירה, ה-bounds ב-draggable שומר על המגנט בתוך גבולות המשטח, אבל אנחנו
+       גם חוסמים overflow-x ברמת ה-canvas-container כקו הגנה שני. */
+    @media (min-width: 769px) {
+        .canvas-container:not(.split-center) {
+            overflow-x: hidden !important;
+        }
+    }
+
     /* Desktop Mosaic Final Fix */
     @media (min-width: 769px) {
         .canvas-container.split-center {

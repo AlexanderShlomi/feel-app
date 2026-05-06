@@ -14,9 +14,56 @@ export function draggable(node, params = {}) {
     } = params;
 
     let isDragging = false;
+    let suppressNextClick = false;
     let startX, startY;
     let initialLeft, initialTop;
     let dragFrame;
+    // Safety timer: removes document suppressor if no click fires within 500ms after drag end.
+    let suppressSafetyTimer = null;
+
+    // Primary suppressor: fires when click lands on the dragged element or its children.
+    function onClickCapture(event) {
+        if (!enabled) return;
+        if (!suppressNextClick) return;
+        suppressNextClick = false;
+        // Prevent accidental navigation/click handlers when the gesture was a drag.
+        try { event.preventDefault(); } catch {}
+        try { event.stopImmediatePropagation(); } catch {}
+    }
+
+    // Secondary suppressor: fires when the dragged element snapped away and the click
+    // lands on a *different* element (e.g. another magnet tile at the drop position).
+    // Registered on document in capture phase so it intercepts before any element handler.
+    function suppressGlobalPostDragClick(event) {
+        clearSuppressSafetyTimer();
+        suppressNextClick = false;
+        try { event.preventDefault(); } catch {}
+        try { event.stopImmediatePropagation(); } catch {}
+    }
+
+    function clearSuppressSafetyTimer() {
+        if (suppressSafetyTimer) {
+            clearTimeout(suppressSafetyTimer);
+            suppressSafetyTimer = null;
+        }
+    }
+
+    function installGlobalClickSuppressor() {
+        clearSuppressSafetyTimer();
+        document.addEventListener('click', suppressGlobalPostDragClick, { capture: true, once: true });
+        // Auto-remove if no click fires within 500 ms (e.g. user pressed Escape or focus moved).
+        suppressSafetyTimer = setTimeout(() => {
+            document.removeEventListener('click', suppressGlobalPostDragClick, true);
+            suppressNextClick = false;
+            suppressSafetyTimer = null;
+        }, 500);
+    }
+
+    function removeGlobalClickSuppressor() {
+        clearSuppressSafetyTimer();
+        document.removeEventListener('click', suppressGlobalPostDragClick, true);
+        suppressNextClick = false;
+    }
 
     function getClientPos(event) {
         // תמיכה אחודה בטאץ' ובעכבר
@@ -53,6 +100,7 @@ export function draggable(node, params = {}) {
         if (!isDragging) {
             if (Math.hypot(dx, dy) > dragThreshold) {
                 isDragging = true;
+                suppressNextClick = true;
                 node.classList.add('draggable-active');
             } else {
                 // עדיין לא הגענו לסף הגרירה - לא עושים כלום
@@ -97,6 +145,14 @@ export function draggable(node, params = {}) {
             const finalLeft = parseFloat(node.style.left);
             const finalTop = parseFloat(node.style.top);
             if (onDragEnd) onDragEnd({ x: finalLeft, y: finalTop, element: node });
+
+            // Dual-layer click suppression after drag:
+            // 1. Element-level (onClickCapture): catches clicks that land on THIS element.
+            // 2. Document-level (suppressGlobalPostDragClick): catches clicks that land on
+            //    any OTHER element — this happens when the dragged tile snaps away from the
+            //    cursor position and the click fires on a different magnet tile beneath.
+            suppressNextClick = true;
+            installGlobalClickSuppressor();
         } else {
             // טופל כלחיצה רגילה
             if (onPress) onPress(event);
@@ -132,6 +188,8 @@ export function draggable(node, params = {}) {
     node.addEventListener('mousedown', handleStart);
     // passive: true כאן כדי לא לפגוע בביצועי גלילה לפני שהגרירה התחילה
     node.addEventListener('touchstart', handleStart, { passive: true });
+    // Capture click early so nested click handlers (e.g. tile navigation) won't fire after a drag.
+    node.addEventListener('click', onClickCapture, true);
 
     return {
         update(newParams) {
@@ -147,7 +205,9 @@ export function draggable(node, params = {}) {
         destroy() {
             node.removeEventListener('mousedown', handleStart);
             node.removeEventListener('touchstart', handleStart);
+            node.removeEventListener('click', onClickCapture, true);
             removeGlobalListeners();
+            removeGlobalClickSuppressor();
         }
     };
 }

@@ -4,6 +4,7 @@ import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl, clearDataUrlBlobUrlCache } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
+import { createGridPreviewFromBlob } from '$lib/utils/imagePreview.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -213,7 +214,6 @@ export const editorSettings = writable({
     splitImageRatio: 1,
     gridBaseSize: 3,
     splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 },
-    splitImageCache: {},
     giftImage: null 
 });
 
@@ -360,12 +360,12 @@ export async function saveWorkspaceToCart() {
 
         const serializeMagnets = async (list) => { 
              return Promise.all(list.map(async (m) => {
-                if (type === PRODUCT_TYPES.MOSAIC) return { ...m, originalSrc: null, src: null, processed: {} };
+                if (type === PRODUCT_TYPES.MOSAIC) return { ...m, originalSrc: null, src: null };
                 let safeSrc = m.originalSrc || m.src;
                 if (safeSrc && safeSrc.startsWith('blob:')) {
                     try { const blob = await fetch(safeSrc).then(r => r.blob()); safeSrc = await fileToBase64(blob); } catch (e) {}
                 }
-                return { ...m, originalSrc: safeSrc, src: safeSrc, processed: {} };
+                return { ...m, originalSrc: safeSrc, src: safeSrc };
             }));
         };
 
@@ -463,7 +463,7 @@ export async function editCartItem(itemId) {
             return Promise.all(list.map(async (m) => {
                 let validSrc = m.originalSrc;
                 if (validSrc && validSrc.startsWith('data:')) validSrc = await base64ToBlobUrl(validSrc);
-                return { ...m, originalSrc: validSrc, src: validSrc, processed: {} };
+                return { ...m, originalSrc: validSrc, src: validSrc };
             }));
         };
 
@@ -501,7 +501,7 @@ export async function editCartItem(itemId) {
             let recoveredMagnets;
             if (item.type === PRODUCT_TYPES.MOSAIC) {
                 recoveredMagnets = item.data.magnets.map(m => ({
-                    ...m, src: hydratedSettings.splitImageSrc, originalSrc: hydratedSettings.splitImageSrc, processed: {}
+                    ...m, src: hydratedSettings.splitImageSrc, originalSrc: hydratedSettings.splitImageSrc
                 }));
             } else {
                 recoveredMagnets = await hydrateMagnetsPack(item.data.magnets);
@@ -564,28 +564,19 @@ export function resetSystem(targetType = PRODUCT_TYPES.MAGNETS_PACK) {
     const currentList = get(magnets);
     if (currentList.length > 0) currentList.forEach(m => {
         if (m.originalSrc?.startsWith('blob:')) URL.revokeObjectURL(m.originalSrc);
-        if (m.src?.startsWith('blob:')) URL.revokeObjectURL(m.src);
-        if (m.processed) {
-            Object.values(m.processed).forEach(v => {
-                if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
-            });
-        }
+        // src may be a separate downscaled preview blob on mobile (two-tier rendering).
+        if (m.src && m.src !== m.originalSrc && m.src.startsWith('blob:')) URL.revokeObjectURL(m.src);
     });
     magnets.set([]);
     editingItemId.set(null);
     const s = get(editorSettings);
     if (s.splitImageSrc?.startsWith('blob:')) URL.revokeObjectURL(s.splitImageSrc);
     if (s.giftImage?.startsWith('blob:')) URL.revokeObjectURL(s.giftImage);
-    if (s.splitImageCache) {
-        Object.values(s.splitImageCache).forEach(v => {
-            if (typeof v === 'string' && v.startsWith('blob:')) URL.revokeObjectURL(v);
-        });
-    }
-    
+
     editorSettings.set({
         currentProductType: targetType, currentDisplayScale: SCALE_DEFAULT, surfaceMinHeight: '100%', isSurfaceDark: false,
         splitImageSrc: null, splitImageRatio: 1, gridBaseSize: 3, currentEffect: 'original',
-        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, splitImageCache: {}, giftImage: null
+        splitTransform: { zoom: 1, x: 0, y: 0, xPct: 0, yPct: 0 }, giftImage: null
     });
     try { clearDataUrlBlobUrlCache(); } catch {}
     clearStorage();
@@ -612,9 +603,15 @@ export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
 
-    // P0: Original blobs only for main surface rendering.
-    // We intentionally avoid any canvas-based normalization/resampling here, because it can
-    // cause brightness/sharpness loss and visible flicker during URL swaps.
+    // Two-tier rendering:
+    //   • `originalSrc` — full-resolution blob URL, source of truth for the
+    //     editor / order thumbnails / cart hydration. Never resampled here.
+    //   • `src` — what the grid `<Magnet>` actually renders. On mobile this is
+    //     a downscaled preview (~900px max, JPEG q=0.85) generated lazily so the
+    //     phone never decodes a 12MP bitmap per tile while scrolling. On desktop
+    //     decode is cheap enough that we keep `src === originalSrc`.
+    const isMobileNow = isMobileViewportNow();
+
     const pending = list.map((f) => {
         const id = crypto.randomUUID();
         const url = URL.createObjectURL(f);
@@ -628,50 +625,40 @@ export async function addUploadedMagnets(files) {
                 position: { x: 0, y: 0 },
                 size: getFullMagnetSize(),
                 originalSrc: url,
-                src: url,
+                // Mobile: leave `src` empty so the tile shows the pulse skeleton
+                // (Magnet.svelte) instead of forcing a heavy original decode while
+                // we generate a preview off the main paint path.
+                src: isMobileNow ? null : url,
                 activeEffectId: 'original',
                 isSplitPart: false,
-                hidden: false,
-                processed: {}
+                hidden: false
             }
         };
     });
 
     magnets.update((l) => [...l, ...pending.map(p => p.magnet)]);
-}
-export function updateMagnetProcessedSrc(id, eff, src) {
-    magnets.update(l => l.map(m => {
-        if (m.id !== id) return m;
-        const MAX_EFFECT_BLOBS_PER_MAGNET = 2;
-        const processed = { ...(m.processed || {}) };
 
-        // Track effect insertion order for eviction (kept on the magnet object).
-        const order = Array.isArray(m.processedOrder) ? [...m.processedOrder] : [];
-        const nextOrder = order.filter(k => k !== eff);
-        nextOrder.push(eff);
+    if (!isMobileNow) return;
 
-        const prev = processed?.[eff];
-        if (prev && prev !== src && typeof prev === 'string' && prev.startsWith('blob:')) {
-            try { URL.revokeObjectURL(prev); } catch {}
-        }
-
-        processed[eff] = src;
-
-        // Evict older blob URLs so effect processing doesn't grow memory unbounded on mobile.
-        const blobKeys = nextOrder.filter((k) => typeof processed[k] === 'string' && processed[k].startsWith('blob:'));
-        while (blobKeys.length > MAX_EFFECT_BLOBS_PER_MAGNET) {
-            const evictEff = blobKeys.shift();
-            const evictVal = processed[evictEff];
-            if (typeof evictVal === 'string' && evictVal.startsWith('blob:')) {
-                try { URL.revokeObjectURL(evictVal); } catch {}
+    // Mobile: generate previews in parallel. Each one resolves independently
+    // and updates only its own magnet, so the grid fills in tile-by-tile
+    // without any all-or-nothing wait.
+    for (const p of pending) {
+        createGridPreviewFromBlob(p.file).then((previewUrl) => {
+            if (previewUrl && previewUrl !== p.rawUrl) {
+                magnets.update((l) =>
+                    l.map((m) => (m.id === p.id ? { ...m, src: previewUrl } : m))
+                );
+                return;
             }
-            delete processed[evictEff];
-            const idx = nextOrder.indexOf(evictEff);
-            if (idx >= 0) nextOrder.splice(idx, 1);
-        }
-
-        return { ...m, processed, processedOrder: nextOrder };
-    }));
+            // Fallback: preview generation failed (Safari memory cap, OOM, broken
+            // image). Show the original blob so the tile is at least visible —
+            // skeleton stays on screen until the heavier decode completes.
+            magnets.update((l) =>
+                l.map((m) => (m.id === p.id ? { ...m, src: p.rawUrl } : m))
+            );
+        });
+    }
 }
 export function updateMagnetTransform(id, tr) {
     const nextTransform = { ...tr };

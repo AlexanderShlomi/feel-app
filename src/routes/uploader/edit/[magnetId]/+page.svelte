@@ -5,6 +5,7 @@
     import { goto } from '$app/navigation';
     import { magnets, updateMagnetTransform, updateMagnetActiveEffect, getFilterStyle, getCssFilter, beginUserInteraction, endUserInteraction, isMobile, bumpWorkspaceLayoutRefreshSignal } from '$lib/stores.js';
     import { computeCoverBaseSize, computeMaxTranslateFromBase, pctToTranslate, translateToPct, clamp } from '$lib/utils/cropMath.js';
+    import { decodeNaturalSize } from '$lib/utils/imageGeometry.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
 
@@ -63,6 +64,11 @@
     let baseNaturalW = 0;
     let baseNaturalH = 0;
     let baseGeomToken = 0;
+    /** Pending decode of the original src; awaited by `saveAndClose` to avoid
+     * a race where the user saves before `baseNaturalW/H` have been measured
+     * (in that race, the math would fall back to the preview's `naturalWidth`
+     * and store a slightly-off xPct/yPct). */
+    let baseGeomReady = /** @type {Promise<{ w: number, h: number }> | null} */ (null);
 
     // Cover base size (the same geometry the grid uses).
     let coverBaseW = 0;
@@ -70,7 +76,13 @@
 
     $: currentEffectId = magnet?.activeEffectId || 'original';
     $: displaySrc = magnet?.originalSrc || magnet?.src;
-    $: resolvedEffectSrc = previewSrc || displaySrc;
+    // Original-Blob-by-default per cursorrules ("Uncompromised Quality"). The downscaled
+    // `previewSrc` (created on desktop via `createPreview`) is only used while the user
+    // is actively dragging or zooming — that's the only window where the lag of
+    // transforming a 12MP bitmap is perceptible. As soon as interaction ends, the
+    // editor swaps back to the Original. The existing decode-then-commit pipeline
+    // (`renderSrc` reactive below) keeps the swap silent — no flash, no shimmer.
+    $: resolvedEffectSrc = (isInteracting && previewSrc) ? previewSrc : displaySrc;
     $: resolvedFilterCss = getFilterStyle(currentEffectId);
     $: isLoadingEffect = false;
 
@@ -88,6 +100,19 @@
             try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
             previewSrcToRevoke = null;
         }
+        // Re-prime base geometry for the new magnet so the next saveAndClose
+        // can await accurate natural dimensions instead of the previous one's.
+        baseNaturalW = 0;
+        baseNaturalH = 0;
+        const nextToken = ++baseGeomToken;
+        const nextSrc = displaySrc;
+        baseGeomReady = decodeNaturalSize(nextSrc).then(({ w, h }) => {
+            if (nextToken === baseGeomToken && w && h) {
+                baseNaturalW = w;
+                baseNaturalH = h;
+            }
+            return { w, h };
+        });
     }
 
     $: if (editorReady && resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
@@ -121,25 +146,10 @@
         editorReady = true;
         if (!magnet) { goto('/uploader'); return; }
 
-        // Load original geometry once; iOS can differ between preview sizing and original sizing.
-        // Using original naturalWidth/Height keeps xPct/yPct consistent with grid rendering.
-        (async () => {
-            const token = ++baseGeomToken;
-            try {
-                const src = displaySrc;
-                if (!src) return;
-                const img = new Image();
-                img.decoding = 'async';
-                img.src = src;
-                if (img.decode) await img.decode().catch(() => {});
-                if (token !== baseGeomToken) return;
-                baseNaturalW = img.naturalWidth || 0;
-                baseNaturalH = img.naturalHeight || 0;
-            } catch {
-                // best-effort; we'll fallback to bgImageEl dimensions
-            }
-        })();
-        
+        // Note: baseGeomReady is primed by the reactive block above (route-change branch),
+        // which fires on the initial mount as well — so the original-image decode is
+        // already in flight by the time we're here. No need to re-issue it.
+
         // Desktop: downscaled blob so pan/zoom stays light. Mobile skips this — a second
         // fetch+canvas pass duplicated work and stretched time-to-interactive on large photos.
         if (!get(isMobile)) {
@@ -413,6 +423,21 @@
     async function saveAndClose() {
         // שמירה מדויקת (v2): xPct/yPct הם יחס מה-overscroll המותר [-1..1] עבור אותו zoom.
         // זה מאפשר רינדור עקבי בגריד/בהדפסה בכל גודל tile.
+
+        // Wait for the original image's natural size before computing xPct/yPct.
+        // Otherwise, on a fast desktop save we can fall back to `bgImageEl.naturalWidth`
+        // which is the preview blob's dimensions (max 1600px), producing a slightly
+        // off ratio that drifts in the grid at the user's actual tile size.
+        if ((!baseNaturalW || !baseNaturalH) && baseGeomReady) {
+            try {
+                const { w, h } = await baseGeomReady;
+                if (w && h) {
+                    baseNaturalW = w;
+                    baseNaturalH = h;
+                }
+            } catch {}
+        }
+
         const naturalW = baseNaturalW || (bgImageEl?.naturalWidth || 0);
         const naturalH = baseNaturalH || (bgImageEl?.naturalHeight || 0);
         const { baseW, baseH } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
@@ -762,6 +787,12 @@
     .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
     .center-loader { position: absolute; z-index: 30; }
+    /* Mobile-first dock: never produce horizontal scroll (cursorrules Law B).
+       The toolbar in the editor only carries 4 small actions + 2 dividers, so
+       wrapping is fine on the narrowest viewport. width:max-content was the
+       previous trick, but combined with overflow-x:auto it could still scroll
+       horizontally on tiny screens (≤320 px). With wrapping + a hard width cap
+       there's no horizontal overflow possible. */
     .glass-dock {
         position: fixed;
         bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
@@ -769,25 +800,23 @@
         transform: translateX(-50%);
         z-index: 1000;
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        gap: 10px 12px;
+        column-gap: 12px;
+        row-gap: 8px;
         padding: 10px 16px;
-        border-radius: 50px;
-        width: max-content;
+        border-radius: 26px;
+        width: auto;
         max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
+        overflow: hidden;
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
         transition: opacity 0.3s;
+        box-sizing: border-box;
     }
-    .glass-dock::-webkit-scrollbar { display: none; }
     .glass-dock .dock-btn-text { flex-shrink: 0; }
     .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }
     .dock-divider { width: 1px; height: 20px; background: #ccc; }
