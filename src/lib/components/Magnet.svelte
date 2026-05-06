@@ -252,7 +252,13 @@
             if (e.type === 'touchstart') e.preventDefault(); 
             dispatch('toggleVisibility', { id }); 
             return; 
-        } 
+        }
+
+        // בדסקטופ: פתיחת העורך מתבצעת אך ורק דרך כפתור העריכה המפורש (handleEditClick).
+        // גרירה מפעילה click לאחר שחרור, ואנחנו לא רוצים שזה יפתח את העורך.
+        // במובייל magnets-pack: pointer-events:none על ה-tile מונע הגעה לכאן,
+        // ה-tap מטופל במערכת pointer-events של ה-layout.
+        if (!$isMobile) return;
         
         // עריכת תמונה: הרמה להורה כדי לאפשר UX אחיד (שימור scroll + loader + חסימת לחיצות חוזרות)
         beginEditNavigation();
@@ -285,8 +291,8 @@
     use:bindFrameMeasure={$isMobile && !isSplitPart}
     style="{cssVars}"
     on:click={handleInteraction} 
-    role={isSplitPart ? undefined : 'button'}
-    aria-label={isSplitPart ? undefined : 'פתח עריכת תמונה'}
+    role={isSplitPart ? undefined : ($isMobile ? 'button' : undefined)}
+    aria-label={isSplitPart ? undefined : ($isMobile ? 'פתח עריכת תמונה' : undefined)}
 >
     <div 
         class="image-wrapper" 
@@ -346,6 +352,9 @@
 
 <style>
     .magnet { width: 100%; height: 100%; position: relative; touch-action: none; user-select: none; cursor: pointer; padding: 0; box-sizing: border-box; }
+    /* Desktop: the tile itself is draggable, not directly "clickable" to edit — only the overlay button opens edit */
+    .magnet.desktop-mode { cursor: grab; }
+    .magnet.desktop-mode:active { cursor: grabbing; }
     .magnet.is-hidden .image-wrapper { opacity: 0.3; filter: grayscale(100%); border: 1px dashed #ccc; }
     
     .image-wrapper { 
