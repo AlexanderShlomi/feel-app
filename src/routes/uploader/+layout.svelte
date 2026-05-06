@@ -79,29 +79,21 @@
         } catch {}
     });
 
-    // Mobile scroll activity → gate disruptive blob URL swaps during active scroll.
+    // Mobile-only: gate disruptive blob URL swaps while any scroll-like motion
+    // is in progress. We treat both container scroll and visualViewport movement
+    // (iOS address-bar shrink/expand, in-app overlays) as "scrolling" because
+    // both can briefly blank an `<img>` mid-swap on Safari. A single shared
+    // timer is enough — repeated activity simply pushes the idle deadline out.
+    const SCROLL_IDLE_MS = 460;
     let uploaderScrollIdleTimer;
-    function onCanvasScroll() {
+    function bumpUploaderScrollActive() {
         if (!get(isMobile)) return;
         setUploaderScrollActive(true);
         if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
         uploaderScrollIdleTimer = setTimeout(() => {
             uploaderScrollIdleTimer = null;
             setUploaderScrollActive(false);
-        }, 460);
-    }
-
-    // iOS Safari: address-bar / overlay animations can shift visualViewport without firing container scroll.
-    // Treat visualViewport movement as "active" to defer swaps during viewport churn.
-    let vvIdleTimer;
-    function onVisualViewportActivity() {
-        if (!get(isMobile)) return;
-        setUploaderScrollActive(true);
-        if (vvIdleTimer) clearTimeout(vvIdleTimer);
-        vvIdleTimer = setTimeout(() => {
-            vvIdleTimer = null;
-            setUploaderScrollActive(false);
-        }, 460);
+        }, SCROLL_IDLE_MS);
     }
 
     function saveUploaderScroll() {
@@ -219,13 +211,16 @@
     $: void $lastWorkspaceLayoutRefreshSignal;
 
     onMount(() => {
-        window.addEventListener('dragstart', preventDragStart);
+        // Scope dragstart-prevent to the configurator surface only. Previously this
+        // ran on `window`, which broke text selection drag and (in future code) any
+        // legitimate native drag gesture elsewhere on the uploader page.
+        try { surfaceEl?.addEventListener('dragstart', preventDragStart); } catch {}
         window.addEventListener('resize', handleResize);
 
         // Scroll activity tracking (mobile-only).
         try {
             if (canvasContainerEl) {
-                canvasContainerEl.addEventListener('scroll', onCanvasScroll, { passive: true });
+                canvasContainerEl.addEventListener('scroll', bumpUploaderScrollActive, { passive: true });
             }
         } catch {}
 
@@ -233,8 +228,8 @@
         try {
             const vv = window.visualViewport;
             if (vv) {
-                vv.addEventListener('resize', onVisualViewportActivity, { passive: true });
-                vv.addEventListener('scroll', onVisualViewportActivity, { passive: true });
+                vv.addEventListener('resize', bumpUploaderScrollActive, { passive: true });
+                vv.addEventListener('scroll', bumpUploaderScrollActive, { passive: true });
             }
         } catch {}
         
@@ -337,20 +332,18 @@
         restoreUploaderScroll();
         
         return () => {
-             window.removeEventListener('dragstart', preventDragStart);
+             try { surfaceEl?.removeEventListener('dragstart', preventDragStart); } catch {}
              window.removeEventListener('resize', handleResize);
-             try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', onCanvasScroll); } catch {}
+             try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', bumpUploaderScrollActive); } catch {}
              if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
              uploaderScrollIdleTimer = null;
              try {
                  const vv = window.visualViewport;
                  if (vv) {
-                     vv.removeEventListener('resize', onVisualViewportActivity);
-                     vv.removeEventListener('scroll', onVisualViewportActivity);
+                     vv.removeEventListener('resize', bumpUploaderScrollActive);
+                     vv.removeEventListener('scroll', bumpUploaderScrollActive);
                  }
              } catch {}
-             if (vvIdleTimer) clearTimeout(vvIdleTimer);
-             vvIdleTimer = null;
              // Ensure we don't leave the gate stuck "active" when navigating away.
              try { setUploaderScrollActive(false); } catch {}
         }
