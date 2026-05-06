@@ -20,18 +20,28 @@
         recordPrivacyConsent,
         privacyNeedsReaccept
     } from '$lib/privacyPolicyStore.js';
-    import { uploadOrderItemThumbnails } from '$lib/orderThumbnails.js';
+    import {
+        createCompleteOrderResilient,
+        backfillOrderThumbnailsInBackground,
+        savePaymentSession,
+        loadPaymentSession,
+        clearPaymentSession
+    } from '$lib/orderPlacement.js';
     import { invalidateOrdersAfterCheckout } from '$lib/ordersCache.js';
 
     // ----- UI state -----
     let showAuthModal = false;
     let placeOrderLoading = false;
+    /** Soft warning: shown after ~8s of network silence to reassure the user we're still working. */
+    let placeOrderSlow = false;
     let paymentOrderId = /** @type {string | null} */ (null);
     /** מספר הזמנה ציבורי (order_number) — לא UUID */
     let paymentOrderNumber = /** @type {number | null} */ (null);
     let paymentAmount = 0;
     let success = false;
     let errorMessage = '';
+    /** Restore the payment session at most once (auth races with hydration). */
+    let paymentSessionRestoreAttempted = false;
 
     // ----- Form state (right side) -----
     let couponCode = '';
@@ -132,8 +142,12 @@
     }
 
     /**
-     * jsonb ל-order_items — בלי base64/בלובים (תמונות בסל יכולות להגיע למגהבייטים
-     * ולגרום ל-timeout או לחסימה ב-Supabase). שומרים מטא להזמנה ולתפעול.
+     * jsonb ל-order_items — מטא בלבד (Law C: אסור Base64/בלובים ב-RPC).
+     * תמונות מועלות נפרד ל-Storage ומקושרות דרך thumbnail_url.
+     *
+     * שינוי קריטי מול גרסה קודמת: בדיקה פוזיטיבית של תחילית `data:` במקום סף
+     * אורך — סף 240 תווים יכול להחמיץ data URL קצר (PNG 1x1 ~80 תווים) שיגרור
+     * דחייה ב-CHECK constraint (`position('data:image' in lower(...)) = 0`).
      */
     function buildOrderItemConfiguration(item) {
         try {
@@ -158,7 +172,8 @@
                         isSurfaceDark: settings.isSurfaceDark
                     };
                 }
-                if (Array.isArray(data.magnets)) {
+                /* magnetsMeta רלוונטי רק לחבילת מגנטים. בפסיפס ה־count מספיק. */
+                if (item?.type === 'magnets_pack' && Array.isArray(data.magnets)) {
                     out.magnetsMeta = data.magnets.map((m) => ({
                         id: m?.id,
                         hidden: !!m?.hidden,
@@ -171,10 +186,14 @@
                 }
             }
             const prev = item?.previewImage;
-            if (typeof prev === 'string' && prev.length > 240) {
-                out.previewImageNote = prev.startsWith('data:') ? 'embedded_data_url_omitted' : 'long_url_omitted';
-            } else if (prev != null) {
-                out.previewImage = prev;
+            if (typeof prev === 'string') {
+                if (prev.startsWith('data:')) {
+                    out.previewImageNote = 'embedded_data_url_omitted';
+                } else if (prev.length > 240) {
+                    out.previewImageNote = 'long_url_omitted';
+                } else if (prev) {
+                    out.previewImage = prev;
+                }
             }
             return out;
         } catch (err) {
@@ -316,41 +335,15 @@
         document.getElementById('checkout-payment-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    /**
-     * אחרי שההזמנה נשמרה — מעלה thumbnails ומעדכן שורות (לא חוסם את מסך התשלום).
-     * @param {string} userId
-     * @param {string} orderId
-     * @param {unknown[]} cartSnapshot
-     * @param {string[]} itemRowIds
-     */
-    function backfillOrderThumbnailsInBackground(userId, orderId, cartSnapshot, itemRowIds) {
-        if (!userId || !orderId || !itemRowIds?.length || !cartSnapshot?.length) return;
-        void (async () => {
-            try {
-                const thumbnailUrls = await uploadOrderItemThumbnails(
-                    supabase,
-                    userId,
-                    orderId,
-                    /** @type {Array<{ previewImage?: string | null }>} */ (cartSnapshot)
-                );
-                for (let i = 0; i < itemRowIds.length && i < thumbnailUrls.length; i++) {
-                    const url = thumbnailUrls[i];
-                    if (!url) continue;
-                    const { error: patchErr } = await supabase.rpc('patch_order_item_thumbnail', {
-                        p_item_id: itemRowIds[i],
-                        p_thumbnail_url: url
-                    });
-                    if (patchErr) console.warn('patch_order_item_thumbnail', i, patchErr);
-                }
-            } catch (e) {
-                console.warn('Order thumbnails backfill:', e);
-            }
-        })();
-    }
-
     async function handlePlaceOrder() {
+        /* Anti double-click guard: a user tapping twice within the same task tick
+           (mobile, slow CPU) could enter handlePlaceOrder before the disabled
+           state propagates. */
+        if (placeOrderLoading) return;
+
         errorMessage = '';
         success = false;
+        placeOrderSlow = false;
         showCityList = false;
         showStreetList = false;
 
@@ -429,61 +422,87 @@
                     subtitle: item.subtitle ?? null,
                     price,
                     quantity: 1,
-                    thumbnail_url: null,
+                    /* thumbnail_url מועלה ברקע אחרי יצירת ההזמנה (backfill) ולכן
+                       לא נשלח כאן — חיסכון בבייטים, ללא שינוי בלוגיקת ה-RPC. */
                     configuration: buildOrderItemConfiguration(item)
                 };
             });
 
-            const { data: rpcData, error: rpcError } = await supabase.rpc('create_complete_order', {
-                p_order_id: newOrderId,
-                p_shipping_data: shippingPayload,
-                p_gift_data: giftPayload,
-                p_items: itemsPayload,
-                p_subtotal: subtotalAmount,
-                p_total: totalAmount
-            });
-            if (rpcError) throw rpcError;
+            /* יצירת הזמנה חסינה: 30s timeout, retry יחיד לכשלים עוברים, התאוששות
+               אידמפוטנטית מ-unique violation אם הניסיון הראשון הצליח אך התשובה
+               אבדה. order_number מוחזר ישירות מה-RPC (אין select נוסף). */
+            const order = await createCompleteOrderResilient(
+                supabase,
+                {
+                    p_order_id: newOrderId,
+                    p_shipping_data: shippingPayload,
+                    p_gift_data: giftPayload,
+                    p_items: itemsPayload,
+                    p_subtotal: subtotalAmount,
+                    p_total: totalAmount
+                },
+                { onSlow: () => (placeOrderSlow = true) }
+            );
 
-            let resolvedOrderId = newOrderId;
-            let itemRowIds = /** @type {string[]} */ ([]);
-            if (rpcData != null && typeof rpcData === 'object' && !Array.isArray(rpcData)) {
-                const o = /** @type {{ order_id?: string; item_ids?: unknown }} */ (rpcData);
-                if (o.order_id) resolvedOrderId = String(o.order_id);
-                if (Array.isArray(o.item_ids)) {
-                    itemRowIds = o.item_ids.map((id) => String(id));
-                }
-            } else if (typeof rpcData === 'string' && rpcData) {
-                resolvedOrderId = rpcData;
-            }
-
-            // רק אחרי ששני ה-insert הצליחו: מציגים את מסך התשלום
-            paymentOrderId = resolvedOrderId;
+            paymentOrderId = order.order_id;
+            paymentOrderNumber = order.order_number;
             paymentAmount = totalAmount;
-            paymentOrderNumber = null;
-            if (paymentOrderId) {
-                const { data: ordRow, error: numErr } = await supabase
-                    .from('orders')
-                    .select('order_number')
-                    .eq('id', paymentOrderId)
-                    .single();
-                if (!numErr && ordRow?.order_number != null) {
-                    paymentOrderNumber = Number(ordRow.order_number);
-                }
-            }
+
+            /* שחזור אחרי refresh: שמירה זמנית של מצב התשלום ב-sessionStorage. */
+            savePaymentSession({
+                orderId: paymentOrderId,
+                orderNumber: paymentOrderNumber,
+                amount: paymentAmount
+            });
+
             await scrollToCheckoutPayment();
 
-            if ($user?.id && itemRowIds.length > 0) {
-                backfillOrderThumbnailsInBackground($user.id, paymentOrderId, cartSnapshot, itemRowIds);
+            if ($user?.id && order.item_ids.length > 0) {
+                backfillOrderThumbnailsInBackground(
+                    supabase,
+                    $user.id,
+                    paymentOrderId,
+                    cartSnapshot,
+                    order.item_ids
+                );
             }
         } catch (e) {
             console.error('Place order failed:', e);
-            errorMessage = supabaseErrorMessage(e);
+            errorMessage = orderCreationErrorMessage(e);
             paymentOrderId = null;
             paymentOrderNumber = null;
             await scrollToCheckoutError();
         } finally {
             placeOrderLoading = false;
+            placeOrderSlow = false;
         }
+    }
+
+    /**
+     * טקסטים ידידותיים לעברית עבור הכשלים הצפויים. מחזיר את
+     * supabaseErrorMessage כברירת מחדל כך שלא נסתיר שגיאה לא צפויה.
+     * @param {unknown} e
+     */
+    function orderCreationErrorMessage(e) {
+        /** @type {{ message?: string; isTimeout?: boolean }} */
+        const err = /** @type {any} */ (e);
+        const msg = String(err?.message || '').toLowerCase();
+        if (err?.isTimeout || msg.includes('order_creation_timeout')) {
+            return 'החיבור לשרת איטי כעת. נסו שוב — ההזמנה לא חויבה.';
+        }
+        if (msg.includes('failed to fetch') || msg.includes('network')) {
+            return 'תקלת רשת זמנית. בדקו את החיבור לאינטרנט ונסו שוב.';
+        }
+        if (msg.includes('client_subtotal_mismatch') || msg.includes('client_total_mismatch')) {
+            return 'הסכום בעגלה השתנה. רעננו את הדף ונסו שוב.';
+        }
+        if (msg.includes('not_authenticated')) {
+            return 'יש להתחבר כדי להשלים את ההזמנה.';
+        }
+        if (msg.includes('configuration_too_large') || msg.includes('configuration_contains_data_image')) {
+            return 'אחד הפריטים כבד מדי. ערכו אותו מחדש בעורך ושמרו לעגלה.';
+        }
+        return supabaseErrorMessage(e);
     }
 
     async function handlePaymentApproved() {
@@ -508,7 +527,8 @@
                 expectedStatus: 'paid'
             });
 
-            // ריקון עגלה
+            /* לאחר אישור תשלום: מנקים את ה-session ומרוקנים עגלה. */
+            clearPaymentSession();
             cart.set([]);
             success = true;
 
@@ -520,6 +540,59 @@
         } finally {
             placeOrderLoading = false;
         }
+    }
+
+    /**
+     * שחזור אחרי refresh: אם נשמרה הזמנה במצב 'pending', נציג מחדש את מסך
+     * התשלום במקום לאלץ את המשתמש להתחיל מההתחלה. נקרא רק פעם אחת לאחר ש-auth
+     * הסתיימה והמשתמש מחובר וקיים order id ב-sessionStorage.
+     */
+    async function tryRestorePaymentSession() {
+        if (paymentSessionRestoreAttempted) return;
+        paymentSessionRestoreAttempted = true;
+
+        const sess = loadPaymentSession();
+        if (!sess) return;
+        if (!$user?.id) return;
+        /* אם כבר יש פאנל פעיל (handlePlaceOrder באותו סשן) — אין מה לשחזר. */
+        if (paymentOrderId) return;
+
+        try {
+            const { data, error } = await supabase
+                .from('orders')
+                .select('id, status, order_number, total_amount, user_id')
+                .eq('id', sess.orderId)
+                .maybeSingle();
+
+            if (error || !data) {
+                clearPaymentSession();
+                return;
+            }
+            if (data.user_id !== $user.id) {
+                clearPaymentSession();
+                return;
+            }
+            if (data.status !== 'pending') {
+                /* כבר שולמה / בוטלה — לא רלוונטי לחזור לפאנל התשלום. */
+                clearPaymentSession();
+                return;
+            }
+
+            paymentOrderId = String(data.id);
+            paymentOrderNumber =
+                typeof data.order_number === 'number' ? data.order_number : null;
+            paymentAmount = Number(data.total_amount || sess.amount || 0);
+            await scrollToCheckoutPayment();
+        } catch (e) {
+            console.warn('Payment session restore:', e);
+            clearPaymentSession();
+        }
+    }
+
+    /* שחזור הוא ריאקטיבי כי `$user` יכול להיות null בזמן onMount (auth bootstrap)
+       ולהפוך ל-true שניות אחר כך. נריץ פעם אחת בלבד באמצעות הדגל. */
+    $: if (!$authLoading && $user?.id && !paymentSessionRestoreAttempted) {
+        void tryRestorePaymentSession();
     }
 
     onMount(() => {
@@ -626,6 +699,11 @@
                             מעבר לתשלום מאובטח
                         {/if}
                     </button>
+                    {#if placeOrderLoading && placeOrderSlow}
+                        <div class="slow-warning" role="status" aria-live="polite">
+                            החיבור איטי כעת — ממשיכים לנסות, נא להמתין.
+                        </div>
+                    {/if}
                 </div>
             {/if}
         </aside>
@@ -1449,6 +1527,19 @@
         background: color-mix(in srgb, var(--color-canvas-bg) 88%, #ccc);
         border-color: color-mix(in srgb, var(--color-gold) 25%, #ccc);
         color: var(--color-dark-gray);
+    }
+
+    .slow-warning {
+        margin-top: 10px;
+        padding: 10px 14px;
+        border-radius: 14px;
+        background: rgba(198, 178, 154, 0.16);
+        border: 1px solid rgba(198, 178, 154, 0.45);
+        color: var(--color-dark-blue);
+        font-weight: 800;
+        font-size: 13px;
+        line-height: 1.45;
+        text-align: center;
     }
 
     .error-box {
