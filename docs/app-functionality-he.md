@@ -58,6 +58,9 @@
 | `/checkout` | צ'ק-אאוט, משלוח, מדיניות פרטיות, יצירת הזמנה בשרת, תשלום דמו |
 | `/orders` | **ההזמנות שלי** — רשימת הזמנות + שורות + תמונות ממוזערות (משתמש מחובר, Supabase) |
 | `/auth/callback` | השלמת OAuth (PKCE, החלפת `code` לסשן) |
+| `/admin` | **ממשק Admin** — רשימת כל ההזמנות, פילטר סטטוס, pagination |
+| `/admin/orders/[orderId]` | **פרטי הזמנה — Admin** — כתובת, פריטים, thumbnails, עדכון סטטוס, שליחת מייל משלוח |
+| `/admin/print` | **הדפסת מגנטים — Admin** — בחירת הזמנות, הצעת אריזה אופטימלית, תצוגה מקדימה A4, הדפסה פיזית |
 
 ---
 
@@ -513,15 +516,21 @@
 
 ## מסד נתונים (Supabase) — הערות ארכיטקטורה
 
-- טבלאות/פונקציות רלוונטיות מהמיגרציות בפרויקט: **`orders`**, **`order_items`**, **`profiles`**, **`privacy_policies`**, RPC **`create_complete_order`** (v2), **`patch_order_item_thumbnails`** (batch), **`patch_order_item_thumbnail`** (single, legacy), **`confirm_order_payment`**, **`compute_order_item_unit_price`**, **`my_orders_dashboard`**, **`record_privacy_consent`** (שמות מדויקים לפי קבצי ה־SQL).
+- טבלאות/פונקציות רלוונטיות מהמיגרציות בפרויקט: **`orders`**, **`order_items`**, **`profiles`**, **`privacy_policies`**, **`admin_users`**, RPC **`create_complete_order`** (v3), **`patch_order_item_thumbnails`** (batch), **`patch_order_item_thumbnail`** (single, legacy), **`patch_order_item_original_paths`**, **`confirm_order_payment`**, **`compute_order_item_unit_price`**, **`my_orders_dashboard`**, **`record_privacy_consent`**, **`is_admin`**, **`admin_get_orders`**, **`admin_get_order_detail`**, **`admin_update_order_status`** (שמות מדויקים לפי קבצי ה־SQL).
 - **`orders.id`:** מפתח ראשי מסוג UUID — לפעולות פנימיות, עדכון סטטוס, וקישורים טכניים. ה־UUID נוצר בקליינט (`crypto.randomUUID()`) ומשמש כ־**idempotency key** לבקשת `create_complete_order` — `unique_violation` ב־retry מסמן שהניסיון הראשון התקבל ומאפשר התאוששות.
-- **`orders.order_number`:** מספר שלם עולה **ייחודי** (`UNIQUE`), נוצר מרצף **`order_number_seq`** ו־`DEFAULT nextval` — להצגה ללקוח, למסכי תשלום/הצלחה ולתמיכה. **מוחזר ישירות מ־RPC v2** (אין `select` נפרד).
+- **`orders.order_number`:** מספר שלם עולה **ייחודי** (`UNIQUE`), נוצר מרצף **`order_number_seq`** ו־`DEFAULT nextval` — להצגה ללקוח, למסכי תשלום/הצלחה ולתמיכה. **מוחזר ישירות מ־RPC v3** (אין `select` נפרד).
+- **`orders.status` ערכים חוקיים:** `pending`, `paid`, `processing`, `shipped`, `delivered`, `cancelled`.
 - **Server-authoritative pricing (Law D):** `compute_order_item_unit_price` מחשב מחיר לפי `type + configuration.count`. סטיה בין הסכום של הקליינט לתחשיב השרתי = `client_subtotal_mismatch` / `client_total_mismatch`. **אין** `update` ישיר על `orders` מצד הלקוח — מעבר ל־`paid` רק דרך `confirm_order_payment` (security definer).
-- **Configuration guardrail (50KB + ללא `data:image`):** מאוכף הן ב־CHECK constraint (`order_items_configuration_guardrail_chk`, מגרציה `20260411130000`) והן בכל קריאה ל־RPC v2 — defense in depth.
-- **`order_items.thumbnail_url`:** כתובת ציבורית לתמונה ממוזערת לאחר העלאה ל־Storage. backfill ברקע אחרי יצירת ההזמנה — call יחיד דרך `patch_order_item_thumbnails` (batch).
-- **Storage:** באקט **`order-thumbnails`** (public read; insert/update/delete רק תחת קידומת `auth.uid()`).
+- **Configuration guardrail (50KB + ללא `data:image`):** מאוכף הן ב־CHECK constraint (`order_items_configuration_guardrail_chk`, מגרציה `20260411130000`) והן בכל קריאה ל־RPC v3 — defense in depth.
+- **`order_items.thumbnail_url`:** כתובת ציבורית לתמונה ממוזערת אחרי העלאה ל-Storage. backfill ברקע אחרי יצירת ההזמנה — call יחיד דרך `patch_order_item_thumbnails` (batch).
+- **`order_items.original_storage_paths`:** `jsonb` — מפת `{ magnetId: storageObjectPath }` לכל מגנט (או `{ source: path }` לפסיפס). מאוכסן בבאקט **`order-originals`** (private). backfill ברקע דרך `uploadOrderOriginalsInBackground` / `patch_order_item_original_paths`. מכיל תמונות full-resolution לשימוש בהדפסה.
+- **`order_items.configuration`:** JSONB — snapshot של מטא-דאטת חיתוך ואפקטים: `magnetsMeta[{ id, xPct, yPct, zoom, effectId, hidden }]` + `settingsMeta`. משמש Admin לתצוגת פרטי ההדפסה.
+- **Storage buckets:** **`order-thumbnails`** (public read; insert/update תחת `auth.uid()`). **`order-originals`** (private; insert/update/select ל-`authenticated` עם `bucket_id` filter; קריאה ישירה של קבצים רק ל-`service_role`). **חשוב:** policy של SELECT נדרש גם כשמשתמשים ב-`upsert: true` — בלעדיו Storage מחזיר RLS violation.
+- **`admin_users`:** allowlist פשוטה `(user_id uuid PK)`. RLS: רק `service_role` קורא ישירות; authenticated-users בודקים דרך RPC `is_admin()` (security definer).
+- **Admin RPCs (security definer, בודקים `admin_users`):** `admin_get_orders(limit, offset, status)` — כל ההזמנות ללא RLS; `admin_get_order_detail(order_id)` — הזמנה מלאה + פריטים; `admin_update_order_status(order_id, new_status)` — מעברי סטטוס חוקיים בלבד (paid→processing→shipped→delivered, כל שלב→cancelled); **`admin_get_print_queue()`** — הזמנות paid/processing עם ספירת מגנטים גלויים; **`admin_get_print_originals(order_ids[])`** — metadata + storage paths לכל הפריטים של הזמנות נבחרות; **`admin_mark_orders_printed(order_ids[])`** — stamps `printed_at`, transitions paid→processing.
+- **`orders.printed_at`:** `timestamptz`, nullable — חותמת זמן הדפסה פיזית דרך מסך `/admin/print`. NULL = טרם הודפס.
 - **`/orders` perf:** RPC `my_orders_dashboard(limit, offset)` מאחד הזמנות + שורות (בלי `configuration` הכבד) באגרגציה אחת, עם אינדקסים מותאמים על `(user_id, placed_at desc)` ו־`(order_id, created_at)`.
-- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, **`20260507000100_create_complete_order_v2_with_order_number.sql`**, **`20260507000200_patch_order_item_thumbnails_batch.sql`**.
+- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, `20260507000100_create_complete_order_v2_with_order_number.sql`, `20260507000200_patch_order_item_thumbnails_batch.sql`, `20260507000300_create_complete_order_v3_hardened.sql`, `20260508000400_feel_sanitize_text_no_chr0.sql`, **`20260515000100_order_item_original_paths.sql`**, **`20260515000200_admin_users.sql`**, **`20260518000100_admin_print_pipeline.sql`**.
 
 ---
 
@@ -572,9 +581,120 @@
 | יצירת הזמנה חסינה (timeout/retry/idempotency) | `src/lib/orderPlacement.js` |
 | הזמנות שלי | `src/routes/orders/+page.svelte` |
 | תמונות ממוזערות להזמנה | `src/lib/orderThumbnails.js` |
+| **תמונות מקוריות ל-Storage** | `src/lib/orderOriginals.js` |
 | תשלום דמו | `src/lib/components/PaymentMock.svelte` |
 | אימות | `src/lib/components/AuthModal.svelte`, `src/lib/authStore.js`, `src/lib/supabase.js` |
+| **Admin — ניהול הזמנות** | `src/routes/admin/+layout.svelte`, `src/routes/admin/+page.svelte` |
+| **Admin — פרטי הזמנה** | `src/routes/admin/orders/[orderId]/+page.svelte` |
+| **Admin — הדפסת מגנטים** | `src/routes/admin/print/+page.svelte`, `src/lib/admin/printPacking.js`, `src/lib/admin/PrintPage.svelte` |
+| **מייל משלוח (Edge Function)** | `supabase/functions/send-shipping-notification/index.ts` |
 
 ---
 
 *מסמך זה נועד לצוות פיתוח ומוצר; עדכנו אותו כשמוסיפים נתיבים, חבילות מחיר, שינוי בזרימת התשלום או בשדות הזמנה (למשל `order_number`, thumbnails).*
+
+---
+
+## Pipeline שמירת תמונות מקוריות (`src/lib/orderOriginals.js`)
+
+**מטרה:** שמירת תמונות מקור ב-Storage לצורך הדפסה פיזית.
+
+**זרימה (fire-and-forget, לא חוסמת checkout):**
+1. לאחר `create_complete_order` מחזיר `item_ids`, קוראים ל-`uploadOrderOriginalsInBackground` **במקביל** ל-`backfillOrderThumbnailsInBackground`.
+2. `uploadOrderOriginalsInBackground` מעלה לכל פריט:
+   - **magnets_pack:** כל מגנט בנפרד → `{userId}/{orderId}/{itemId}/{magnetId}.{ext}` (Full Resolution, ללא דחיסה)
+   - **mosaic:** תמונת מקור אחת → `{userId}/{orderId}/{itemId}/source.{ext}`
+3. לאחר העלאה: RPC `patch_order_item_original_paths` מעדכן `order_items.original_storage_paths` (jsonb).
+
+**איתור מקור תמונה (field resolution):**
+- **magnets_pack:** `m.srcUrl ?? m.originalSrc ?? m.src` — הסל שומר את המקור ב-`originalSrc` (base64 מסריאליזציה). `srcUrl` כ-fallback למבני נתונים ישנים.
+- **mosaic:** `itemData.settings.splitImageSrc ?? itemData.splitImageSrc ?? itemData.src` — התמונה מאוחסנת תחת `data.settings.splitImageSrc` (base64 / blob URL).
+
+**Bucket:** `order-originals` — **private** (ללא Public URL). קריאה רק ל-`service_role` (Admin בלבד).
+
+**Storage Policies (על `storage.objects`):**
+- `order_originals_insert_own` — INSERT ל-`authenticated`, `WITH CHECK (bucket_id = 'order-originals')`.
+- `order_originals_update_own` — UPDATE ל-`authenticated`, `USING (bucket_id = 'order-originals' AND auth.uid() = folder[1])`.
+- `order_originals_select_own` — SELECT ל-`authenticated`, `USING (bucket_id = 'order-originals')`. **נדרש עבור `upsert: true`** — ללא policy זה, Storage מחזיר RLS violation גם על INSERT.
+
+**הערה חשובה (deployment):** הבאקט חייב להיווצר ידנית בדשבורד Supabase (Storage → New bucket → `order-originals`, Public: OFF) **לפני** הרצת המיגרציה. ניתן גם ליצור דרך SQL:
+```sql
+INSERT INTO storage.buckets (id, name, public) VALUES ('order-originals', 'order-originals', false);
+```
+
+**מה מאוחסן יחד:**
+- `original_storage_paths` — נתיבי Storage לתמונות המקור
+- `configuration.magnetsMeta[i].{xPct, yPct, zoom, effectId}` — פרטי חיתוך ואפקט לכל מגנט (כבר נשמר ב-checkout)
+
+---
+
+## ממשק Admin (`src/routes/admin/`)
+
+**גישה:** רק משתמשים הרשומים בטבלת `admin_users`. לא קיים בממשק לרשום את עצמך — יש להוסיף ידנית דרך Supabase Dashboard:
+```sql
+INSERT INTO admin_users (user_id) VALUES ('<your-auth-uid>');
+```
+
+**Guard:** `+layout.svelte` בודק על ה-client:
+1. `supabase.auth.getSession()` — חייב להיות מחובר
+2. RPC `is_admin()` — security definer, בודק `admin_users`; מחזיר `true/false`
+3. אם לא עובר — redirect ל-`/`
+
+**דף הזמנות (`/admin`):**
+- קריאה ל-RPC `admin_get_orders(limit, offset, status)` — מחזיר כל ההזמנות ללא RLS
+- פילטר לפי סטטוס, pagination 50/דף
+- עמודות: מספר הזמנה, סטטוס, שם לקוח, עיר, מספר פריטים, סכום, תאריך
+
+**דף פרטי הזמנה (`/admin/orders/[orderId]`):**
+- RPC `admin_get_order_detail(order_id)` — הזמנה מלאה + כל order_items
+- **כתובת משלוח + מתנה**
+- **Thumbnails** + סיכום מטא-דאטה (כמות, אפקט)
+- **עדכון סטטוס** דרך RPC `admin_update_order_status`:
+  - `paid → processing → shipped → delivered`
+  - כל שלב → `cancelled` (חוץ מ-delivered/cancelled)
+- **כפתור "שלח מייל משלוח"** (זמין בסטטוס `processing` / `shipped`) — קורא ל-Edge Function `send-shipping-notification`
+
+**דף הדפסת מגנטים (`/admin/print`):**
+
+מסך ייעודי להדפסה פיזית של מגנטים (5×5 ס"מ) על דפי A4 מהזמנות מרובות.
+
+- **תור הדפסה:** RPC `admin_get_print_queue()` — מחזיר הזמנות בסטטוס `paid`/`processing` עם ספירת מגנטים גלויים לכל הזמנה.
+- **בחירת הזמנות:** Sidebar עם checkboxים; כפתור "הצעת אריזה אופטימלית" מפעיל אלגוריתם שממלא דפים ביעילות (≥90% ניצולת).
+- **מד ניצולת:** מספר עמודים + אחוז מילוי מוצגים בזמן אמת בכל שינוי בחירה.
+- **אלגוריתם אריזה (`src/lib/admin/printPacking.js`):**
+  - קבועים: אריח 50mm, רווח 5mm, 3 עמודות × 5 שורות = 15 מגנטים/עמוד, שוליים 10mm.
+  - `packOrdersIntoPages` — first-fit; כל הזמנה מתחילה בשורה חדשה עם header band.
+  - `suggestOptimalBatch` — greedy; בוחר הזמנות מהוותיקה ביותר עד יעד ניצולת ≥90% או maxPages.
+  - `expandMosaicToTiles` — מחלק תמונת mosaic ל-`gridBaseSize²` משבצות שוות.
+  - `expandMagnetsTiles` — מחזיר מגנטים גלויים בלבד (hidden=true מדולגים).
+- **טעינת מקורות:** RPC `admin_get_print_originals(order_ids[])` — מחזיר metadata + `original_storage_paths`; הלקוח יוצר signed URLs (תוקף שעה) לבאקט `order-originals`.
+- **תצוגה מקדימה:** כל עמוד מוצג כקלף A4 בסקייל (~67%); כפתור "טען תצוגה" טוען מקורות ומרנדר.
+- **רכיב עמוד (`src/lib/admin/PrintPage.svelte`):**
+  - מרנדר `section.a4-page` (210×297mm).
+  - Header band לכל הזמנה: `— הזמנה #N — לקוח: שם — K מגנטים —`.
+  - Grid 3 עמודות של אריחי 50×50mm עם crop marks בפינות.
+  - **רינדור crop:** תמונת המקור מוצגת ב-`<img>` עם CSS `position: absolute` + `width/height/left/top` שמחושבים דרך `cropMath.js` (`computeCoverBaseSize` + `pctToTranslate` + zoom) ביחס ל-frame של 591px (=50mm @300dpi).
+  - **אפקטים:** CSS `filter` מוחל לפי `activeEffectId` דרך `getCssFilter`.
+  - **Mosaic:** התמונה המקורית מוגדלת ×gridSize ומוצגת עם offset שלילי לכל משבצת.
+- **הדפסה:** כפתור "הדפס" → `window.print()` עם `@page { size: A4; margin: 0 }`. כל ה-UI (sidebar, toolbar) מוסתר ב-`@media print`.
+- **אחרי הדפסה:** כפתור "אשר שההדפסה הושלמה" → RPC `admin_mark_orders_printed(order_ids[])` — מעביר `paid→processing` + מסמן `printed_at`.
+- **הוראת הדפסה:** מוצג למשתמש: "ודא שהמדפסת מוגדרת ל-A4 ללא scaling (100%)".
+
+**Edge Function `send-shipping-notification`:**
+- POST עם `{ order_id }` + `Authorization: Bearer <user_jwt>`
+- מאמת: JWT תקין + caller ב-`admin_users`
+- שולח מייל Hebrew "ההזמנה שלך בדרך! 🚚" עם thumbnails דרך Resend
+- נגישה רק לאדמין — לא webhook DB
+- **Secrets נדרשים:** `RESEND_API_KEY`, `ORDER_EMAIL_FROM` (=`no-reply@feel-ya.com`), `SHIPPING_WEBHOOK_SECRET`
+
+---
+
+## אבטחת Edge Functions — Webhook Secret
+
+**Edge Function `send-order-confirmation`** (נקראת מ-DB webhook `orders-paid-email`):
+- **ולידציית `WEBHOOK_SECRET`:** בתחילת הטיפול, הפונקציה בודקת את ה-header `Authorization: Bearer <token>` מול הסוד `WEBHOOK_SECRET` (מוגדר ב-Dashboard → Edge Functions → Secrets).
+- אם הסוד מוגדר והערך לא תואם — מוחזר `401 Unauthorized`.
+- אם הסוד **לא מוגדר** — הבדיקה מדולגת (תאימות לאחור).
+- **הגדרה:** אותו ערך (service_role JWT) מוגדר גם ב-Secret `WEBHOOK_SECRET` וגם ב-Authorization header של ה-webhook `orders-paid-email` (Database → Webhooks).
+- **Secrets נדרשים:** `RESEND_API_KEY`, `ORDER_EMAIL_FROM`, `WEBHOOK_SECRET`
+
