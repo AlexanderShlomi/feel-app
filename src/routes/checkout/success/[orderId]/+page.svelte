@@ -5,12 +5,17 @@
     import { supabase } from '$lib/supabase';
     import { profile } from '$lib/authStore';
 
-    /** @type {{ order_number?: number|null; status?: string|null; shipping_first_name?: string|null; shipping_last_name?: string|null; shipping_city?: string|null; shipping_street?: string|null; shipping_house_number?: number|null; shipping_apartment_number?: number|null; shipping_notes?: string|null; placed_at?: string|null } | null} */
+    /** @type {{ order_number?: number|null; status?: string|null; shipping_first_name?: string|null; shipping_last_name?: string|null; shipping_city?: string|null; shipping_street?: string|null; shipping_house_number?: number|null; shipping_apartment_number?: number|null; shipping_notes?: string|null; placed_at?: string|null; total_amount?: number|null; currency?: string|null; gift_enabled?: boolean|null; gift_message?: string|null; gift_sender_name?: string|null } | null} */
     let order = null;
+    /** @type {{ title: string | null; quantity: number | null; line_total: number | null }[]} */
+    let orderItems = [];
     let loading = true;
     let loadError = '';
 
     $: orderId = $page.params.orderId;
+    $: siteBase = String($page.data?.siteUrl ?? '')
+        .trim()
+        .replace(/\/$/, '');
     $: customerName =
         [($profile?.full_name || order?.shipping_first_name), order?.shipping_last_name]
             .filter((x) => typeof x === 'string' && x.trim())
@@ -33,15 +38,91 @@
         return lines;
     })();
 
-    const WHATSAPP_TEXT_BASE = 'וואו! הרגע יצרתי משהו מרגש ב-FEEL. מחכה כבר שהמגנטים שלי יגיעו! ';
-    // 🎞️✨ => %F0%9F%8E%9E%EF%B8%8F%E2%9C%A8
-    const WHATSAPP_TEXT_EMOJI_ENCODED = '%F0%9F%8E%9E%EF%B8%8F%E2%9C%A8';
+    /** @param {number | string | null | undefined} amount @param {string | null | undefined} currency */
+    function formatMoney(amount, currency) {
+        const cur = (currency || 'ILS').toUpperCase();
+        const n = Number(amount);
+        if (!Number.isFinite(n)) return '';
+        try {
+            return new Intl.NumberFormat('he-IL', {
+                style: 'currency',
+                currency: cur,
+                maximumFractionDigits: cur === 'ILS' ? 0 : 2
+            }).format(n);
+        } catch {
+            return `${n} ${cur}`;
+        }
+    }
 
-    $: whatsappHref = `https://wa.me/?text=${encodeURIComponent(WHATSAPP_TEXT_BASE)}${WHATSAPP_TEXT_EMOJI_ENCODED}`;
+    /** @param {{ title: string | null; quantity: number | null; line_total: number | null }} row */
+    function itemLineLabel(row) {
+        const t = typeof row.title === 'string' ? row.title.trim() : '';
+        return t || 'מגנט מותאם אישית';
+    }
+
+    /** כתובת קנונית של האתר לצורך שיתוף ההזמנה (לא תלויה ב־host של בקשת ה־SSR). */
+    const SHARE_SITE_URL = 'https://www.feel-ya.com';
+    const SHARE_HERO_VIDEO_URL = `${SHARE_SITE_URL}/heroImag.mp4`;
+
+    /** סיכום טקסט להודעת וואטסאפ: קישור לאתר (תצוגת OG עם לוגו), קישור לסרטון ההירו, פירוט הזמנה */
+    function buildWhatsappShareText() {
+        const parts = [];
+        parts.push('וואו! הרגע הזמנתי משהו מרגש ב־FEEL 🎞️✨');
+        parts.push('מחכה כבר שהמגנטים יגיעו!');
+        parts.push('');
+
+        parts.push('האתר של FEEL — בקישור הבא תופיע תצוגה מקדימה עם הלוגו:');
+        parts.push(`${SHARE_SITE_URL}/`);
+        parts.push('');
+        parts.push('סרטון ההירו מהדף הראשי (קישור ישיר לווידאו):');
+        parts.push(SHARE_HERO_VIDEO_URL);
+        parts.push('');
+
+        if (!loading && !loadError && order) {
+            parts.push('—— פירוט ההזמנה ——');
+            if (order.order_number != null) parts.push(`מספר הזמנה: ${order.order_number}`);
+            if (order.placed_at) {
+                try {
+                    const d = new Date(order.placed_at);
+                    parts.push(`תאריך: ${new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(d)}`);
+                } catch {
+                    /* ignore */
+                }
+            }
+
+            if (orderItems.length) {
+                parts.push('פריטים:');
+                for (const row of orderItems) {
+                    const q = Number(row.quantity) || 0;
+                    const label = itemLineLabel(row);
+                    const lt = formatMoney(row.line_total, order.currency);
+                    parts.push(lt ? `• ${label} × ${q} — ${lt}` : `• ${label} × ${q}`);
+                }
+            }
+
+            const totalStr = formatMoney(order.total_amount, order.currency);
+            if (totalStr) parts.push(`סה״כ: ${totalStr}`);
+
+            if (order.gift_enabled && order.gift_message) {
+                const gm = String(order.gift_message).trim().slice(0, 400);
+                parts.push('');
+                parts.push('מתנה לנמען:');
+                parts.push(gm);
+                if (order.gift_sender_name) parts.push(`מאת: ${String(order.gift_sender_name).trim()}`);
+            }
+            parts.push('');
+        }
+
+        parts.push('ניפגש ב־FEEL 💛');
+        return parts.join('\n');
+    }
+
+    $: whatsappHref = `https://wa.me/?text=${encodeURIComponent(buildWhatsappShareText())}`;
 
     async function loadOrder() {
         loadError = '';
         loading = true;
+        orderItems = [];
         try {
             const { data, error } = await supabase
                 .from('orders')
@@ -56,7 +137,12 @@
                         'shipping_street',
                         'shipping_house_number',
                         'shipping_apartment_number',
-                        'shipping_notes'
+                        'shipping_notes',
+                        'total_amount',
+                        'currency',
+                        'gift_enabled',
+                        'gift_message',
+                        'gift_sender_name'
                     ].join(', ')
                 )
                 .eq('id', orderId)
@@ -66,13 +152,27 @@
             if (!data) {
                 loadError = 'לא מצאנו את ההזמנה. בדקו את הקישור ונסו שוב.';
                 order = null;
+                orderItems = [];
             } else {
                 order = data;
+                const { data: items, error: itemsErr } = await supabase
+                    .from('order_items')
+                    .select('title, quantity, line_total')
+                    .eq('order_id', orderId)
+                    .order('created_at', { ascending: true });
+
+                if (itemsErr) {
+                    console.error('Load order_items:', itemsErr);
+                    orderItems = [];
+                } else {
+                    orderItems = items ?? [];
+                }
             }
         } catch (e) {
             console.error('Load success order:', e);
             loadError = 'לא הצלחנו לטעון את פרטי ההזמנה. נסו שוב.';
             order = null;
+            orderItems = [];
         } finally {
             loading = false;
         }
@@ -103,17 +203,38 @@
 <div class="success-page" dir="rtl" lang="he">
     <div class="card">
         <div class="hero">
-            <div class="checkwrap" aria-hidden="true">
-                <svg class="check" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path
-                        class="check-path"
-                        d="M20 38.5L31.2 49.5L52 27"
-                        stroke="#C6B29A"
-                        stroke-width="6"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
-                </svg>
+            <div class="hero-visual">
+                <!-- עם הרשאת אנימציה: אותו סרטון כמו בעמוד הבית + סימון V -->
+                <div class="hero-motion" aria-hidden="true">
+                    <video class="hero-loop" autoplay loop muted playsinline preload="none">
+                        <source src="/heroImag.mp4" type="video/mp4" />
+                    </video>
+                    <div class="hero-loop-badge">
+                        <svg class="check check-tiny" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                class="check-path"
+                                d="M20 38.5L31.2 49.5L52 27"
+                                stroke="#C6B29A"
+                                stroke-width="6"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            />
+                        </svg>
+                    </div>
+                </div>
+                <!-- נגישות: ללא סרטון כשמבקשים הפחתת תנועה -->
+                <div class="checkwrap check-fallback" aria-hidden="true">
+                    <svg class="check" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                            class="check-path"
+                            d="M20 38.5L31.2 49.5L52 27"
+                            stroke="#C6B29A"
+                            stroke-width="6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                    </svg>
+                </div>
             </div>
 
             <div class="hero-text">
@@ -139,6 +260,24 @@
                             {/each}
                         </div>
                     {/if}
+
+                    {#if orderItems.length && order}
+                        <div class="items-box" aria-label="פריטים בהזמנה">
+                            <div class="items-title">מה בדרך אליכם</div>
+                            {#each orderItems as row}
+                                <div class="items-row">
+                                    <span class="items-name">{itemLineLabel(row)}</span>
+                                    <span class="items-qty">× {Number(row.quantity) || 0}</span>
+                                    {#if formatMoney(row.line_total, order.currency)}
+                                        <span class="items-price">{formatMoney(row.line_total, order.currency)}</span>
+                                    {/if}
+                                </div>
+                            {/each}
+                            {#if formatMoney(order.total_amount, order.currency)}
+                                <div class="items-total">סה״כ {formatMoney(order.total_amount, order.currency)}</div>
+                            {/if}
+                        </div>
+                    {/if}
                 {/if}
             </div>
         </div>
@@ -147,6 +286,9 @@
             <a class="wa-btn" href={whatsappHref} target="_blank" rel="noreferrer">
                 שיתוף ההתרגשות בוואטסאפ
             </a>
+            <p class="wa-hint">
+                ההודעה כוללת קישור לדף הבית של FEEL (עם תצוגת לוגו), קישור לסרטון ההירו ופירוט ההזמנה — מוכן לשליחה.
+            </p>
 
             <div class="nav-row">
                 <button type="button" class="nav-btn secondary" on:click={goToEditor}>חזרה ל‑Editor</button>
@@ -190,6 +332,51 @@
         align-items: center;
     }
 
+    .hero-visual {
+        width: 140px;
+        margin: 0 auto;
+        position: relative;
+    }
+
+    .hero-motion {
+        display: none;
+        position: relative;
+        width: 140px;
+        height: 140px;
+        border-radius: 28px;
+        overflow: hidden;
+        border: 1px solid rgba(198, 178, 154, 0.35);
+        box-shadow: 0 12px 32px rgba(30, 30, 30, 0.08);
+        background: #1a1a1a;
+    }
+
+    .hero-loop {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .hero-loop-badge {
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: rgba(250, 248, 245, 0.94);
+        border: 1px solid rgba(198, 178, 154, 0.45);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 6px 16px rgba(30, 30, 30, 0.12);
+    }
+
+    .check-tiny {
+        width: 26px;
+        height: 26px;
+        filter: drop-shadow(0 2px 6px rgba(198, 178, 154, 0.35));
+    }
+
     .checkwrap {
         width: 140px;
         height: 140px;
@@ -199,6 +386,19 @@
         display: grid;
         place-items: center;
         margin: 0 auto;
+    }
+
+    .check-fallback {
+        margin: 0 auto;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .hero-motion {
+            display: block;
+        }
+        .check-fallback {
+            display: none;
+        }
     }
 
     .check {
@@ -211,6 +411,13 @@
         stroke-dasharray: 120;
         stroke-dashoffset: 120;
         animation: drawCheck 900ms ease-out 180ms forwards;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .check-path {
+            animation: none;
+            stroke-dashoffset: 0;
+        }
     }
 
     @keyframes drawCheck {
@@ -296,6 +503,66 @@
     }
     .ship-line:last-child { margin-bottom: 0; }
 
+    .items-box {
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-radius: 20px;
+        background: rgba(30, 30, 30, 0.04);
+        border: 1px solid rgba(198, 178, 154, 0.28);
+    }
+
+    .items-title {
+        font-weight: 1000;
+        color: #1E1E1E;
+        margin-bottom: 10px;
+        font-size: 13px;
+    }
+
+    .items-row {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 10px;
+        align-items: baseline;
+        font-size: 13px;
+        font-weight: 850;
+        color: rgba(30, 30, 30, 0.82);
+        padding: 8px 0;
+    }
+
+    .items-row + .items-row {
+        border-top: 1px solid rgba(198, 178, 154, 0.18);
+    }
+
+    .items-name {
+        min-width: 0;
+        text-align: right;
+        line-height: 1.35;
+    }
+
+    .items-qty {
+        color: rgba(30, 30, 30, 0.55);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .items-price {
+        font-weight: 950;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        color: #1E1E1E;
+    }
+
+    .items-total {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(198, 178, 154, 0.28);
+        font-weight: 1000;
+        font-size: 15px;
+        color: #1E1E1E;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
     .actions {
         padding: 18px 22px 22px;
         border-top: 1px solid rgba(198, 178, 154, 0.22);
@@ -321,6 +588,16 @@
         transition: transform 0.18s ease, filter 0.18s ease;
     }
     .wa-btn:hover { transform: translateY(-1px); filter: saturate(1.02) contrast(1.02); }
+
+    .wa-hint {
+        margin: -6px 0 0;
+        padding: 0 4px;
+        font-size: 12px;
+        font-weight: 780;
+        line-height: 1.45;
+        color: rgba(30, 30, 30, 0.52);
+        text-align: center;
+    }
 
     .nav-row {
         display: grid;
@@ -362,9 +639,27 @@
             grid-template-columns: 1fr;
             text-align: right;
         }
-        .checkwrap { margin: 0; }
+        .hero-visual {
+            width: 100%;
+            max-width: 220px;
+        }
+        .hero-motion,
+        .checkwrap {
+            width: 100%;
+            max-width: 220px;
+            height: 220px;
+            margin: 0 auto 0 0;
+        }
         .title { font-size: 24px; }
         .nav-row { grid-template-columns: 1fr; }
+        .items-row {
+            grid-template-columns: 1fr;
+            gap: 4px;
+        }
+        .items-price,
+        .items-qty {
+            justify-self: end;
+        }
     }
 </style>
 

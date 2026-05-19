@@ -8,6 +8,11 @@
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 		<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 
+		<!-- Supabase: preconnect כדי לחסוך TCP+TLS handshake ב-RPC הראשון של הדף (הזמנות, צ'קאאוט וכו') -->
+		<!-- ה-URL מוזרק ב-build בעזרת VITE_PUBLIC_SUPABASE_URL; אם חסר — דופדפן יתעלם בשקט -->
+		<link rel="preconnect" href="%sveltekit.env.PUBLIC_SUPABASE_URL%" crossorigin>
+		<link rel="dns-prefetch" href="%sveltekit.env.PUBLIC_SUPABASE_URL%">
+
 		%sveltekit.head%
 	</head>
 	

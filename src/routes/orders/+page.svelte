@@ -7,8 +7,20 @@
         ordersSessionKey,
         clearOrdersSessionCacheForUser,
         clearAllOrdersSessionCache,
-        consumeOrdersRefreshSignal
+        consumeOrdersRefreshSignal,
+        readSupabaseUserIdSync
     } from '$lib/ordersCache.js';
+
+    /**
+     * ה-load function ב-+page.js הזניק כבר את שאילתת ה-RPC כשהמשתמש ניווט/ריחף על הקישור.
+     * אנחנו צורכים את ה-Promise כדי להציג את התוצאה הטרייה ברגע שהיא חוזרת — בלי לבזבז קריאה כפולה.
+     * @type {{ ordersPromise: Promise<{
+     *   data: unknown;
+     *   error: { message?: string } | null;
+     *   userId: string | null;
+     * }> | null }}
+     */
+    export let data;
 
     /** @type {Array<{
      *   id: string;
@@ -52,7 +64,7 @@
     /** @type {ReturnType<typeof setTimeout> | null} */
     let loadDebounceTimer = null;
 
-    // Watchdog: if we get stuck in loading (edge cases), force-refresh once after 5s.
+    // Watchdog: if we get stuck in loading (edge cases), force-refresh once after 8s.
     let watchdogTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
     let watchdogDidForceRefresh = false;
 
@@ -60,9 +72,12 @@
     const ORDERS_PAGE_SIZE = 25;
     /** 0 = בלי עיכוב מלאכותי אחרי auth */
     const LOAD_DEBOUNCE_MS = 0;
-    const ORDERS_CACHE_TTL_MS = 60_000;
-    const SESSION_ORDERS_MAX_MS = 600_000;
-    const SESSION_REVALIDATE_AFTER_MS = 15_000;
+    /** TTL של מטמון בזיכרון — 5 דק׳: מעבר טאבים/חזרה לדף יראה מיידית. */
+    const ORDERS_CACHE_TTL_MS = 300_000;
+    /** TTL של sessionStorage — 30 דק׳: גם ניווט אחרי הפסקה יראה את הסנפשוט מיידית. */
+    const SESSION_ORDERS_MAX_MS = 1_800_000;
+    /** מתי לחדש ברקע (revalidation) על snapshot מ-sessionStorage — 30s. */
+    const SESSION_REVALIDATE_AFTER_MS = 30_000;
 
     /** @param {string} uid */
     function sessionOrdersKey(uid) {
@@ -444,6 +459,8 @@
     function scheduleOrdersWatchdog(userId) {
         if (typeof window === 'undefined') return;
         if (watchdogTimer) clearTimeout(watchdogTimer);
+        // 8s במקום 5s: על חיבורים בינוניים (4G חלש) טעינה אמיתית עלולה לקחת 4–6 שניות,
+        // ולא רוצים לזרוק קריאה כפולה ולמחוק מטמון בדיוק כשהיא קרובה לחזור.
         watchdogTimer = setTimeout(() => {
             if (watchdogDidForceRefresh) return;
             if (!listLoading) return;
@@ -452,7 +469,7 @@
             invalidateOrdersCache();
             clearSessionOrdersForUser(userId);
             void fetchOrdersForUser(userId, { force: true });
-        }, 5000);
+        }, 8000);
     }
 
     async function loadMoreOrders() {
@@ -498,22 +515,101 @@
         }
     }
 
-    /** אורח: ביטול טעינה בתנועה + איפוס מצב (לא ממתינים ל־fetch שכבר לא רלוונטי) */
+    /**
+     * אורח: ביטול טעינה בתנועה + איפוס מצב (לא ממתינים ל־fetch שכבר לא רלוונטי).
+     * הגנה מפני flicker: אם יש token פעיל ב-localStorage, לא מאפסים — זה אומר שהמשתמש
+     * עדיין מחובר אבל ה-store טרם הסתנכרן (מצב מעבר ב-onAuthStateChange).
+     */
     $: if (!$authLoading && !$user) {
-        if (loadDebounceTimer != null) {
-            clearTimeout(loadDebounceTimer);
-            loadDebounceTimer = null;
+        const stillAuthenticatedInStorage = readSupabaseUserIdSync();
+        if (!stillAuthenticatedInStorage) {
+            if (loadDebounceTimer != null) {
+                clearTimeout(loadDebounceTimer);
+                loadDebounceTimer = null;
+            }
+            fetchSeq += 1;
+            loadMoreSeq += 1;
+            invalidateOrdersCache();
+            clearAllSessionOrdersCache();
+            orders = [];
+            ordersHasMore = false;
+            listLoadingMore = false;
+            loadMoreError = '';
+            listLoading = false;
+            loadError = '';
         }
-        fetchSeq += 1;
-        loadMoreSeq += 1;
-        invalidateOrdersCache();
-        clearAllSessionOrdersCache();
-        orders = [];
-        ordersHasMore = false;
-        listLoadingMore = false;
-        loadMoreError = '';
-        listLoading = false;
-        loadError = '';
+    }
+
+    /**
+     * רינדור מיידי מ-sessionStorage — בלי להמתין ל-authLoading.
+     * משתמשים ב-userId שנקרא ישירות מ-localStorage (סינכרוני, ~1ms).
+     * אם יש snapshot — מציגים ומסיימים את ה-skeleton; הקריאה הטרייה תחליף בהמשך.
+     */
+    function primeFromCacheImmediately() {
+        const uid = readSupabaseUserIdSync();
+        if (!uid) return false;
+
+        const memHit = peekOrdersCache(uid);
+        if (memHit) {
+            orders = memHit.map((o) => ({
+                ...o,
+                order_items: Array.isArray(o.order_items) ? [...o.order_items] : []
+            }));
+            ordersHasMore = false;
+            loadError = '';
+            listLoading = false;
+            return true;
+        }
+
+        const ss = readSessionOrdersCache(uid);
+        if (ss) {
+            orders = ss.rows.map((o) => ({
+                ...o,
+                order_items: Array.isArray(o.order_items) ? [...o.order_items] : []
+            }));
+            ordersHasMore = ss.hasMore;
+            loadError = '';
+            listLoading = false;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * צריכת ה-RPC שהוזנק ב-`+page.js` (preload-on-hover / load-on-navigate).
+     * אם הוא הצליח — משתמשים בתוצאה ולא יורים RPC נוסף.
+     * מחזיר true אם טופל בהצלחה (כולל שגיאת auth/RLS); false אם ה-promise לא הוגדר/נכשל ברשת.
+     */
+    async function consumePrefetchedPromise() {
+        if (!data?.ordersPromise) return false;
+
+        const seq = ++fetchSeq;
+        try {
+            const result = await data.ordersPromise;
+            if (seq !== fetchSeq) return true;
+
+            if (result?.error) {
+                // לא מציבים כאן loadError — נותנים ל-flow הרגיל לנסות שוב (כולל legacy-fallback).
+                return false;
+            }
+
+            const uid = result?.userId ?? readSupabaseUserIdSync();
+            if (!uid) return false;
+
+            const mapped = mapRpcToOrders(result.data);
+            const hasMore = mapped.length > ORDERS_PAGE_SIZE;
+            const pageRows = hasMore ? mapped.slice(0, ORDERS_PAGE_SIZE) : mapped;
+
+            orders = pageRows;
+            ordersHasMore = hasMore;
+            putOrdersCache(uid, pageRows, hasMore);
+            persistOrdersSnapshot(uid, pageRows, hasMore);
+            loadError = '';
+            listLoading = false;
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -521,6 +617,13 @@
      */
     onMount(() => {
         let disposed = false;
+
+        // שלב 1 — הצגה מיידית מ-cache, עוד לפני ש-authStore סיים את ה-init.
+        primeFromCacheImmediately();
+
+        // שלב 2 — צריכת התוצאה של ה-prefetch מ-+page.js (אם רץ).
+        void consumePrefetchedPromise();
+
         function tickLoad() {
             if (disposed) return;
             if (loadDebounceTimer != null) clearTimeout(loadDebounceTimer);
@@ -538,6 +641,14 @@
                     clearSessionOrdersForUser(u.id);
                     void fetchOrdersForUser(u.id, { force: true, silent: true });
                     scheduleOrdersWatchdog(u.id);
+                    return;
+                }
+
+                // אם יש כבר נתונים מהפר־פטץ' או מהמטמון — אפשר לעדכן ברקע (silent),
+                // כדי שלא תהיה הבהוב של skeleton אחרי שכבר רואים תוכן.
+                const haveData = orders.length > 0 && !listLoading;
+                if (haveData) {
+                    void fetchOrdersForUser(u.id, { silent: true });
                     return;
                 }
 
@@ -625,7 +736,7 @@
                                             <img
                                                 src={line.thumbnail_url}
                                                 alt=""
-                                                loading="eager"
+                                                loading="lazy"
                                                 decoding="async"
                                             />
                                         {:else}

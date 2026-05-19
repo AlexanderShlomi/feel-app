@@ -2,11 +2,26 @@
   import { onMount } from 'svelte';
   import { supabase } from '$lib/supabase.js';
   import PrintPage from '$lib/admin/PrintPage.svelte';
+  import PrintBatchPage from '$lib/admin/PrintBatchPage.svelte';
   import {
     packOrdersIntoPages,
     suggestOptimalBatch,
+    pageNeedsLandscape,
+    flattenTilesForBatch,
+    chunkTilesIntoPages,
+    ITEMS_PER_PAGE,
     USABLE_H_MM
   } from '$lib/admin/printPacking.js';
+
+  /** Batch (nesting) mode: flatten ALL tiles → fixed-size pages with
+   *  per-tile order labels. ON = maximize paper utilization (mixes orders
+   *  on the same sheet). OFF = legacy per-order layout with order headers. */
+  let batchMode = true;
+
+  /** Flat array of tiles for the current selection (batch mode only). */
+  let batchTiles = [];
+  /** Pages produced by chunkTilesIntoPages for batch mode. */
+  let batchPages = [];
 
   let queue = [];
   let loading = true;
@@ -84,6 +99,26 @@
 
   function recalcLayout() {
     const selectedOrders = queue.filter(o => selected[o.id]);
+
+    if (batchMode) {
+      // Tile-count based estimate before originals are loaded. After
+      // loadPreview() resolves, recomputeBatchLayout() refines using the
+      // real items (mosaic expansion may push the count up).
+      const estimatedTiles = selectedOrders.reduce(
+        (s, o) => s + (o.visible_tile_count || 0),
+        0
+      );
+      pageCount = Math.ceil(estimatedTiles / ITEMS_PER_PAGE);
+      utilization =
+        pageCount > 0
+          ? Math.round((estimatedTiles / (pageCount * ITEMS_PER_PAGE)) * 100)
+          : 0;
+      // previewPages is only valid for legacy mode; keep it empty so the
+      // legacy renderer doesn't accidentally fire.
+      previewPages = [];
+      return;
+    }
+
     const pages = packOrdersIntoPages(selectedOrders);
     pageCount = pages.length;
     previewPages = pages;
@@ -91,6 +126,27 @@
     const totalUsed = pages.reduce((s, p) => s + p.usedHeight, 0);
     const totalCapacity = pages.length * USABLE_H_MM;
     utilization = totalCapacity > 0 ? Math.round((totalUsed / totalCapacity) * 100) : 0;
+  }
+
+  /** Rebuild the flat-batch pages once originals are loaded. Uses actual
+   *  expanded tiles (mosaics → cells) instead of the visible_tile_count
+   *  estimate so the page count is exact. */
+  function recomputeBatchLayout() {
+    const selectedOrders = queue.filter((o) => selected[o.id]);
+    batchTiles = flattenTilesForBatch(selectedOrders, itemsByOrder);
+    batchPages = chunkTilesIntoPages(batchTiles, ITEMS_PER_PAGE);
+    pageCount = batchPages.length;
+    const total = batchTiles.length;
+    utilization =
+      pageCount > 0 ? Math.round((total / (pageCount * ITEMS_PER_PAGE)) * 100) : 0;
+  }
+
+  function toggleBatchMode() {
+    batchMode = !batchMode;
+    previewReady = false;
+    batchTiles = [];
+    batchPages = [];
+    recalcLayout();
   }
 
   async function loadPreview() {
@@ -151,6 +207,11 @@
 
     signedUrls = urls;
 
+    // Refine page count for batch mode using the actual expanded tiles.
+    if (batchMode) {
+      recomputeBatchLayout();
+    }
+
     // Wait for all images to be ready before enabling print
     previewReady = true;
     loadingPreview = false;
@@ -182,6 +243,8 @@
     // Reload queue to reflect changes
     previewReady = false;
     previewPages = [];
+    batchTiles = [];
+    batchPages = [];
     signedUrls = {};
     itemsByOrder = {};
     await loadQueue();
@@ -191,6 +254,14 @@
   $: selectedTiles = queue
     .filter(o => selected[o.id])
     .reduce((s, o) => s + (o.visible_tile_count || 0), 0);
+  /* Any page whose mosaic items are wider than 3 tiles must be printed on
+     A4 landscape (3-col portrait can't physically fit a 4×3 mosaic row).
+     Surfaces a hint to the admin so they pick the right printer setting. */
+  $: needsLandscape =
+    !batchMode &&
+    previewReady &&
+    Array.isArray(previewPages) &&
+    previewPages.some((p) => pageNeedsLandscape(p, itemsByOrder));
 </script>
 
 <svelte:head>
@@ -209,6 +280,11 @@
       <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectAll}>בחר הכל</button>
       <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectNone}>נקה</button>
     </div>
+
+    <label class="batch-toggle">
+      <input type="checkbox" checked={batchMode} on:change={toggleBatchMode} />
+      <span>איחוד הזמנות (Nesting) — {ITEMS_PER_PAGE} מגנטים/דף</span>
+    </label>
 
     {#if selectedCount > 0}
       <div class="sidebar-stats">
@@ -284,27 +360,51 @@
       ⚠️ לפני הדפסה: ודא שהמדפסת מוגדרת ל-A4 ללא scaling (100%).
     </div>
 
+    {#if needsLandscape}
+      <div class="print-hint print-hint--warn">
+        ↩️ הדפסה זו כוללת פסיפס רחב מ-3 אריחים בשורה — נדרשת הדפסה ב-A4 לרוחב (Landscape).
+      </div>
+    {/if}
+
     {#if !previewReady && pageCount > 0}
       <div class="placeholder-pages">
-        {#each previewPages as page, pi}
-          <div class="page-placeholder">
-            <span>עמוד {pi + 1}</span>
-            <span class="page-orders">
-              {page.orders.map(o => `#${o.order_number}`).join(', ')}
-            </span>
-          </div>
-        {/each}
+        {#if batchMode}
+          {#each Array(pageCount) as _, pi}
+            <div class="page-placeholder">
+              <span>עמוד {pi + 1}</span>
+              <span class="page-orders">≤ {ITEMS_PER_PAGE} מגנטים</span>
+            </div>
+          {/each}
+        {:else}
+          {#each previewPages as page, pi}
+            <div class="page-placeholder">
+              <span>עמוד {pi + 1}</span>
+              <span class="page-orders">
+                {page.orders.map(o => `#${o.order_number}`).join(', ')}
+              </span>
+            </div>
+          {/each}
+        {/if}
       </div>
     {/if}
 
     <!-- Print root — this is what gets printed -->
     <div class="print-root" class:print-root--hidden={!previewReady}>
       {#if previewReady}
-        {#each previewPages as page}
-          <div class="page-preview-wrapper">
-            <PrintPage pageData={page} {itemsByOrder} {signedUrls} />
-          </div>
-        {/each}
+        {#if batchMode}
+          {#each batchPages as page}
+            <div class="page-preview-wrapper">
+              <PrintBatchPage pageData={page} {signedUrls} />
+            </div>
+          {/each}
+        {:else}
+          {#each previewPages as page}
+            {@const landscape = pageNeedsLandscape(page, itemsByOrder)}
+            <div class="page-preview-wrapper" class:page-preview-wrapper--landscape={landscape}>
+              <PrintPage pageData={page} {itemsByOrder} {signedUrls} />
+            </div>
+          {/each}
+        {/if}
       {/if}
     </div>
   </main>
@@ -343,6 +443,21 @@
     gap: 6px;
     margin-bottom: 12px;
   }
+
+  .batch-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #444;
+    background: #f5f5f5;
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .batch-toggle input { margin: 0; }
 
   .sidebar-stats {
     display: flex;
@@ -440,6 +555,11 @@
     border-radius: 4px;
     margin-bottom: 16px;
   }
+  .print-hint--warn {
+    background: #ffe0b2;
+    color: #6d4c00;
+    font-weight: 600;
+  }
 
   .placeholder-pages {
     display: flex;
@@ -487,6 +607,13 @@
     width: 210mm;
     height: 297mm;
   }
+  /* Landscape variant — for pages that contain a mosaic wider than 3 tiles.
+     The inner .a4-page also flips dimensions (see PrintPage.svelte) so the
+     admin sees the actual sheet orientation needed at the printer. */
+  .page-preview-wrapper--landscape {
+    width: 297mm;
+    height: 210mm;
+  }
 
   .hint {
     color: #888;
@@ -514,11 +641,19 @@
 
   /* ── Print media ─────────────────────────────────────────────────────────── */
   @media print {
+    /* The "@media print revolution" — nuke EVERY admin chrome element. Only
+       the print pages survive. Anything not under .print-root is hidden so
+       no stray sidebar / toolbar / hint leaks onto the printed sheet. */
+    :global(header),
+    :global(nav),
+    :global(footer),
+    :global(.admin-sidebar),
     .print-sidebar,
     .toolbar,
     .error-msg,
     .print-hint,
-    .placeholder-pages {
+    .placeholder-pages,
+    .batch-toggle {
       display: none !important;
     }
 
@@ -527,6 +662,7 @@
       margin: 0;
       padding: 0;
       max-width: none;
+      min-height: 0;
     }
 
     .print-main {
@@ -544,15 +680,27 @@
       border: none;
       border-radius: 0;
       margin: 0;
+      overflow: visible;
       page-break-after: always;
+      break-after: page;
     }
     .page-preview-wrapper:last-child {
       page-break-after: auto;
+      break-after: auto;
+    }
+
+    /* Preserve filter colors (effects) on every printed node — without this
+       most browsers strip background-color/filter to save ink. */
+    :global(*) {
+      print-color-adjust: exact !important;
+      -webkit-print-color-adjust: exact !important;
     }
   }
 
+  /* Use the whole sheet. size:auto lets the user pick A4/A3/Letter at the
+     printer dialog; the inner .a4-page / .batch-page enforces 210x297mm. */
   @page {
-    size: A4;
+    size: auto;
     margin: 0;
   }
 </style>

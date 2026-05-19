@@ -658,25 +658,33 @@ INSERT INTO admin_users (user_id) VALUES ('<your-auth-uid>');
 
 מסך ייעודי להדפסה פיזית של מגנטים (5×5 ס"מ) על דפי A4 מהזמנות מרובות.
 
-- **תור הדפסה:** RPC `admin_get_print_queue()` — מחזיר הזמנות בסטטוס `paid`/`processing` עם ספירת מגנטים גלויים לכל הזמנה.
+- **תור הדפסה:** RPC `admin_get_print_queue()` — מחזיר הזמנות בסטטוס `paid`/`processing` עם ספירת מגנטים גלויים לכל הזמנה. בפסיפס הספירה משחזרת את הרשת בפועל לפי `configuration.count` → `gridBaseSize` + `splitImageRatio` (landscape: `round(base·ratio) × base`; portrait: `base × round(base/ratio)`) → fallback `base²` להזמנות לגאסי. (מיגרציה: `20260520000100_admin_print_queue_real_mosaic_count.sql`.)
 - **בחירת הזמנות:** Sidebar עם checkboxים; כפתור "הצעת אריזה אופטימלית" מפעיל אלגוריתם שממלא דפים ביעילות (≥90% ניצולת).
 - **מד ניצולת:** מספר עמודים + אחוז מילוי מוצגים בזמן אמת בכל שינוי בחירה.
 - **אלגוריתם אריזה (`src/lib/admin/printPacking.js`):**
   - קבועים: אריח 50mm, רווח 5mm, 3 עמודות × 5 שורות = 15 מגנטים/עמוד, שוליים 10mm.
   - `packOrdersIntoPages` — first-fit; כל הזמנה מתחילה בשורה חדשה עם header band.
   - `suggestOptimalBatch` — greedy; בוחר הזמנות מהוותיקה ביותר עד יעד ניצולת ≥90% או maxPages.
-  - `expandMosaicToTiles` — מחלק תמונת mosaic ל-`gridBaseSize²` משבצות שוות.
-  - `expandMagnetsTiles` — מחזיר מגנטים גלויים בלבד (hidden=true מדולגים).
+  - `computeMosaicGridDims(base, imageRatio, count)` — מחשב `cols × rows` של פסיפס בדיוק כמו אלגוריתם העורך (`calculateAndRenderSplitGrid` ב-`uploader/+layout.svelte`). Fallback ל-`count` → ריבוע.
+  - `expandMosaicToTiles` — מחלק את התמונה ל-`cols × rows` משבצות (לא בהכרח ריבוע) ומחזיר לכל אריח `{storagePath, cropRect:{col,row,cols,rows}, transform:{zoom,xPct,yPct}, effect, imageRatio}` כדי שצינור ההדפסה ישחזר בדיוק את ה-crop, ה-zoom והאפקט שהמשתמש בחר (Law A).
+  - `expandMagnetsTiles` — מחזיר מגנטים גלויים בלבד (`hidden=true` מדולגים) עם המטא המלא של כל מגנט (`xPct/yPct/zoom/activeEffectId`) מתוך `configuration.magnetsMeta`.
+  - `pageNeedsLandscape(page, itemsByOrder)` — מחזיר `true` אם איזשהו פסיפס בדף הוא `cols > 3` (כלומר רחב מרשת A4-פורטרט). משמש גם את `PrintPage.svelte` (להחלפת אוריינטציית הקלף) וגם את ה-UI ב-`/admin/print` (להצגת התראת "הדפס ב-Landscape").
 - **טעינת מקורות:** RPC `admin_get_print_originals(order_ids[])` — מחזיר metadata + `original_storage_paths`; הלקוח יוצר signed URLs (תוקף שעה) לבאקט `order-originals`.
 - **תצוגה מקדימה:** כל עמוד מוצג כקלף A4 בסקייל (~67%); כפתור "טען תצוגה" טוען מקורות ומרנדר.
 - **רכיב עמוד (`src/lib/admin/PrintPage.svelte`):**
-  - מרנדר `section.a4-page` (210×297mm).
+  - מרנדר `section.a4-page` (210×297mm פורטרט כברירת מחדל; 297×210mm כשהדף מכיל פסיפס רחב מ-3 אריחים — ראו "תמיכת Landscape" למטה).
   - Header band לכל הזמנה: `— הזמנה #N — לקוח: שם — K מגנטים —`.
-  - Grid 3 עמודות של אריחי 50×50mm עם crop marks בפינות.
-  - **רינדור crop:** תמונת המקור מוצגת ב-`<img>` עם CSS `position: absolute` + `width/height/left/top` שמחושבים דרך `cropMath.js` (`computeCoverBaseSize` + `pctToTranslate` + zoom) ביחס ל-frame של 591px (=50mm @300dpi).
-  - **אפקטים:** CSS `filter` מוחל לפי `activeEffectId` דרך `getCssFilter`.
-  - **Mosaic:** התמונה המקורית מוגדלת ×gridSize ומוצגת עם offset שלילי לכל משבצת.
-- **הדפסה:** כפתור "הדפס" → `window.print()` עם `@page { size: A4; margin: 0 }`. כל ה-UI (sidebar, toolbar) מוסתר ב-`@media print`.
+  - **רשת לפי-פריט (Per-item grid):** במקום grid 3-עמודות יחיד לכל ההזמנה, כל פריט מרונדר ב-grid עצמאי משלו עם `cols × rows` נכונים — מגנטים תמיד 3 עמודות, פסיפס לפי `cropRect.cols/rows` של האריחים שלו (`grid-template-columns: repeat(cols, 50mm)`). זה התיקון הקריטי ל-Law A: בעבר 12 אריחים של פסיפס 4×3 נדחסו ל-3 עמודות ב-DOM, כל אריח נחת במיקום פיזי שגוי, וההדפסה לא שיחזרה את ה-grid שהמשתמש בחר.
+  - **תמיכת Landscape:** ה-store הריאקטיבי `pageIsLandscape` בודק אם איזשהו block בדף הוא `cols > 3`; אם כן, ה-`section.a4-page` מקבל `.a4-page--landscape` (297×210mm) וה-wrapper בעמוד-האב מסתובב גם הוא. ב-`/admin/print` מוצגת התראה: "↩️ נדרשת הדפסה ב-A4 לרוחב (Landscape)". ה-`pageNeedsLandscape(page, itemsByOrder)` ב-`printPacking.js` הוא ה-source-of-truth לזיהוי דפים כאלה.
+  - **רינדור crop למגנטים — קולקציית תמונות (Photo Collection):** כל מגנט הוא אריח עצמאי. ה-`<img>` ממוקם ב-`position: absolute` עם `width/height/left/top` מחושבים דרך `cropMath.js` (`computeCoverBaseSize` + `computeMaxTranslateFromBase` + `pctToTranslate` + `zoom`) ביחס ל-frame של 591px (=50mm @300dpi). המטא נטענת מ-`configuration.magnetsMeta[i].{xPct,yPct,zoom,activeEffectId}` שנשמרת ב-`buildOrderItemConfiguration` בצ'ק-אאוט מתוך `magnet.transform`. **דיוק מלא מול העורך:** בדיוק אותן הפונקציות המתמטיות פועלות ב-`routes/uploader/edit/[magnetId]/+page.svelte` וב-`lib/components/Magnet.svelte`, ה-baseW/baseH מתכווצים פרופורציונלית עם ה-frame, ולכן ה-pixel-by-pixel של ההדפסה זהה לתצוגה בעורך (Law A). הבאג של ה-3-עמודות-קשיחות **לא** השפיע על קולקציה כי לכל מגנט אין `cropRect` בתוך תמונה אחת מחולקת — כל מגנט הוא יחידה עצמאית שמיקומה הפיזי על הדף לא רגיש לסדר ב-grid.
+  - **אפקטים:** CSS `filter` מוחל לפי `activeEffectId`/`currentEffect` דרך `getCssFilter` — גם למגנטים וגם לפסיפס.
+  - **Mosaic — `getMosaicStyle(cropRect, transform, effect, imageRatio, naturalW, naturalH)`:** משחזר את אלגוריתם העורך (`calculateAndRenderSplitGrid`):
+    - `totalW = cols·TILE_PX`, `totalH = rows·TILE_PX`.
+    - Cover-fit לפי `imageRatio` (ציר אחד תואם בדיוק, השני גולש סימטרית).
+    - הכפלת `width/height` ב-`zoom`, ואז הזחה לפי `xPct·maxX / yPct·maxY` (clamp ל-[-1..1]).
+    - מיקום `left/top` של ה-`<img>` בכל אריח = `start − col/row · TILE_PX` כדי לחתוך את ה"חלון" של אותו תא.
+    - אם `splitImageRatio` חסר (הזמנות לגאסי) — `onload` של ה-`<img>` מחשב מחדש לפי `naturalWidth/Height`.
+- **הדפסה:** כפתור "הדפס" → `window.print()` עם `@page { size: A4; margin: 0 }`. כל ה-UI (sidebar, toolbar) מוסתר ב-`@media print`. כשנדרש landscape, האדמין מקבל התראה ויבחר Landscape בדיאלוג ההדפסה.
 - **אחרי הדפסה:** כפתור "אשר שההדפסה הושלמה" → RPC `admin_mark_orders_printed(order_ids[])` — מעביר `paid→processing` + מסמן `printed_at`.
 - **הוראת הדפסה:** מוצג למשתמש: "ודא שהמדפסת מוגדרת ל-A4 ללא scaling (100%)".
 

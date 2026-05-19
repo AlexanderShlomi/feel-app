@@ -383,6 +383,21 @@ Deno.serve(async (req) => {
     return new Response('Method Not Allowed', { status: 405 });
   }
 
+  // Validate webhook secret to prevent unauthorized invocation.
+  // Set WEBHOOK_SECRET in Supabase Dashboard → Edge Functions → Secrets,
+  // and configure the same value in the DB webhook Authorization header.
+  const webhookSecret = Deno.env.get('WEBHOOK_SECRET');
+  if (webhookSecret) {
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (provided !== webhookSecret) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
   try {
     const payload = (await req.json()) as WebhookPayload;
 
