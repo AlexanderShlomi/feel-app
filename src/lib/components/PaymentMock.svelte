@@ -16,12 +16,20 @@
         return n.toLocaleString('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
     }
 
+    /**
+     * Mock delay before dispatching 'approved'. A real PSP integration will
+     * replace this `await` with the actual authorization round-trip; until
+     * then we keep a short artificial delay so the loader animation feels
+     * intentional rather than fake.
+     */
+    const MOCK_PROCESSING_MS = 800;
+
     async function handlePay() {
         if (state !== 'idle') return;
         state = 'processing';
 
         // הדמיית תהליך תשלום (ללא טרנזילה כרגע)
-        await new Promise((r) => setTimeout(r, 1800));
+        await new Promise((r) => setTimeout(r, MOCK_PROCESSING_MS));
 
         state = 'approved';
         dispatch('approved', { orderId });

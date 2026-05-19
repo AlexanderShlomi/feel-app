@@ -2,6 +2,34 @@ const SESSION_PREFIX = 'feel_orders:';
 const REFRESH_SIGNAL_PREFIX = 'feel_orders_refresh:';
 
 /**
+ * מחפש את ה-supabase auth-token ב-localStorage ומחלץ את user.id באופן סינכרוני.
+ * שימושי כדי לרנדר את ה-snapshot המאוחסן של ההזמנות לפני ש-authStore מתסיים את initAuth.
+ *
+ * המפתח של supabase-js (v2) הוא בפורמט: `sb-<project-ref>-auth-token`
+ * ה-payload הוא JSON עם המבנה: { access_token, refresh_token, user: { id, ... }, ... }
+ * אם אין session — מחזיר null.
+ *
+ * @returns {string | null}
+ */
+export function readSupabaseUserIdSync() {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith('sb-') || !k.endsWith('-auth-token')) continue;
+            const raw = localStorage.getItem(k);
+            if (!raw) continue;
+            const o = JSON.parse(raw);
+            const id = o?.user?.id ?? o?.currentSession?.user?.id ?? null;
+            if (typeof id === 'string' && id) return id;
+        }
+    } catch {
+        /* private mode / parse error */
+    }
+    return null;
+}
+
+/**
  * @param {string} userId
  */
 export function ordersSessionKey(userId) {

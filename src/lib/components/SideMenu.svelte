@@ -34,6 +34,15 @@
     }
 
     function closeMenu() {
+        // כשהתפריט נסגר, אל תשאיר פוקוס על קישור בתוך המכלול — אחרת aria-hidden=true
+        // על #side-menu מפעיל אזהרת נגישות (פלט דפדפן: "Blocked aria-hidden... descendant retained focus").
+        if (typeof document !== 'undefined') {
+            const root = document.getElementById('side-menu');
+            const active = document.activeElement;
+            if (root && active instanceof HTMLElement && root.contains(active)) {
+                active.blur();
+            }
+        }
         isOpen = false;
     }
 

@@ -22,12 +22,23 @@
     } from '$lib/privacyPolicyStore.js';
     import {
         createCompleteOrderResilient,
+        confirmOrderPaymentResilient,
+        paymentConfirmErrorMessage,
         backfillOrderThumbnailsInBackground,
+        uploadOrderOriginalsInBackground,
         savePaymentSession,
         loadPaymentSession,
         clearPaymentSession
     } from '$lib/orderPlacement.js';
     import { invalidateOrdersAfterCheckout } from '$lib/ordersCache.js';
+
+    /**
+     * Dev-only debug flag. In production builds (`vite build`) this is `false`
+     * and the bundler tree-shakes the debug blocks (payload summary, jsonb
+     * scrub probe). Keeps prod console clean of PII and avoids the extra
+     * round-trip on every checkout.
+     */
+    const __DEV__ = import.meta.env.DEV;
 
     // ----- UI state -----
     let showAuthModal = false;
@@ -42,6 +53,22 @@
     let errorMessage = '';
     /** Restore the payment session at most once (auth races with hydration). */
     let paymentSessionRestoreAttempted = false;
+
+    /**
+     * Image upload tracking. The thumbnails upload is started during order
+     * creation; originals are started after payment confirmation (so they
+     * don't compete with the payment RPC for the user's uplink bandwidth on
+     * mobile networks). Both promises are awaited — with a bounded cap —
+     * before we clear the cart and navigate to /checkout/success, so that
+     * closing the tab on the success page does not cancel a printing-
+     * critical originals upload mid-flight (Law A: accuracy).
+     */
+    let thumbnailsUploadPromise = /** @type {Promise<unknown> | null} */ (null);
+    let originalsUploadPromise = /** @type {Promise<unknown> | null} */ (null);
+    let cartSnapshotForUploads = /** @type {Array<object> | null} */ (null);
+    let itemRowIdsForUploads = /** @type {string[] | null} */ (null);
+    /** Shown during the await-uploads phase after payment is confirmed. */
+    let savingImages = false;
 
     // ----- Form state (right side) -----
     let couponCode = '';
@@ -164,25 +191,55 @@
             if (data && typeof data === 'object') {
                 const settings = data.settings;
                 if (settings && typeof settings === 'object') {
+                    /* settingsMeta כולל את ה-splitImageRatio ואת ה-splitTransform
+                       כך שצינור ההדפסה (admin) יוכל לשחזר בדיוק את אותו crop/zoom
+                       ופן/אפקט שהמשתמש בחר. בלי השדות האלה ההדפסה תציג רשת ריבועית
+                       ברירת-מחדל ובלי האפקט — הפרה ישירה של Law A (דיוק). */
+                    const st = settings.splitTransform;
                     out.settingsMeta = {
                         currentProductType: settings.currentProductType,
                         gridBaseSize: settings.gridBaseSize,
                         currentDisplayScale: settings.currentDisplayScale,
                         currentEffect: settings.currentEffect,
-                        isSurfaceDark: settings.isSurfaceDark
+                        isSurfaceDark: settings.isSurfaceDark,
+                        splitImageRatio:
+                            typeof settings.splitImageRatio === 'number'
+                                ? settings.splitImageRatio
+                                : null,
+                        splitTransform:
+                            st && typeof st === 'object'
+                                ? {
+                                      zoom: Number(st.zoom) || 1,
+                                      xPct: Number(st.xPct) || 0,
+                                      yPct: Number(st.yPct) || 0
+                                  }
+                                : { zoom: 1, xPct: 0, yPct: 0 }
                     };
                 }
                 /* magnetsMeta רלוונטי רק לחבילת מגנטים. בפסיפס ה־count מספיק. */
                 if (item?.type === 'magnets_pack' && Array.isArray(data.magnets)) {
-                    out.magnetsMeta = data.magnets.map((m) => ({
-                        id: m?.id,
-                        hidden: !!m?.hidden,
-                        size: m?.size,
-                        activeEffectId: m?.activeEffectId,
-                        x: m?.x,
-                        y: m?.y,
-                        rotation: m?.rotation
-                    }));
+                    out.magnetsMeta = data.magnets.map((m) => {
+                        /* xPct/yPct/zoom נשמרים על m.transform (v2 של עורך
+                           המגנט). הם הכרחיים כדי שצינור ההדפסה ישחזר את אותו
+                           crop בדיוק (Law A). בלי זה ההדפסה מציגה כיסוי-cover
+                           ברירת-מחדל ומאבדת את הבחירה של המשתמש. */
+                        const tr = m?.transform;
+                        return {
+                            id: m?.id,
+                            hidden: !!m?.hidden,
+                            size: m?.size,
+                            activeEffectId: m?.activeEffectId,
+                            x: m?.x,
+                            y: m?.y,
+                            rotation: m?.rotation,
+                            zoom:
+                                tr && typeof tr.zoom === 'number' ? tr.zoom : 1,
+                            xPct:
+                                tr && typeof tr.xPct === 'number' ? tr.xPct : 0,
+                            yPct:
+                                tr && typeof tr.yPct === 'number' ? tr.yPct : 0
+                        };
+                    });
                 }
             }
             const prev = item?.previewImage;
@@ -211,6 +268,60 @@
     function parseIntOrNull(value) {
         const n = parseInt(String(value || '').trim(), 10);
         return Number.isFinite(n) ? n : null;
+    }
+
+    /**
+     * Find paths containing bad characters that break Postgres:
+     * - actual NUL byte (U+0000)
+     * - the literal JSON escape sequence "\\u0000" (some layers decode it to NUL)
+     *
+     * @param {unknown} value
+     * @param {string} [basePath]
+     * @returns {{ path: string; kind: 'nul' | 'escape'; sample: string }[]}
+     */
+    function findNullByteLikePaths(value, basePath = '$') {
+        /** @type {{ path: string; kind: 'nul' | 'escape'; sample: string }[]} */
+        const hits = [];
+
+        const walk = (v, p) => {
+            if (v == null) return;
+            if (typeof v === 'string') {
+                const hasNul = v.includes('\u0000');
+                const hasEscape = v.includes('\\u0000');
+                if (hasNul || hasEscape) {
+                    const sample = v
+                        .replace(/\u0000/g, '␀')
+                        .replace(/\\u0000/g, '\\\\u0000');
+                    if (hasNul) {
+                        hits.push({
+                            path: p,
+                            kind: 'nul',
+                            sample: sample.length > 180 ? sample.slice(0, 180) + '…' : sample
+                        });
+                    }
+                    if (hasEscape) {
+                        hits.push({
+                            path: p,
+                            kind: 'escape',
+                            sample: sample.length > 180 ? sample.slice(0, 180) + '…' : sample
+                        });
+                    }
+                }
+                return;
+            }
+            if (Array.isArray(v)) {
+                for (let i = 0; i < v.length; i++) walk(v[i], `${p}[${i}]`);
+                return;
+            }
+            if (typeof v === 'object') {
+                for (const k of Object.keys(/** @type {Record<string, unknown>} */ (v))) {
+                    walk(/** @type {Record<string, unknown>} */ (v)[k], `${p}.${k}`);
+                }
+            }
+        };
+
+        walk(value, basePath);
+        return hits;
     }
 
     function validateShipping() {
@@ -346,6 +457,12 @@
         placeOrderSlow = false;
         showCityList = false;
         showStreetList = false;
+        /* Clear upload tracking from any previous (failed) attempt so we
+           don't await a stale promise tied to a different order id. */
+        thumbnailsUploadPromise = null;
+        originalsUploadPromise = null;
+        cartSnapshotForUploads = null;
+        itemRowIdsForUploads = null;
 
         if ($user) {
             if (privacyNeedsReaccept($profile, $currentPrivacyPolicy)) {
@@ -428,6 +545,64 @@
                 };
             });
 
+            // Dev-only payload + scrub-probe diagnostics. Tree-shaken in prod.
+            // In production these would (a) leak PII to the browser console and
+            // any console-recording extensions, and (b) add an extra RPC round-trip
+            // to every checkout (the scrub probe). Both unacceptable per Law 7.4 + Law C.
+            if (__DEV__) {
+                try {
+                    const nullByteLikeHits = [
+                        ...findNullByteLikePaths(shippingPayload, '$.p_shipping_data'),
+                        ...findNullByteLikePaths(giftPayload, '$.p_gift_data'),
+                        ...findNullByteLikePaths(itemsPayload, '$.p_items')
+                    ];
+
+                    const itemsSummary = itemsPayload.map((it, idx) => {
+                        const cfg = it?.configuration;
+                        const cfgKeys =
+                            cfg && typeof cfg === 'object' && !Array.isArray(cfg)
+                                ? Object.keys(/** @type {Record<string, unknown>} */ (cfg)).slice(0, 24)
+                                : [];
+                        const cfgBad = findNullByteLikePaths(cfg, `$.p_items[${idx}].configuration`);
+                        return {
+                            idx,
+                            type: it?.type,
+                            titleLen: typeof it?.title === 'string' ? it.title.length : null,
+                            subtitleLen: typeof it?.subtitle === 'string' ? it.subtitle.length : null,
+                            cfgKeys,
+                            cfgHasNullByteLike: cfgBad.length > 0
+                        };
+                    });
+
+                    console.info('[checkout] Place order payload summary:', {
+                        shipping: shippingPayload,
+                        gift: giftPayload,
+                        items: itemsSummary,
+                        nullByteLikeHits
+                    });
+                } catch (dbgErr) {
+                    console.warn('[checkout] Place order debug log failed:', dbgErr);
+                }
+
+                try {
+                    const probeJsonb = { x: 'a\\u0000b', nested: { y: 'c\\u0000d' } };
+                    const { data: probeData, error: probeError } = await supabase.rpc(
+                        'feel_jsonb_strip_nul_bytes',
+                        { p_input: probeJsonb }
+                    );
+                    console.info('[checkout] DB scrub probe (feel_jsonb_strip_nul_bytes):', {
+                        probeInputVisible: {
+                            x: probeJsonb.x,
+                            nested: { y: probeJsonb.nested.y }
+                        },
+                        probeResult: probeData,
+                        probeError
+                    });
+                } catch (probeErr) {
+                    console.warn('[checkout] DB scrub probe failed:', probeErr);
+                }
+            }
+
             /* יצירת הזמנה חסינה: 30s timeout, retry יחיד לכשלים עוברים, התאוששות
                אידמפוטנטית מ-unique violation אם הניסיון הראשון הצליח אך התשובה
                אבדה. order_number מוחזר ישירות מה-RPC (אין select נוסף). */
@@ -458,16 +633,40 @@
             await scrollToCheckoutPayment();
 
             if ($user?.id && order.item_ids.length > 0) {
-                backfillOrderThumbnailsInBackground(
+                /* Thumbnails: small + progressive (used by /orders cards). Kick
+                   off now while the user is interacting with PaymentMock so we
+                   maximize the window for them to complete before navigation.
+                   The returned promise is awaited (with a cap) in
+                   handlePaymentApproved before we navigate, so closing the tab
+                   on /checkout/success doesn't abort them mid-flight. */
+                thumbnailsUploadPromise = backfillOrderThumbnailsInBackground(
                     supabase,
                     $user.id,
                     paymentOrderId,
                     cartSnapshot,
                     order.item_ids
                 );
+                /* Originals (full-res, used for printing — Law A) are deferred
+                   until AFTER confirm_order_payment succeeds. This avoids
+                   bandwidth competition with the payment RPC on slow mobile
+                   uplinks, which was a source of intermittent
+                   payment_confirmation_timeout. Store the snapshot + item ids
+                   so handlePaymentApproved can trigger the upload. */
+                cartSnapshotForUploads = cartSnapshot;
+                itemRowIdsForUploads = order.item_ids;
             }
         } catch (e) {
-            console.error('Place order failed:', e);
+            /* Structured client log — devs see full error shape (code/status/
+               details), the user sees only the safe Hebrew message below. */
+            const errAny = /** @type {any} */ (e);
+            console.error('[checkout] Place order failed:', {
+                message: errAny?.message,
+                code: errAny?.code,
+                status: errAny?.status,
+                details: errAny?.details,
+                hint: errAny?.hint,
+                isTimeout: errAny?.isTimeout
+            });
             errorMessage = orderCreationErrorMessage(e);
             paymentOrderId = null;
             paymentOrderNumber = null;
@@ -479,32 +678,69 @@
     }
 
     /**
-     * טקסטים ידידותיים לעברית עבור הכשלים הצפויים. מחזיר את
-     * supabaseErrorMessage כברירת מחדל כך שלא נסתיר שגיאה לא צפויה.
+     * הודעות עבריות עבור הכשלים הצפויים בלבד. כשלים לא צפויים מקבלים
+     * הודעה גנרית מרגיעה כדי לא לחשוף שמות טבלאות/עמודות מהשרת. הפרטים
+     * המלאים נכתבים ל-console.error למפתחים ול-Postgres logs דרך
+     * `raise log` במיגרציה v3.
      * @param {unknown} e
      */
     function orderCreationErrorMessage(e) {
-        /** @type {{ message?: string; isTimeout?: boolean }} */
+        /** @type {{ message?: string; isTimeout?: boolean; status?: number; code?: string }} */
         const err = /** @type {any} */ (e);
         const msg = String(err?.message || '').toLowerCase();
+
         if (err?.isTimeout || msg.includes('order_creation_timeout')) {
             return 'החיבור לשרת איטי כעת. נסו שוב — ההזמנה לא חויבה.';
         }
         if (msg.includes('failed to fetch') || msg.includes('network')) {
             return 'תקלת רשת זמנית. בדקו את החיבור לאינטרנט ונסו שוב.';
         }
+
         if (msg.includes('client_subtotal_mismatch') || msg.includes('client_total_mismatch')) {
             return 'הסכום בעגלה השתנה. רעננו את הדף ונסו שוב.';
         }
-        if (msg.includes('not_authenticated')) {
+        if (msg.includes('not_authenticated') || err?.status === 401) {
             return 'יש להתחבר כדי להשלים את ההזמנה.';
+        }
+        if (err?.status === 403) {
+            return 'אין הרשאה לבצע את הפעולה. נסו להתחבר מחדש ואז שוב.';
         }
         if (msg.includes('configuration_too_large') || msg.includes('configuration_contains_data_image')) {
             return 'אחד הפריטים כבד מדי. ערכו אותו מחדש בעורך ושמרו לעגלה.';
         }
-        return supabaseErrorMessage(e);
+        if (msg.includes('too_long')) {
+            // shipping_first_name_too_long / shipping_notes_too_long / etc.
+            return 'אחד מהפרטים שמילאתם ארוך מהמותר. קצרו ונסו שוב.';
+        }
+        if (msg.includes('_required') || msg.includes('shipping_house_number_invalid')) {
+            return 'אחד מפרטי המשלוח חסר או לא תקין. בדקו את הטופס ונסו שוב.';
+        }
+        if (msg.includes('order_id_taken')) {
+            // Should not reach the user — the resilient wrapper recovers — but
+            // if it does, asking to refresh is the safest route.
+            return 'התרחש סנכרון לא צפוי בין דפדפנים. רעננו את הדף וההזמנה תופיע ב"ההזמנות שלי".';
+        }
+        if (msg.includes('invalid_item_count') || msg.includes('unknown_item_type') || msg.includes('invalid_quantity')) {
+            return 'אחד הפריטים לא תקין. הסירו אותו מהעגלה וצרו אותו מחדש בעורך.';
+        }
+
+        // Generic fallback — never expose raw Supabase/Postgres messages
+        // (they can include table/column names and other implementation
+        // details). Full details are still in console.error for the user
+        // and in the postgres log for ops.
+        return 'אופס, משהו השתבש בתקשורת. אנחנו שומרים את העבודה שלך — נסו שוב בעוד רגע.';
     }
 
+    /**
+     * Confirm the payment on the server (currently mock; will be called AFTER a
+     * real PSP authorization succeeds — the resilient wrapper is provider-
+     * agnostic so the call site won't change). Uses the resilient helper:
+     *   * 20s timeout per attempt.
+     *   * 3 attempts with backoff (0.8s, 1.6s) on retriable errors only.
+     *   * Idempotent recovery: if a retry races a succeeded original, we
+     *     verify the order is `paid` and proceed as success.
+     *   * Generic Hebrew error messages — no raw Postgres/RPC details leak.
+     */
     async function handlePaymentApproved() {
         errorMessage = '';
         if (!$user?.id || !paymentOrderId) return;
@@ -514,11 +750,12 @@
         }
 
         placeOrderLoading = true;
+        placeOrderSlow = false;
         try {
-            const { error } = await supabase.rpc('confirm_order_payment', {
-                p_order_id: paymentOrderId
+            await confirmOrderPaymentResilient(supabase, paymentOrderId, {
+                userId: $user.id,
+                onSlow: () => (placeOrderSlow = true)
             });
-            if (error) throw error;
 
             // Ensure /orders doesn't serve stale session cache after a successful payment confirmation.
             invalidateOrdersAfterCheckout({
@@ -527,18 +764,73 @@
                 expectedStatus: 'paid'
             });
 
+            /* Originals upload (printing-critical — Law A) is started here,
+               AFTER the payment RPC has returned, so it never competes with
+               confirm_order_payment for the user's uplink bandwidth on mobile.
+               If thumbnails are still in flight, they keep going in parallel.
+               Both promises are awaited below (with a cap) before we clear the
+               cart and navigate — so closing the tab on /checkout/success can
+               no longer abort a partial originals upload. */
+            if (
+                $user.id &&
+                Array.isArray(cartSnapshotForUploads) &&
+                Array.isArray(itemRowIdsForUploads) &&
+                itemRowIdsForUploads.length > 0
+            ) {
+                originalsUploadPromise = uploadOrderOriginalsInBackground(
+                    supabase,
+                    $user.id,
+                    paymentOrderId,
+                    cartSnapshotForUploads,
+                    itemRowIdsForUploads
+                );
+            }
+
+            /* Bounded wait: best-effort guarantee that both uploads complete
+               before we navigate. If the cap is reached, we still navigate —
+               payment is already confirmed and the patch RPCs are idempotent
+               (jsonb `||` merge), so any in-flight SPA fetch keeps running
+               across the navigation. We just lose the strong delivery
+               guarantee for users that close the tab very fast. */
+            const pending = [thumbnailsUploadPromise, originalsUploadPromise].filter(
+                (p) => p && typeof (/** @type {any} */ (p)).then === 'function'
+            );
+            if (pending.length > 0) {
+                savingImages = true;
+                try {
+                    const SAVE_IMAGES_TIMEOUT_MS = 30_000;
+                    await Promise.race([
+                        Promise.allSettled(pending),
+                        new Promise((resolve) =>
+                            setTimeout(resolve, SAVE_IMAGES_TIMEOUT_MS)
+                        )
+                    ]);
+                } finally {
+                    savingImages = false;
+                }
+            }
+
             /* לאחר אישור תשלום: מנקים את ה-session ומרוקנים עגלה. */
             clearPaymentSession();
             cart.set([]);
             success = true;
 
-            // Navigate only after final payment confirmation RPC.
-            await goto(`/checkout/success/${paymentOrderId}`);
+            /* replaceState: לחיצת "אחורה" אחרי תשלום לא תחזיר לדף checkout עם
+               עגלה ריקה (חוויה מבלבלת). מנווטים תוך החלפת ההיסטוריה. */
+            await goto(`/checkout/success/${paymentOrderId}`, { replaceState: true });
         } catch (e) {
-            console.error('Update order to paid failed:', e);
-            errorMessage = supabaseErrorMessage(e);
+            /* Devs: full shape in console; users: only the safe Hebrew message. */
+            const errAny = /** @type {any} */ (e);
+            console.error('[checkout] Payment confirmation failed:', {
+                message: errAny?.message,
+                code: errAny?.code,
+                status: errAny?.status,
+                isTimeout: errAny?.isTimeout
+            });
+            errorMessage = paymentConfirmErrorMessage(e);
         } finally {
             placeOrderLoading = false;
+            placeOrderSlow = false;
         }
     }
 
@@ -656,7 +948,7 @@
                             <div class="summary-item" role="listitem">
                                 <div class="item-img">
                                     {#if item.previewImage}
-                                        <img src={item.previewImage} alt={item.title} loading="eager" decoding="async" />
+                                        <img src={item.previewImage} alt={item.title} loading="lazy" decoding="async" />
                                     {:else}
                                         <div class="no-img">—</div>
                                     {/if}
@@ -739,7 +1031,11 @@
 
                     {#if placeOrderLoading}
                         <div class="inline-loading" aria-live="polite">
-                            מעדכנים הזמנה...
+                            {#if savingImages}
+                                שומרים את התמונות שלך לפני שנמשיך…
+                            {:else}
+                                מעדכנים הזמנה...
+                            {/if}
                             <div class="inline-loader"></div>
                         </div>
                     {/if}

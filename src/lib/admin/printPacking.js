@@ -149,20 +149,117 @@ export function suggestOptimalBatch(queue, maxPages = 10, utilizationTarget = 0.
 }
 
 /**
- * Expand a mosaic item into individual tile descriptors.
- * Mosaic = one source image divided evenly into gridBaseSize² tiles.
- * Each tile gets a cropRect describing which portion of the source to show.
+ * Compute the mosaic grid dimensions (cols × rows) the editor renders.
+ * Mirrors the algorithm in `src/routes/uploader/+layout.svelte`
+ * (`calculateAndRenderSplitGrid`):
  *
- * @param {{configuration: {settingsMeta?: {gridBaseSize?: number}}, original_storage_paths?: {source?: string}}} item
- * @returns {Array<{storagePath: string, cropRect: {col: number, row: number, gridSize: number}}>}
+ *   if imageRatio > 1 (landscape):  cols = round(base * imageRatio); rows = base
+ *   else (portrait/square):         rows = round(base / imageRatio); cols = base
+ *
+ * Legacy fallback: if the order configuration was written before
+ * `splitImageRatio` started being stored, we infer dimensions from
+ * `count` (total visible tiles) and `gridBaseSize` — one of the two is the
+ * base; whichever choice yields `cols × rows === count` wins.
+ *
+ * @param {number} base  — gridBaseSize as stored in settingsMeta
+ * @param {number | null | undefined} imageRatio  — naturalW / naturalH (if known)
+ * @param {number | null | undefined} count  — total visible tiles (fallback)
+ * @returns {{ cols: number, rows: number }}
+ */
+export function computeMosaicGridDims(base, imageRatio, count) {
+  const safeBase = Math.max(1, Math.round(Number(base) || 3));
+
+  if (typeof imageRatio === 'number' && Number.isFinite(imageRatio) && imageRatio > 0) {
+    if (imageRatio > 1) {
+      return { cols: Math.max(1, Math.round(safeBase * imageRatio)), rows: safeBase };
+    }
+    return { cols: safeBase, rows: Math.max(1, Math.round(safeBase / imageRatio)) };
+  }
+
+  // Fallback: try to recover from `count` (cols × rows must equal count).
+  if (typeof count === 'number' && count > 0) {
+    // Landscape candidate: cols = count / base, rows = base
+    if (count % safeBase === 0) {
+      const cols = count / safeBase;
+      if (cols >= safeBase) return { cols, rows: safeBase };
+      return { cols: safeBase, rows: cols };
+    }
+  }
+
+  // Last resort: assume square grid.
+  return { cols: safeBase, rows: safeBase };
+}
+
+/**
+ * Expand a mosaic item into individual tile descriptors.
+ *
+ * Mosaic = one source image divided evenly into `cols × rows` tiles. Each tile
+ * gets:
+ *   - storagePath: the SAME source image (every tile points at the original)
+ *   - cropRect:    which cell of the grid this tile is (col, row, cols, rows)
+ *   - transform:   the user's chosen zoom + pan (xPct/yPct) — applied during
+ *                  render so the printed slice matches the editor preview
+ *   - effect:      the user's chosen CSS effect filter id
+ *   - imageRatio:  natural image aspect ratio (may be null for legacy data;
+ *                  PrintPage.svelte falls back to img.naturalWidth/Height)
+ *
+ * Critical Law A invariant: this metadata MUST be enough to reproduce the
+ * exact frame the user saw in the mosaic editor. Anything missing will
+ * surface as a wrong crop / wrong effect on the printed sheet.
+ *
+ * @param {{
+ *   configuration?: {
+ *     count?: number;
+ *     settingsMeta?: {
+ *       gridBaseSize?: number;
+ *       splitImageRatio?: number | null;
+ *       splitTransform?: { zoom?: number; xPct?: number; yPct?: number } | null;
+ *       currentEffect?: string | null;
+ *     };
+ *   };
+ *   original_storage_paths?: { source?: string };
+ * }} item
+ * @returns {Array<{
+ *   storagePath: string;
+ *   cropRect: { col: number; row: number; cols: number; rows: number };
+ *   transform: { zoom: number; xPct: number; yPct: number };
+ *   effect: string;
+ *   imageRatio: number | null;
+ * }>}
  */
 export function expandMosaicToTiles(item) {
-  const gridSize = item.configuration?.settingsMeta?.gridBaseSize || 3;
+  const meta = item.configuration?.settingsMeta || {};
+  const base = meta.gridBaseSize || 3;
+  const imageRatio =
+    typeof meta.splitImageRatio === 'number' && meta.splitImageRatio > 0
+      ? meta.splitImageRatio
+      : null;
+  const count =
+    typeof item.configuration?.count === 'number' && item.configuration.count > 0
+      ? item.configuration.count
+      : null;
+
+  const { cols, rows } = computeMosaicGridDims(base, imageRatio, count);
+
+  const st = meta.splitTransform || {};
+  const transform = {
+    zoom: typeof st.zoom === 'number' && st.zoom > 0 ? st.zoom : 1,
+    xPct: typeof st.xPct === 'number' ? st.xPct : 0,
+    yPct: typeof st.yPct === 'number' ? st.yPct : 0
+  };
+  const effect = typeof meta.currentEffect === 'string' ? meta.currentEffect : 'original';
+
   const storagePath = item.original_storage_paths?.source || '';
   const tiles = [];
-  for (let row = 0; row < gridSize; row++) {
-    for (let col = 0; col < gridSize; col++) {
-      tiles.push({ storagePath, cropRect: { col, row, gridSize } });
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      tiles.push({
+        storagePath,
+        cropRect: { col, row, cols, rows },
+        transform,
+        effect,
+        imageRatio
+      });
     }
   }
   return tiles;
@@ -192,3 +289,132 @@ export function expandMagnetsTiles(item) {
   }
   return tiles;
 }
+
+/**
+ * Returns true when any item on this packed page is a mosaic wider than
+ * the default 3-tile A4-portrait row. Used by the preview wrapper to swap
+ * to landscape dimensions so the tiles aren't clipped.
+ *
+ * @param {{ orders: Array<{ id: string }> }} page
+ * @param {Record<string, Array<any>>} itemsByOrder
+ * @returns {boolean}
+ */
+export function pageNeedsLandscape(page, itemsByOrder) {
+  if (!page || !Array.isArray(page.orders)) return false;
+  for (const order of page.orders) {
+    const items = itemsByOrder?.[order.id] || [];
+    for (const item of items) {
+      if (item.item_type !== 'mosaic') continue;
+      const meta = item.configuration?.settingsMeta || {};
+      const base = meta.gridBaseSize || 3;
+      const imageRatio =
+        typeof meta.splitImageRatio === 'number' && meta.splitImageRatio > 0
+          ? meta.splitImageRatio
+          : null;
+      const count =
+        typeof item.configuration?.count === 'number' && item.configuration.count > 0
+          ? item.configuration.count
+          : null;
+      const { cols } = computeMosaicGridDims(base, imageRatio, count);
+      if (cols > 3) return true;
+    }
+  }
+  return false;
+}
+
+// ── Smart Batching / Nesting Engine ──────────────────────────────────────────
+// The functions below implement a "flat batching" print pipeline:
+//   1. Flatten every visible tile (magnet or expanded mosaic cell) from ALL
+//      selected orders into a single array — each tile carries its source
+//      order_number so the operator can sort post-cut.
+//   2. Chunk that array into fixed-size pages (ITEMS_PER_PAGE).
+//   3. Each printed tile is a hard 50mm × 50mm physical block with a tiny
+//      "#Order-NNN" label in the bleed area for post-print sorting.
+//
+// This differs from packOrdersIntoPages (which keeps each order grouped with
+// its own header). Use this engine when you want to maximize paper utilization
+// across many small orders.
+
+/**
+ * Tiles per page on the standard A4-portrait sheet.
+ * Layout math: usable 190×277mm; tile+gap = 55mm; 3 cols × 5 rows = 15.
+ * If you change page size, recompute and update this constant.
+ */
+export const ITEMS_PER_PAGE = 15;
+export const BATCH_COLS = 3;
+
+/**
+ * Flatten every visible tile across the supplied orders into one array.
+ * Each entry carries enough metadata for PrintBatchPage to render it at
+ * pixel-perfect 50mm × 50mm with the correct crop / effect, plus the
+ * `orderNumber` used for the cut-label.
+ *
+ * @param {Array<{id: string, order_number: number|string}>} orders
+ * @param {Record<string, Array<any>>} itemsByOrder
+ * @returns {Array<{
+ *   kind: 'magnet' | 'mosaic',
+ *   orderId: string,
+ *   orderNumber: number | string,
+ *   storagePath: string,
+ *   meta?: { xPct: number, yPct: number, zoom: number, activeEffectId: string },
+ *   cropRect?: { col: number, row: number, cols: number, rows: number },
+ *   transform?: { zoom: number, xPct: number, yPct: number },
+ *   effect?: string,
+ *   imageRatio?: number | null
+ * }>}
+ */
+export function flattenTilesForBatch(orders, itemsByOrder) {
+  const out = [];
+  if (!Array.isArray(orders)) return out;
+  for (const order of orders) {
+    const items = itemsByOrder?.[order.id] || [];
+    for (const item of items) {
+      if (item.item_type === 'mosaic') {
+        const mosaicTiles = expandMosaicToTiles(item);
+        for (const t of mosaicTiles) {
+          out.push({
+            kind: 'mosaic',
+            orderId: order.id,
+            orderNumber: order.order_number,
+            storagePath: t.storagePath,
+            cropRect: t.cropRect,
+            transform: t.transform,
+            effect: t.effect,
+            imageRatio: t.imageRatio
+          });
+        }
+      } else {
+        const magnetTiles = expandMagnetsTiles(item);
+        for (const t of magnetTiles) {
+          out.push({
+            kind: 'magnet',
+            orderId: order.id,
+            orderNumber: order.order_number,
+            storagePath: t.storagePath,
+            meta: t.meta
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Chunk a flat tile array into pages of `perPage` tiles each.
+ *
+ * @template T
+ * @param {T[]} tiles
+ * @param {number} [perPage]
+ * @returns {Array<{ tiles: T[] }>}
+ */
+export function chunkTilesIntoPages(tiles, perPage = ITEMS_PER_PAGE) {
+  if (!Array.isArray(tiles) || tiles.length === 0) return [];
+  const size = Math.max(1, Math.floor(perPage));
+  const pages = [];
+  for (let i = 0; i < tiles.length; i += size) {
+    pages.push({ tiles: tiles.slice(i, i + size) });
+  }
+  return pages;
+}
+

@@ -787,12 +787,7 @@
     .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
     .center-loader { position: absolute; z-index: 30; }
-    /* Mobile-first dock: never produce horizontal scroll (cursorrules Law B).
-       The toolbar in the editor only carries 4 small actions + 2 dividers, so
-       wrapping is fine on the narrowest viewport. width:max-content was the
-       previous trick, but combined with overflow-x:auto it could still scroll
-       horizontally on tiny screens (≤320 px). With wrapping + a hard width cap
-       there's no horizontal overflow possible. */
+    /* Same single-row Glass Dock as `app.css` (קולקציה / פסיפס) — עקביות מובייל */
     .glass-dock {
         position: fixed;
         bottom: calc(12px + env(safe-area-inset-bottom, 0px) + var(--vv-bottom-chrome, 0px));
@@ -800,16 +795,19 @@
         transform: translateX(-50%);
         z-index: 1000;
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         align-items: center;
         justify-content: center;
-        column-gap: 12px;
-        row-gap: 8px;
+        gap: 10px 12px;
         padding: 10px 16px;
-        border-radius: 26px;
-        width: auto;
+        border-radius: 50px;
+        width: max-content;
         max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-        overflow: hidden;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
@@ -817,7 +815,18 @@
         transition: opacity 0.3s;
         box-sizing: border-box;
     }
+    .glass-dock::-webkit-scrollbar {
+        display: none;
+    }
     .glass-dock .dock-btn-text { flex-shrink: 0; }
+
+    @media (max-width: 768px) {
+        .glass-dock {
+            padding: 8px 12px;
+            gap: 6px 8px;
+            max-width: calc(100vw - 12px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+        }
+    }
     .dock-btn-text { background: none; border: none; font-weight: 700; color: #333; cursor: pointer; }
     .dock-divider { width: 1px; height: 20px; background: #ccc; }
     .dock-btn-circle { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: none; cursor: pointer; }

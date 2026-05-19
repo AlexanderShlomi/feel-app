@@ -25,7 +25,6 @@ This file is the **master "constitution"** for FEEL. Any change must preserve th
 - **Absolute prohibition:** do not send **Base64 inside JSON** to the backend/RPCs.
   - Order creation payloads must contain **metadata only**; images go to **Storage**.
 - Heavy image work must run off the main thread when possible:
-  - Prefer **Web Worker** (`static/effects.worker.js`) for expensive pixel operations.
   - Keep main thread focused on transforms (CSS) and responsive interaction/scroll.
 
 ### Law D — Security & Authority (Pricing/Payment)
@@ -72,3 +71,27 @@ This file is the **master "constitution"** for FEEL. Any change must preserve th
 ## 6) Development Workflow
 - Before adding new code, search for existing store/utilities already solving the problem.
 - Any change touching editor/crop/thumbnail/cart/checkout must include at least one automated baseline check (Playwright smoke).
+## 7) Backend & API Resilience (Stability Lock)
+
+### 7.1 Idempotency & Transactions
+- All state-mutating RPCs (e.g., `create_complete_order`) MUST be idempotent.
+- Always use and enforce the client-provided UUID (`p_order_id`) as the primary key. This guarantees that double-clicks or automated network retries will safely fail or update, rather than creating duplicate orders.
+
+### 7.2 Security & Validation
+- Enforce strict data boundaries inside Postgres RPCs and Edge Functions.
+- Apply explicit `length` limits to all text inputs (e.g., names, addresses, notes) to prevent payload abuse or memory exhaustion.
+- Always sanitize inputs and rely on parameterized queries/JSONB extraction to prevent injection attacks.
+
+### 7.3 Network & Retry Logic (Exponential Backoff)
+- All critical server requests (RPCs, fetches) must be routed through a centralized wrapper (e.g., `src/lib/utils/api.js`).
+- Implement Exponential Backoff retry logic for Network Errors or 5xx server errors (Max 3 retries: wait 1s, 2s, 4s).
+- **CRITICAL:** DO NOT retry on authentication or permission errors (401, 403) or bad requests (400).
+
+### 7.4 Generic Errors (Zero Schema Leaking)
+- **Never** expose raw database errors, table names, column names, or stack traces to the client UI.
+- In the `catch` block of the Checkout (and similar flows), intercept the error and display a calming, generic Hebrew fallback message.
+- Expected fallback text: "אופס, משהו השתבש בתקשורת. אנחנו שומרים את העבודה שלך, נסה שוב בעוד רגע."
+
+### 7.5 Server-Side Logging
+- Log all transaction failures and Edge Function exceptions using `console.error`.
+- Ensure logs include structured metadata (e.g., `order_id`, `user_id`, `error_code`) to allow immediate tracing in the Supabase Dashboard, without exposing sensitive PII.
