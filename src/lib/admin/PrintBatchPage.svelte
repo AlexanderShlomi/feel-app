@@ -52,7 +52,11 @@
   const pct = (v) => (v / TILE_PX) * 100;
 
   function getMagnetStyle(meta, imgNatW, imgNatH) {
-    if (!imgNatW || !imgNatH) return '';
+    // See PrintPage.svelte — hide the tile until natural dimensions are known
+    // so the admin doesn't see an unscaled image leaking onto the sheet while
+    // the signed URL is still downloading. on:load overrides img.style and
+    // therefore clears `visibility:hidden`.
+    if (!imgNatW || !imgNatH) return 'visibility:hidden;';
     const { baseW, baseH } = computeCoverBaseSize(imgNatW, imgNatH, TILE_PX);
     const zoom = meta.zoom || 1;
     const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, TILE_PX, zoom);
@@ -77,16 +81,9 @@
     } else if (imgNatW && imgNatH) {
       imageRatio = imgNatW / imgNatH;
     } else {
-      const fallbackW = TILE_PX * cols;
-      const fallbackH = TILE_PX * rows;
-      const offsetX = -(col * TILE_PX);
-      const offsetY = -(row * TILE_PX);
-      const filter = getCssFilter(effect);
-      return (
-        `width:${pct(fallbackW)}%;height:${pct(fallbackH)}%;` +
-        `position:absolute;left:${pct(offsetX)}%;top:${pct(offsetY)}%;` +
-        `max-width:none;max-height:none;filter:${filter};`
-      );
+      // No imageRatio in meta AND image not loaded yet — hide the tile until
+      // on:load fires; otherwise the admin sees an unscaled/uncropped flash.
+      return 'visibility:hidden;';
     }
 
     const totalW = cols * TILE_PX;
@@ -138,7 +135,18 @@
         positioned-anchored to .batch-cell.
       -->
       <div class="batch-cell">
-        <span class="cut-label">#Order-{tile.orderNumber}</span>
+        <!--
+          Per-tile cut-label. For magnets: "#Order-NN" is enough \u2014 sort order.
+          For mosaic cells: append the (col,row) coordinates so the customer
+          can reassemble the puzzle on their fridge after the magnets are cut
+          and shipped (we no longer preserve the mosaic grid on the printed
+          sheet \u2014 tiles are nested for paper efficiency).
+        -->
+        {#if tile.kind === 'mosaic' && tile.cropRect}
+          <span class="cut-label">#{tile.orderNumber} \u2022 {tile.cropRect.col + 1}/{tile.cropRect.cols},{tile.cropRect.row + 1}/{tile.cropRect.rows}</span>
+        {:else}
+          <span class="cut-label">#Order-{tile.orderNumber}</span>
+        {/if}
         <div class="print-tile">
         {#if tile.kind === 'magnet' && url}
           <img

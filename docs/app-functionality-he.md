@@ -8,7 +8,7 @@
 - **אחסון מקומי:** IndexedDB (`FeelAppDB`, חנות `keyval`) דרך `src/lib/utils/idb.js`  
 - **ענן:** Supabase (Auth, Postgres, RPC) — משתני סביבה `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`  
 - **ולידציה:** Zod (`src/lib/validation/`)  
-- **עיבוד תמונה כבד:** Web Worker ב־`static/effects.worker.js`
+- **עיבוד תמונה:** CSS Filters בלבד (הוסר Worker pipeline); קובץ `static/effects.worker.js` קיים כ-legacy בלבד
 
 ---
 
@@ -139,6 +139,7 @@
 - משטח הקולקציה, ה־`FileUploader`, ה־Dock והפאנלים חיים ב־**`src/routes/uploader/+layout.svelte`** ו־**לא עוברים unmount** במעבר ל־`/uploader/edit/[magnetId]`. המשטח מוסתר ב־`display: none` בזמן עריכת מגנט בודד, כדי לשמור על טעינת תמונות מקורית (Original Blobs) ועל פענוח בזיכרון ללא הבהוב בחזרה לקולקציה.
 - **`src/routes/uploader/+page.svelte`** ריק במכוון — התוכן נטען מה־layout. עמוד העורך (`edit/[magnetId]/+page.svelte`) מוצג ב־`<slot />` של אותו layout.
 - **שחזור גלילה:** חזרה מ־`/uploader/edit/...` ל־`/uploader` משחזרת את מיקום הגלילה דרך `afterNavigate` + `sessionStorage` (מפתח `feel_uploader_scroll_v1`).
+- **שער פעילות גלילה (`uploaderScrollActive`):** במובייל, store בוליאני שעוקב אחרי גלילת הקונטיינר **וגם** תנועת `visualViewport` (שינוי גובה address bar). שניהם נחשבים "גלילה" למניעת blank בהחלפת blob URLs תוך כדי תנועה. טיימר משותף `SCROLL_IDLE_MS = 460ms` — רק אחרי idle מתבצע flush של תור ההחלפות. פונקציית עזר `waitForUploaderScrollIdle()` משמשת לפני פעולות כבדות (autosave).
 - **שימור סידור הגריד אחרי עריכה (Critical):** כשהמסך עובר ל־`display:none`, ה-`ResizeObserver` המאזין ל־`canvas-container` מקבל `contentRect.width = 0`. ב-`+layout.svelte` יש הגנה מפורשת — `if (newWidth <= 0) return;` בתוך ה-callback, וכן `if (surfaceWidth <= 0) return;` ב־`handleReflow` ו־`fillEmptySlots` — שמונעת ריפלו במצב מוסתר. ללא הגנה זו, `numCols` היה מחושב כ-1, וכל המגנטים היו נדחסים לעמודה אחת — ואז בחזרה מהעריכה הסידור המותאם של המשתמש היה נמחק.
 - **מטמון Blob להידרציה:** ב־`src/lib/utils/storage.js`, `base64ToBlobUrl` משתמש במפה גלובלית (מפתח: מחרוזת `data:`) כדי שלא ייווצרו `createObjectURL` כפולים לאותו מקור בעת טעינת Workspace מה־IndexedDB. המפה מתנקה ב־`resetSystem` (יחד עם `clearDataUrlBlobUrlCache`).
 - **תמונות:** רכיבי `<img>` רלוונטיים משתמשים ב־`decoding="async"` ו־`loading="eager"` במסלולי העורך/קולקציה כדי להפחית חסימת Main Thread ב־decode; על אריחי המגנט/פסיפס הוחלו `content-visibility: auto` ו־`contain-intrinsic-size` לסיוע בגלילה.
@@ -183,9 +184,23 @@
 - בפסיפס בלבד נוספים `--bg-w`/`--bg-h`/`--bg-x`/`--bg-y` לרקע שנוסע כתמונה אחת בין התאים.
 - **Cover** כברירת מחדל כשאין עריכה ידנית; יישור Portrait לרוב למעלה, Landscape למרכז.
 
+#### רינדור דו-שכבתי במובייל (Two-Tier Rendering)
+
+- **בדסקטופ:** ה-`<img>` משתמש ישירות ב-Blob המקורי (`originalSrc`).
+- **במובייל:** בטעינה ראשונית `src = null` (Skeleton מוצג); לאחר שה-preview מוכן, מופעלת `swapDisplaySrcWhenReady()` שמחליפה את המקור **רק אחרי `decode()` מלא** — מניעת הבהוב/blank frames ב-iOS Safari.
+- **שער גלילה (`uploaderScrollActive`):** החלפות מקור תמונה **נדחות** בזמן גלילה פעילה (כולל שינויי כתובת-bar ב-viewport). רק כשה-scroll idle (>460ms ללא תנועה) מתבצע flush של תור ההחלפות. מונע ריצוד/blank בזמן גלילה מהירה.
+
+#### מדידת Frame סינכרונית בטעינה ראשונה
+
+- אקשן `bindFrameMeasure(node, active)`: במעבר ראשון מבצע `measureSync()` — לוכד `clientWidth` **סינכרונית** לפני ש-`ResizeObserver` מספיק לשלוח callback.
+- קריטי לגריד מובייל (100% של תא ≈ 50vw - gutters) שבו הקבוע `size` מה-store לא תואם את הרוחב ב-CSS בפועל.
+- מונע הבהוב: ללא מדידה סינכרונית, ה-crop מחושב בפריים הראשון לפי גודל דסקטופ, ואז מתעדכן ב-RAF — גורם ל-flash.
+- שימוש ריאקטיבי: `frameSize = $isMobile && !isSplitPart && measuredFrame > 0 ? measuredFrame : size`.
+
 ### פעולות על תמונה (דסקטופ — hover)
 
 - **מחיקה** ו**עריכה** מתגלות בהובר על המגנט (כפתורים בפינות העליונות של ה-overlay).
+- **הפרדת גרירה מלחיצה:** `dragstart` נחסם **רק** על `.surface-el` (לא window-wide) כדי לא לפגוע בבחירת טקסט. אירוע `click` **מבוטל** אם זוהתה גרירה (`dx²+dy² > threshold`) — מונע מצב שגרירת מגנט פותחת את מסך העריכה (fix קריטי לדסקטופ).
 - **גרירה חופשית על הגריד עם snap:** המגנט נגרר עם העכבר, מתעדכן בזמן אמת, ובשחרור מתבצעת הצמדה לסלוט הקרוב ביותר ב-Grid (`findBestTargetSlot`).
 - **גבולות גרירה (`containerBounds`):** הגרירה מוגבלת אופקית ל-`[0, surfaceWidth - itemFullSize]` — לא ניתן לגרור מעבר לקצה הימני/שמאלי של המשטח, כדי שלא תיווצר גלילה אופקית רגעית (Law B). אנכית — מאפשרים גרירה ללא חסם עליון, כדי לאפשר הרחבת המשטח דינמית.
 - **הצמדת התנגשות (Push-Forward):** בעת drop על סלוט שכבר תפוס ע"י מגנט אחר — ה-`reflowWithDraggedMagnet` שם את המגנט הנגרר באינדקס reading-order של היעד ודוחף את כל היתר ב-1 קדימה. כל המגנטים מסודרים מחדש רציף משמאל-לימין, מלמעלה-למטה — בלי חורים ובלי חפיפות. אם הסלוט פנוי, נשמרת ההתנהגות של snap-רגיל בלי לגעת בשאר המגנטים (חופש לסידור עם רווחים, "כמו מגנטים על מקרר").
@@ -219,6 +234,20 @@
 - **שמירה יחסית:** אחוזים ב־store לעומת פיקסלים קבועים.
 - **אפקטים:** מקורי / Silver / Noir / Vivid / Dramatic — עיבוד ב־Worker כשמיישמים פילטר על פיקסלים.
 - **Glass Dock:** איפוס, אפקטים, מחיקה, שמור (חזרה ל־`/uploader`).
+  - **Wrap במובייל צר:** ב-viewport צר, ה-Dock משתמש ב-`flex-wrap: nowrap` עם גלילה אופקית momentum (`-webkit-overflow-scrolling: touch`), padding/gap מצטמצמים ב-`@media (max-width: 768px)`, ו-`max-width` מכבד safe-area insets (`calc(100vw - 12px - env(safe-area-inset-left/right))`). כפתורים ב-`flex-shrink: 0` — לא מתכווצים.
+
+#### תמונה מקורית vs. Preview בזמן אינטראקציה
+
+- **Idle:** העורך מציג את ה-**Blob המקורי** (`displaySrc`) — איכות מלאה.
+- **בזמן Pan/Zoom:** מוחלף ל-`previewSrc` (downscale עד max 1600px, JPEG 92%) לביצועי רינדור חלקים.
+- נוסחה: `resolvedEffectSrc = (isInteracting && previewSrc) ? previewSrc : displaySrc`.
+- **דסקטופ בלבד:** במובייל, יצירת preview מדולגת כדי לא להכפיל עומס על תמונות גדולות.
+
+#### שמירה מותנית בגאומטריה מקורית (Geometry Gate)
+
+- `saveAndClose()` ממתין ל-`baseGeomReady` — Promise שמתמלא כש-`decodeNaturalSize(displaySrc)` מחזיר את מידות המקור האמיתיות.
+- אם `baseNaturalW`/`baseNaturalH` עדיין לא נטענו (למשל תמונה כבדה) — השמירה חוסמת עד שהם זמינים.
+- **מונע ratio drift:** ללא הגנה זו, חישוב ה-crop עלול להתבסס על מימדי ה-preview (1600px max) ולייצר `xPct`/`yPct` בעלי סטייה קלה מהמקור.
 
 **דרישת דיוק:** התוצאה אחרי Save חייבת להיות זהה ויזואלית למצב בעורך (פריים/זום/מיקום/אפקט), כולל בשחזור מה־Workspace, בסל וב־thumbnails להזמנה.
 
@@ -499,12 +528,17 @@
 
 **הערה:** הסל (`cart`) נשמר **מיד** בלי debounce (subscribe ישיר ל־`setItem`), כי כמות האירועים נמוכה יחסית וההשלכות כספיות דורשות עקביות.
 
-### 5. מנוע אפקטים (Worker)
+### 5. מנוע אפקטים (CSS Filters — ללא Worker)
 
-- קובץ: `static/effects.worker.js`.
-- **ב־Worker:** מניפולציה על פיקסלים, יצירת Blob מעובד.
+- **ארכיטקטורה נוכחית:** ה-Worker pipeline הישן (שייצר Blob URLs מעובדים לכל אפקט) **הוסר לחלוטין**. כל האפקטים מיושמים כעת ב-CSS בלבד דרך `getCssFilter()` ב-`stores.js`.
+- **הגדרות פילטרים:**
+  - `silver`: `grayscale(1) contrast(1.08) brightness(1.05)`
+  - `noir`: `grayscale(1) contrast(1.35) brightness(0.95)`
+  - `vivid`: `saturate(1.35) contrast(1.12) brightness(1.03)`
+  - `dramatic`: `saturate(1.18) contrast(1.22) brightness(0.98)`
+- רק ה-Blob המקורי (Original) נשמר בקליינט; אפקטים מוחלים ב-render time כ-CSS `filter`.
+- קובץ `static/effects.worker.js` קיים כ-legacy fallback אך **אינו בשימוש** בזרימה הנוכחית.
 - **ב־Main thread:** חיתוך, זום וגריד ויזואלי — Transforms ו־CSS לביצועים.
-- ב־`stores.js`, `getFilterStyle` מחזיר `filter: url(#filter-...)` לפי מזהה אפקט (SVG filters בממשק).
 
 ### 6. רכיבים משלימים
 
@@ -530,7 +564,7 @@
 - **Admin RPCs (security definer, בודקים `admin_users`):** `admin_get_orders(limit, offset, status)` — כל ההזמנות ללא RLS; `admin_get_order_detail(order_id)` — הזמנה מלאה + פריטים; `admin_update_order_status(order_id, new_status)` — מעברי סטטוס חוקיים בלבד (paid→processing→shipped→delivered, כל שלב→cancelled); **`admin_get_print_queue()`** — הזמנות paid/processing עם ספירת מגנטים גלויים; **`admin_get_print_originals(order_ids[])`** — metadata + storage paths לכל הפריטים של הזמנות נבחרות; **`admin_mark_orders_printed(order_ids[])`** — stamps `printed_at`, transitions paid→processing.
 - **`orders.printed_at`:** `timestamptz`, nullable — חותמת זמן הדפסה פיזית דרך מסך `/admin/print`. NULL = טרם הודפס.
 - **`/orders` perf:** RPC `my_orders_dashboard(limit, offset)` מאחד הזמנות + שורות (בלי `configuration` הכבד) באגרגציה אחת, עם אינדקסים מותאמים על `(user_id, placed_at desc)` ו־`(order_id, created_at)`.
-- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, `20260507000100_create_complete_order_v2_with_order_number.sql`, `20260507000200_patch_order_item_thumbnails_batch.sql`, `20260507000300_create_complete_order_v3_hardened.sql`, `20260508000400_feel_sanitize_text_no_chr0.sql`, **`20260515000100_order_item_original_paths.sql`**, **`20260515000200_admin_users.sql`**, **`20260518000100_admin_print_pipeline.sql`**.
+- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, `20260507000100_create_complete_order_v2_with_order_number.sql`, `20260507000200_patch_order_item_thumbnails_batch.sql`, `20260507000300_create_complete_order_v3_hardened.sql`, `20260508000400_feel_sanitize_text_no_chr0.sql`, `20260515000100_order_item_original_paths.sql`, `20260515000200_admin_users.sql`, `20260518000100_admin_print_pipeline.sql`, **`20260520000100_admin_print_queue_real_mosaic_count.sql`**.
 
 ---
 
@@ -588,10 +622,38 @@
 | **Admin — פרטי הזמנה** | `src/routes/admin/orders/[orderId]/+page.svelte` |
 | **Admin — הדפסת מגנטים** | `src/routes/admin/print/+page.svelte`, `src/lib/admin/printPacking.js`, `src/lib/admin/PrintPage.svelte` |
 | **מייל משלוח (Edge Function)** | `supabase/functions/send-shipping-notification/index.ts` |
+| **בדיקות אוטומטיות** | `tests/core-flow.spec.js`, `tests/photo-collection-sprint.spec.js`, `tests/mosaic-mobile-no-horizontal-scroll.spec.js` |
 
 ---
 
 *מסמך זה נועד לצוות פיתוח ומוצר; עדכנו אותו כשמוסיפים נתיבים, חבילות מחיר, שינוי בזרימת התשלום או בשדות הזמנה (למשל `order_number`, thumbnails).*
+
+---
+
+## בדיקות אוטומטיות (Playwright)
+
+### תשתית
+
+- **Playwright config:** `playwright.config.js` — פרופילי Chromium mobile (Pixel 5) + desktop.
+- הרצה: `npx playwright test`.
+
+### סוויטות
+
+| קובץ | מכסה |
+|------|-------|
+| `tests/core-flow.spec.js` | זרימה מקצה לקצה: בית → העלאה → עגלה → צ'ק-אאוט |
+| `tests/mosaic-mobile-no-horizontal-scroll.spec.js` | ולידציה שאין גלילה אופקית בפסיפס במובייל |
+| `tests/photo-collection-sprint.spec.js` | **רגרסיה ספרינט:** גריד קולקציה + עורך מגנט בודד |
+
+### `photo-collection-sprint.spec.js` — פירוט
+
+סוויטת רגרסיה שנוספה בספרינט הייצוב (מאי 2026), מכסה:
+- רינדור אריח עם תשתית Skeleton (מצב `src=null` → swap)
+- מצב דו-שכבתי: `originalSrc` קיים, `src` מתחלף
+- Round-trip של transforms: `xPct`/`yPct`/`zoom` נשמרים ומשוחזרים בדיוק
+- יישום משתני CSS נכון לפי crop
+- החלפת אפקט ללא איפוס transform
+- פרופיל מובייל (Pixel 5) כברירת מחדל
 
 ---
 
@@ -669,6 +731,15 @@ INSERT INTO admin_users (user_id) VALUES ('<your-auth-uid>');
   - `expandMosaicToTiles` — מחלק את התמונה ל-`cols × rows` משבצות (לא בהכרח ריבוע) ומחזיר לכל אריח `{storagePath, cropRect:{col,row,cols,rows}, transform:{zoom,xPct,yPct}, effect, imageRatio}` כדי שצינור ההדפסה ישחזר בדיוק את ה-crop, ה-zoom והאפקט שהמשתמש בחר (Law A).
   - `expandMagnetsTiles` — מחזיר מגנטים גלויים בלבד (`hidden=true` מדולגים) עם המטא המלא של כל מגנט (`xPct/yPct/zoom/activeEffectId`) מתוך `configuration.magnetsMeta`.
   - `pageNeedsLandscape(page, itemsByOrder)` — מחזיר `true` אם איזשהו פסיפס בדף הוא `cols > 3` (כלומר רחב מרשת A4-פורטרט). משמש גם את `PrintPage.svelte` (להחלפת אוריינטציית הקלף) וגם את ה-UI ב-`/admin/print` (להצגת התראת "הדפס ב-Landscape").
+- **DPI-Independent Crop Math:**
+  - קבוע `TILE_PX = 591` (= 50mm × 300dpi) — גודל רינדור לכל אריח בדפוס.
+  - אלגוריתם הרינדור משקף בדיוק את החישוב בעורך:
+    1. Cover-fit תמונה על רשת `cols·TILE_PX × rows·TILE_PX` לפי `imageRatio`.
+    2. הכפלה ב-zoom של המשתמש.
+    3. הזזה לפי `xPct·maxX / yPct·maxY` (clamp ל-`[-1..1]`).
+    4. מיקום חלון אריח: `startX - col·TILE_PX`, `startY - row·TILE_PX`.
+    5. CSS filter לפי האפקט שנבחר.
+  - **אין תלות ב-DPI של המסך** — גודל הפלט קבוע בפיקסלים מותאמי הדפסה.
 - **טעינת מקורות:** RPC `admin_get_print_originals(order_ids[])` — מחזיר metadata + `original_storage_paths`; הלקוח יוצר signed URLs (תוקף שעה) לבאקט `order-originals`.
 - **תצוגה מקדימה:** כל עמוד מוצג כקלף A4 בסקייל (~67%); כפתור "טען תצוגה" טוען מקורות ומרנדר.
 - **רכיב עמוד (`src/lib/admin/PrintPage.svelte`):**

@@ -6,9 +6,15 @@
 //   * Errors are logged to the console but silently swallowed.
 //   * Safe to retry: Storage upsert=true, RPC uses jsonb || merge.
 //
-// Storage paths:
-//   magnets_pack: {userId}/{orderId}/{itemId}/{magnetId}.{ext}
-//   mosaic:       {userId}/{orderId}/{itemId}/source.{ext}
+// Storage paths (human-readable for admin operations; userId stays as the
+// root segment so existing Supabase Storage RLS policies — which key off
+// auth.uid() being the first path component — keep working unchanged):
+//   magnets_pack: {userId}/Order-{orderNumber}/magnets_pack/{magnetId}.{ext}
+//   mosaic:       {userId}/Order-{orderNumber}/mosaic/source.{ext}
+//   gift:         {userId}/Order-{orderNumber}/gift/gift_source.{ext}
+//
+// If orderNumber is missing for any reason we fall back to the orderId UUID
+// so uploads never silently drop into a bucket-wide collision path.
 //
 // Full resolution, no resizing — originals are used for physical printing.
 
@@ -57,19 +63,27 @@ function extFromBlob(blob) {
 
 /**
  * Upload original images for a single cart item to Storage.
- * Returns a paths map { [magnetId | 'source']: storageObjectPath } or null on failure.
+ * Returns a paths map { [magnetId | 'source' | 'gift']: storageObjectPath } or null on failure.
  *
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string} userId
  * @param {string} orderId
+ * @param {string | number | null | undefined} orderNumber  — human-readable order # (preferred for path)
  * @param {string} itemId
  * @param {object} cartItem  — single item from cart (cartSnapshot[i])
  * @returns {Promise<Record<string, string> | null>}
  */
-async function uploadItemOriginals(supabase, userId, orderId, itemId, cartItem) {
+async function uploadItemOriginals(supabase, userId, orderId, orderNumber, itemId, cartItem) {
     const paths = /** @type {Record<string, string>} */ ({});
     const type = cartItem?.type;
     const itemData = cartItem?.data;
+
+    // Human-readable order segment, with a hard fallback to the UUID so we
+    // never write to an ambiguous bucket-wide path if order_number is missing.
+    const orderSegment =
+        orderNumber !== null && orderNumber !== undefined && String(orderNumber).trim() !== ''
+            ? `Order-${orderNumber}`
+            : orderId;
 
     if (type === 'magnets_pack') {
         const magnets = itemData?.magnets;
@@ -82,7 +96,7 @@ async function uploadItemOriginals(supabase, userId, orderId, itemId, cartItem) 
                 const blob = await blobFromSrc(src);
                 if (!blob || blob.size === 0) return;
                 const ext = extFromBlob(blob);
-                const path = `${userId}/${orderId}/${itemId}/${m.id}.${ext}`;
+                const path = `${userId}/${orderSegment}/magnets_pack/${m.id}.${ext}`;
                 const { error } = await supabase.storage
                     .from(BUCKET)
                     .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
@@ -102,7 +116,7 @@ async function uploadItemOriginals(supabase, userId, orderId, itemId, cartItem) 
         const blob = await blobFromSrc(src);
         if (!blob || blob.size === 0) return null;
         const ext = extFromBlob(blob);
-        const path = `${userId}/${orderId}/${itemId}/source.${ext}`;
+        const path = `${userId}/${orderSegment}/mosaic/source.${ext}`;
         const { error } = await supabase.storage
             .from(BUCKET)
             .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
@@ -114,7 +128,31 @@ async function uploadItemOriginals(supabase, userId, orderId, itemId, cartItem) 
         return Object.keys(paths).length > 0 ? paths : null;
     }
 
-    // gift and unknown types have no source image to store
+    if (type === 'gift') {
+        // Gift cart item shape (see src/lib/stores.js): the high-res source is
+        // stored on data.settings.giftImage (blob: / data:), with previewImage
+        // mirrored at the item root as a fallback.
+        const src =
+            itemData?.settings?.giftImage ??
+            cartItem?.previewImage ??
+            itemData?.giftImage ??
+            null;
+        const blob = await blobFromSrc(src);
+        if (!blob || blob.size === 0) return null;
+        const ext = extFromBlob(blob);
+        const path = `${userId}/${orderSegment}/gift/gift_source.${ext}`;
+        const { error } = await supabase.storage
+            .from(BUCKET)
+            .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true });
+        if (error) {
+            console.warn('Order original upload (gift) failed:', error.message || error);
+            return null;
+        }
+        paths['gift'] = path;
+        return paths;
+    }
+
+    // Unknown types have no source image to store
     return null;
 }
 
@@ -135,6 +173,7 @@ async function uploadItemOriginals(supabase, userId, orderId, itemId, cartItem) 
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string} userId
  * @param {string} orderId
+ * @param {string | number | null | undefined} orderNumber  — human-readable order # used for Storage path
  * @param {Array<object>} cartSnapshot  — snapshot of cart items at checkout time
  * @param {string[]} itemRowIds         — parallel array of order_items.id (from RPC)
  * @returns {Promise<{ uploaded: number; total: number }>}
@@ -143,6 +182,7 @@ export function uploadOrderOriginalsInBackground(
     supabase,
     userId,
     orderId,
+    orderNumber,
     cartSnapshot,
     itemRowIds
 ) {
@@ -165,6 +205,7 @@ export function uploadOrderOriginalsInBackground(
                         supabase,
                         userId,
                         orderId,
+                        orderNumber,
                         itemRowIds[i],
                         cartSnapshot[i]
                     )

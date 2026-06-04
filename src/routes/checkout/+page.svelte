@@ -781,6 +781,7 @@
                     supabase,
                     $user.id,
                     paymentOrderId,
+                    paymentOrderNumber,
                     cartSnapshotForUploads,
                     itemRowIdsForUploads
                 );

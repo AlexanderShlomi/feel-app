@@ -15,8 +15,18 @@
   export let itemsByOrder;
   export let signedUrls;
 
-  // Pixel size for each tile at 300dpi: 50mm = ~591px
+  // 50mm @ 300dpi = 591px — logical frame used by the crop math.
+  //
+  // CRITICAL (matches PrintBatchPage.svelte): all returned sizes/offsets are
+  // expressed as PERCENTAGES of this logical frame, never raw pixels. The
+  // parent .print-tile is sized in mm (50mm). At screen preview the browser
+  // maps 50mm → ~189px @96dpi; at print it maps 50mm → 591px @300dpi. If we
+  // returned raw pixels (e.g. 591px) the image would overflow the 189px on-
+  // screen container by 3× and the admin would see only the top-left corner
+  // — reading as the WRONG crop. Percentages keep the crop pixel-perfect at
+  // every DPI (Law A: print must match editor; preview must match print).
   const TILE_PX = 591;
+  const pct = (v) => (v / TILE_PX) * 100;
 
   // Magnets are not part of a logical grid → keep current 3-col page packing.
   const MAGNETS_DEFAULT_COLS = 3;
@@ -82,7 +92,12 @@
   );
 
   function getMagnetStyle(meta, imgNatW, imgNatH) {
-    if (!imgNatW || !imgNatH) return '';
+    // Until the image natural dimensions are known, hide the tile instead of
+    // returning '' (which left the <img> at its native size on top of the
+    // 50mm frame — visible to the admin as a wrong/uncropped tile while the
+    // signed URL was still downloading). The on:load handler overwrites
+    // img.style, which clears `visibility` automatically.
+    if (!imgNatW || !imgNatH) return 'visibility:hidden;';
     const { baseW, baseH } = computeCoverBaseSize(imgNatW, imgNatH, TILE_PX);
     const zoom = meta.zoom || 1;
     const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, TILE_PX, zoom);
@@ -92,7 +107,11 @@
     const left = (TILE_PX - scaledW) / 2 + x;
     const top = (TILE_PX - scaledH) / 2 + y;
     const filter = getCssFilter(meta.activeEffectId);
-    return `width:${scaledW}px;height:${scaledH}px;position:absolute;left:${left}px;top:${top}px;filter:${filter};`;
+    return (
+      `width:${pct(scaledW)}%;height:${pct(scaledH)}%;` +
+      `position:absolute;left:${pct(left)}%;top:${pct(top)}%;` +
+      `max-width:none;max-height:none;filter:${filter};`
+    );
   }
 
   /**
@@ -136,14 +155,10 @@
     } else if (imgNatW && imgNatH) {
       imageRatio = imgNatW / imgNatH;
     } else {
-      // No info yet — render a default cover so the tile is at least visible;
-      // onload will recompute with the natural ratio.
-      const fallbackW = TILE_PX * cols;
-      const fallbackH = TILE_PX * rows;
-      const offsetX = -(col * TILE_PX);
-      const offsetY = -(row * TILE_PX);
-      const filter = getCssFilter(effect);
-      return `width:${fallbackW}px;height:${fallbackH}px;position:absolute;left:${offsetX}px;top:${offsetY}px;filter:${filter};`;
+      // No info yet — hide the tile until on:load fires with the natural
+      // dimensions. Showing a stretched fallback here flashed the wrong crop
+      // to the admin during the few hundred ms of image download.
+      return 'visibility:hidden;';
     }
 
     const totalW = cols * TILE_PX;
@@ -179,7 +194,11 @@
     const top = startY - row * TILE_PX;
     const filter = getCssFilter(effect);
 
-    return `width:${finalW}px;height:${finalH}px;position:absolute;left:${left}px;top:${top}px;filter:${filter};`;
+    return (
+      `width:${pct(finalW)}%;height:${pct(finalH)}%;` +
+      `position:absolute;left:${pct(left)}%;top:${pct(top)}%;` +
+      `max-width:none;max-height:none;filter:${filter};`
+    );
   }
 </script>
 
@@ -319,6 +338,15 @@
 
   .tile-img {
     display: block;
+    /* max-width/max-height:none guards against any global "img{max-width:100%}"
+       reset (e.g. SvelteKit/Tailwind preflights) that would compress the
+       image back into the 50mm box and break the user-chosen crop. Without
+       this, getMagnetStyle/getMosaicStyle's percentage-based sizing larger
+       than 100% (zoom > 1, cover-fit overflow) would silently be clamped. */
+    max-width: none;
+    max-height: none;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .tile-placeholder {

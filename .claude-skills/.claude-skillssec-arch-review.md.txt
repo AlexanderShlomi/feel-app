@@ -1,0 +1,14 @@
+# Skill: Security & Architecture Review
+
+**When to use:** 
+Before finalizing any feature involving Supabase, Auth, checkout flows, or when editing RPC calls.
+
+**Instructions:**
+1. Put on your "Security Architect" hat.
+2. Review the proposed changes against `CLAUDE.md` Law D (Server Authority).
+3. Ensure absolutely NO Base64 strings are being sent in JSON payloads to RPCs.
+4. Confirm idempotency keys are used for any state-mutating database operations.
+5. Verify RLS (Row Level Security) policies on any new tables or storage buckets.
+6. Confirm Edge Functions use `WEBHOOK_SECRET` validation.
+7. Check that no raw DB errors or PII are logged to the console.
+8. Provide a short risk-assessment summary before writing the code.

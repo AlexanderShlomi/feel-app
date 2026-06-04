@@ -1,0 +1,11 @@
+# Skill: UX, UI & Performance Review
+
+**When to use:** 
+Whenever creating or modifying Svelte components, layouts, CSS, or after building a new UI component.
+
+**Instructions:**
+1. Put on your "UX/UI Expert" hat.
+2. Verify the mobile-first approach: Ensure no `100vw` causing horizontal scroll exists; use `100%` and logical properties (RTL support).
+3. Confirm tap targets are at least 44px for mobile devices.
+4. Check for layout shifts: Ensure images have lazy/eager loading correctly assigned and aspect ratios defined.
+5. Ensure the UI handles loading states gracefully (verify skeleton loaders are present for image loading, no freezing) without blocking user interaction.

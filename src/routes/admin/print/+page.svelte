@@ -1,26 +1,23 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { supabase } from '$lib/supabase.js';
-  import PrintPage from '$lib/admin/PrintPage.svelte';
   import PrintBatchPage from '$lib/admin/PrintBatchPage.svelte';
   import {
-    packOrdersIntoPages,
     suggestOptimalBatch,
-    pageNeedsLandscape,
     flattenTilesForBatch,
     chunkTilesIntoPages,
-    ITEMS_PER_PAGE,
-    USABLE_H_MM
+    ITEMS_PER_PAGE
   } from '$lib/admin/printPacking.js';
 
-  /** Batch (nesting) mode: flatten ALL tiles → fixed-size pages with
-   *  per-tile order labels. ON = maximize paper utilization (mixes orders
-   *  on the same sheet). OFF = legacy per-order layout with order headers. */
-  let batchMode = true;
-
-  /** Flat array of tiles for the current selection (batch mode only). */
-  let batchTiles = [];
-  /** Pages produced by chunkTilesIntoPages for batch mode. */
+  // ── Flat-nesting print pipeline ──────────────────────────────────────────────
+  // Every tile (whether from a mosaic OR a magnet collection) is a hard
+  // 50×50mm square — the operator cuts the printed A4 with a guillotine
+  // into uniform 50mm magnets. We flatten ALL selected-order tiles into a
+  // single array and chunk into fixed 3×5 = 15-tile A4-portrait pages for
+  // maximum paper utilization across orders. Each printed tile carries a
+  // tiny label so the operator can sort the cut pieces back to their source
+  // order, and the customer (for mosaics) can reconstruct the puzzle.
+  /** Pages produced by chunkTilesIntoPages — each holds <=15 mixed tiles. */
   let batchPages = [];
 
   let queue = [];
@@ -31,9 +28,18 @@
   let selected = {};
 
   // Preview state
-  let previewPages = [];
+  /**
+   * `previewReady`  – print-root has been mounted (so `<img>` tags exist in the
+   *                   DOM and the browser started downloading their pixels).
+   * `imagesReady`   – every `<img>` inside the print-root has fired `load` (or
+   *                   exhausted its single retry). Only then is the printed
+   *                   crop guaranteed to match the editor frame-for-frame.
+   */
   let previewReady = false;
+  let imagesReady = false;
   let loadingPreview = false;
+  /** DOM ref to the print-root so we can scan its <img> children. */
+  let printRootEl;
 
   // Data for rendering
   let itemsByOrder = {};
@@ -70,6 +76,10 @@
       selected[id] = true;
     }
     recalcLayout();
+    // Selection changed → any previously-loaded preview no longer matches the
+    // current selection. Invalidate so the user must reload before printing.
+    previewReady = false;
+    imagesReady = false;
   }
 
   function toggleOrder(id) {
@@ -81,6 +91,7 @@
     selected = selected; // trigger reactivity
     recalcLayout();
     previewReady = false;
+    imagesReady = false;
   }
 
   function selectAll() {
@@ -89,71 +100,106 @@
     selected = selected;
     recalcLayout();
     previewReady = false;
+    imagesReady = false;
   }
 
   function selectNone() {
     selected = {};
     recalcLayout();
     previewReady = false;
+    imagesReady = false;
   }
 
   function recalcLayout() {
     const selectedOrders = queue.filter(o => selected[o.id]);
-
-    if (batchMode) {
-      // Tile-count based estimate before originals are loaded. After
-      // loadPreview() resolves, recomputeBatchLayout() refines using the
-      // real items (mosaic expansion may push the count up).
-      const estimatedTiles = selectedOrders.reduce(
-        (s, o) => s + (o.visible_tile_count || 0),
-        0
-      );
-      pageCount = Math.ceil(estimatedTiles / ITEMS_PER_PAGE);
-      utilization =
-        pageCount > 0
-          ? Math.round((estimatedTiles / (pageCount * ITEMS_PER_PAGE)) * 100)
-          : 0;
-      // previewPages is only valid for legacy mode; keep it empty so the
-      // legacy renderer doesn't accidentally fire.
-      previewPages = [];
-      return;
-    }
-
-    const pages = packOrdersIntoPages(selectedOrders);
-    pageCount = pages.length;
-    previewPages = pages;
-
-    const totalUsed = pages.reduce((s, p) => s + p.usedHeight, 0);
-    const totalCapacity = pages.length * USABLE_H_MM;
-    utilization = totalCapacity > 0 ? Math.round((totalUsed / totalCapacity) * 100) : 0;
+    // Quick page-count estimate before originals are loaded. Final exact
+    // count is computed in recomputeBatchLayout() once we know how many
+    // tiles each mosaic actually expands into.
+    const estimatedTiles = selectedOrders.reduce(
+      (s, o) => s + (o.visible_tile_count || 0),
+      0
+    );
+    pageCount = Math.ceil(estimatedTiles / ITEMS_PER_PAGE);
+    utilization =
+      pageCount > 0
+        ? Math.round((estimatedTiles / (pageCount * ITEMS_PER_PAGE)) * 100)
+        : 0;
   }
 
-  /** Rebuild the flat-batch pages once originals are loaded. Uses actual
-   *  expanded tiles (mosaics → cells) instead of the visible_tile_count
-   *  estimate so the page count is exact. */
+  /**
+   * Build the exact batch pages from the loaded item data. Mosaics expand
+   * into their cols×rows individual tiles (each with its cropRect index so
+   * the customer can reconstruct the puzzle from the labels), magnets stay
+   * as-is. All tiles flow into 3×5 = 15-per-A4 pages.
+   */
   function recomputeBatchLayout() {
     const selectedOrders = queue.filter((o) => selected[o.id]);
-    batchTiles = flattenTilesForBatch(selectedOrders, itemsByOrder);
-    batchPages = chunkTilesIntoPages(batchTiles, ITEMS_PER_PAGE);
+    const tiles = flattenTilesForBatch(selectedOrders, itemsByOrder);
+    batchPages = chunkTilesIntoPages(tiles, ITEMS_PER_PAGE);
     pageCount = batchPages.length;
-    const total = batchTiles.length;
     utilization =
-      pageCount > 0 ? Math.round((total / (pageCount * ITEMS_PER_PAGE)) * 100) : 0;
+      pageCount > 0
+        ? Math.round((tiles.length / (pageCount * ITEMS_PER_PAGE)) * 100)
+        : 0;
   }
 
-  function toggleBatchMode() {
-    batchMode = !batchMode;
-    previewReady = false;
-    batchTiles = [];
-    batchPages = [];
-    recalcLayout();
+  /**
+   * Wait until every `<img>` inside `rootEl` has either fired `load` (with a
+   * valid `naturalWidth`) or exhausted a single error-retry. This is what
+   * makes "Load preview" trustworthy: before this gate, the print-root was
+   * mounted but tiles were still in transit from Supabase Storage — the user
+   * saw (and could print) the wrong crop. We also retry once on error with a
+   * cache-buster so a transient network blip doesn't force the operator to
+   * click "Load preview" repeatedly.
+   */
+  async function waitForAllImagesToSettle(rootEl) {
+    if (!rootEl) return;
+    const imgs = Array.from(rootEl.querySelectorAll('img'));
+    await Promise.all(
+      imgs.map((img) => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise((resolve) => {
+          let retried = false;
+          const cleanup = () => {
+            img.removeEventListener('load', onLoad);
+            img.removeEventListener('error', onError);
+          };
+          const onLoad = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = () => {
+            if (!retried) {
+              retried = true;
+              const src = img.getAttribute('src') || '';
+              if (src) {
+                const sep = src.includes('?') ? '&' : '?';
+                // Re-assign src to force the browser to try the download
+                // again — keeps the same signed token (still valid for 1h).
+                img.setAttribute('src', `${src}${sep}_retry=1`);
+              }
+              return;
+            }
+            cleanup();
+            resolve();
+          };
+          img.addEventListener('load', onLoad);
+          img.addEventListener('error', onError);
+        });
+      })
+    );
   }
 
   async function loadPreview() {
     const selectedIds = Object.keys(selected).filter(id => selected[id]);
     if (selectedIds.length === 0) return;
 
+    // Reset visibility/print gates up front. Without this, a previous preview
+    // remained on screen with stale signed URLs during the new fetch, and the
+    // "Print" button stayed enabled — operator could print the wrong batch.
     loadingPreview = true;
+    previewReady = false;
+    imagesReady = false;
     error = '';
 
     // Get originals data from RPC
@@ -207,13 +253,19 @@
 
     signedUrls = urls;
 
-    // Refine page count for batch mode using the actual expanded tiles.
-    if (batchMode) {
-      recomputeBatchLayout();
-    }
+    // Build exact pages from real item data.
+    recomputeBatchLayout();
 
-    // Wait for all images to be ready before enabling print
+    // Mount the print-root so <img> tags appear in the DOM and start
+    // downloading. We keep `imagesReady = false` so the root stays visually
+    // hidden (display:none) until every tile has actually loaded — display:none
+    // does NOT suppress image downloads, so this gives us a clean "swap" with
+    // no flash of half-rendered/wrong-crop tiles.
     previewReady = true;
+    await tick();
+    await waitForAllImagesToSettle(printRootEl);
+
+    imagesReady = true;
     loadingPreview = false;
   }
 
@@ -242,8 +294,7 @@
     confirmingPrint = false;
     // Reload queue to reflect changes
     previewReady = false;
-    previewPages = [];
-    batchTiles = [];
+    imagesReady = false;
     batchPages = [];
     signedUrls = {};
     itemsByOrder = {};
@@ -254,14 +305,6 @@
   $: selectedTiles = queue
     .filter(o => selected[o.id])
     .reduce((s, o) => s + (o.visible_tile_count || 0), 0);
-  /* Any page whose mosaic items are wider than 3 tiles must be printed on
-     A4 landscape (3-col portrait can't physically fit a 4×3 mosaic row).
-     Surfaces a hint to the admin so they pick the right printer setting. */
-  $: needsLandscape =
-    !batchMode &&
-    previewReady &&
-    Array.isArray(previewPages) &&
-    previewPages.some((p) => pageNeedsLandscape(p, itemsByOrder));
 </script>
 
 <svelte:head>
@@ -280,11 +323,6 @@
       <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectAll}>בחר הכל</button>
       <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectNone}>נקה</button>
     </div>
-
-    <label class="batch-toggle">
-      <input type="checkbox" checked={batchMode} on:change={toggleBatchMode} />
-      <span>איחוד הזמנות (Nesting) — {ITEMS_PER_PAGE} מגנטים/דף</span>
-    </label>
 
     {#if selectedCount > 0}
       <div class="sidebar-stats">
@@ -339,14 +377,14 @@
       <button
         class="admin-btn admin-btn--primary"
         on:click={handlePrint}
-        disabled={!previewReady}
+        disabled={!imagesReady}
       >
         🖨️ הדפס
       </button>
       <button
         class="admin-btn admin-btn--success"
         on:click={confirmPrinted}
-        disabled={!previewReady || confirmingPrint}
+        disabled={!imagesReady || confirmingPrint}
       >
         {confirmingPrint ? 'מסמן…' : '✓ אשר שההדפסה הושלמה'}
       </button>
@@ -357,54 +395,35 @@
     {/if}
 
     <div class="print-hint">
-      ⚠️ לפני הדפסה: ודא שהמדפסת מוגדרת ל-A4 ללא scaling (100%).
+      ✅ ההדפסה מוגדרת אוטומטית ל-A4 לאורך, ללא שוליים וללא scaling — לחץ הדפס.
     </div>
 
-    {#if needsLandscape}
-      <div class="print-hint print-hint--warn">
-        ↩️ הדפסה זו כוללת פסיפס רחב מ-3 אריחים בשורה — נדרשת הדפסה ב-A4 לרוחב (Landscape).
-      </div>
-    {/if}
-
-    {#if !previewReady && pageCount > 0}
+    {#if !imagesReady && pageCount > 0}
       <div class="placeholder-pages">
-        {#if batchMode}
-          {#each Array(pageCount) as _, pi}
-            <div class="page-placeholder">
-              <span>עמוד {pi + 1}</span>
-              <span class="page-orders">≤ {ITEMS_PER_PAGE} מגנטים</span>
-            </div>
-          {/each}
-        {:else}
-          {#each previewPages as page, pi}
-            <div class="page-placeholder">
-              <span>עמוד {pi + 1}</span>
-              <span class="page-orders">
-                {page.orders.map(o => `#${o.order_number}`).join(', ')}
-              </span>
-            </div>
-          {/each}
-        {/if}
+        {#each Array(pageCount) as _, pi}
+          <div class="page-placeholder">
+            <span>עמוד {pi + 1}</span>
+            <span class="page-orders">≤ {ITEMS_PER_PAGE} אריחים</span>
+          </div>
+        {/each}
       </div>
     {/if}
 
     <!-- Print root — this is what gets printed -->
-    <div class="print-root" class:print-root--hidden={!previewReady}>
+    <!--
+      bind:this lets loadPreview() scan the mounted <img> tags and await their
+      load events before flipping `imagesReady`. The `print-root--hidden` class
+      is keyed on `imagesReady` (not `previewReady`) so the tree is mounted
+      (images download) while remaining display:none until every tile is ready —
+      preventing the "flash of wrong crop" the admin was seeing.
+    -->
+    <div class="print-root" class:print-root--hidden={!imagesReady} bind:this={printRootEl}>
       {#if previewReady}
-        {#if batchMode}
-          {#each batchPages as page}
-            <div class="page-preview-wrapper">
-              <PrintBatchPage pageData={page} {signedUrls} />
-            </div>
-          {/each}
-        {:else}
-          {#each previewPages as page}
-            {@const landscape = pageNeedsLandscape(page, itemsByOrder)}
-            <div class="page-preview-wrapper" class:page-preview-wrapper--landscape={landscape}>
-              <PrintPage pageData={page} {itemsByOrder} {signedUrls} />
-            </div>
-          {/each}
-        {/if}
+        {#each batchPages as page}
+          <div class="page-preview-wrapper">
+            <PrintBatchPage pageData={page} {signedUrls} />
+          </div>
+        {/each}
       {/if}
     </div>
   </main>
@@ -443,21 +462,6 @@
     gap: 6px;
     margin-bottom: 12px;
   }
-
-  .batch-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #444;
-    background: #f5f5f5;
-    padding: 6px 8px;
-    border-radius: 4px;
-    margin-bottom: 12px;
-    cursor: pointer;
-    user-select: none;
-  }
-  .batch-toggle input { margin: 0; }
 
   .sidebar-stats {
     display: flex;
@@ -607,13 +611,6 @@
     width: 210mm;
     height: 297mm;
   }
-  /* Landscape variant — for pages that contain a mosaic wider than 3 tiles.
-     The inner .a4-page also flips dimensions (see PrintPage.svelte) so the
-     admin sees the actual sheet orientation needed at the printer. */
-  .page-preview-wrapper--landscape {
-    width: 297mm;
-    height: 210mm;
-  }
 
   .hint {
     color: #888;
@@ -652,8 +649,7 @@
     .toolbar,
     .error-msg,
     .print-hint,
-    .placeholder-pages,
-    .batch-toggle {
+    .placeholder-pages {
       display: none !important;
     }
 
@@ -697,10 +693,14 @@
     }
   }
 
-  /* Use the whole sheet. size:auto lets the user pick A4/A3/Letter at the
-     printer dialog; the inner .a4-page / .batch-page enforces 210x297mm. */
+  /* Force A4 portrait at the @page level so the browser print dialog opens
+     with the correct paper size selected and ZERO margins — the admin does
+     NOT need to fiddle with print settings. Both .batch-page (the printed
+     A4) and @page declare 210x297mm, eliminating any browser default
+     header/footer band that would otherwise shrink the usable area and
+     force scaling. */
   @page {
-    size: auto;
+    size: A4 portrait;
     margin: 0;
   }
 </style>
