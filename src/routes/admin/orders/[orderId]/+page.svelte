@@ -187,13 +187,20 @@
 
     <!-- Gift -->
     {#if order.gift_enabled}
-      <div class="section">
-        <h2 class="section-title">מתנה 🎁</h2>
+      <div class="section section--gift">
+        <h2 class="section-title">🎁 מתנה — נדרש מגנט נוסף</h2>
         <div class="info-grid">
-          {#if order.gift_message}<div class="info-row"><span class="info-label">הודעה</span><span>{order.gift_message}</span></div>{/if}
           {#if order.gift_sender_name}<div class="info-row"><span class="info-label">שולח</span><span>{order.gift_sender_name}</span></div>{/if}
           {#if order.gift_sender_phone}<div class="info-row"><span class="info-label">טלפון</span><span>{order.gift_sender_phone}</span></div>{/if}
         </div>
+      </div>
+    {/if}
+
+    <!-- Greeting / ברכה -->
+    {#if order.gift_message}
+      <div class="section section--greeting">
+        <h2 class="section-title">✉️ ברכה — נדרשת הדפסת טקסט</h2>
+        <div class="greeting-text">{order.gift_message}</div>
       </div>
     {/if}
 
@@ -202,14 +209,19 @@
       <h2 class="section-title">פריטים</h2>
       <div class="items-list">
         {#each items as item}
-          <div class="item-card">
+          <div class="item-card" class:item-card--gift={item.item_type === 'gift'}>
             {#if item.thumbnail_url}
               <img class="item-thumb" src={item.thumbnail_url} alt={item.title} loading="lazy" />
             {:else}
               <div class="item-thumb item-thumb--placeholder">📷</div>
             {/if}
             <div class="item-info">
-              <p class="item-title">{item.title ?? '—'}</p>
+              <p class="item-title">
+                {item.title ?? '—'}
+                {#if item.item_type === 'gift'}
+                  <span class="gift-item-badge">🎁 מגנט מתנה</span>
+                {/if}
+              </p>
               <p class="item-sub">{item.subtitle ?? ''}</p>
               <p class="item-meta">{configSummary(item.configuration)}</p>
             </div>
@@ -390,6 +402,49 @@
 
 
 
+
+  .section--gift {
+    border: 2px solid #ffcc80;
+    background: #fff8e1;
+  }
+
+  .section--greeting {
+    border: 2px solid #a5d6a7;
+    background: #e8f5e9;
+  }
+
+  .greeting-text {
+    font-size: 16px;
+    line-height: 1.6;
+    color: #1e1e1e;
+    background: #fff;
+    padding: 14px 18px;
+    border-radius: 8px;
+    border: 1px solid #c8e6c9;
+    white-space: pre-wrap;
+    direction: rtl;
+  }
+
+  .item-card--gift {
+    background: #fff8e1;
+    border: 1px solid #ffcc80;
+    border-radius: 8px;
+    padding: 12px;
+    margin: -4px -4px 12px;
+  }
+
+  .gift-item-badge {
+    display: inline-block;
+    background: #fff3e0;
+    color: #e65100;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid #ffcc80;
+    margin-inline-start: 8px;
+    vertical-align: middle;
+  }
 
   .admin-hint { color: #888; font-size: 14px; text-align: center; padding: 40px 0; margin: 0; }
   .admin-error { color: #e53935; font-size: 14px; padding: 12px; background: #ffeaea; border-radius: 6px; }

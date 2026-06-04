@@ -101,6 +101,8 @@
             <th>עיר</th>
             <th>פריטים</th>
             <th>סה"כ</th>
+            <th>מתנה</th>
+            <th>ברכה</th>
             <th>תאריך</th>
             <th></th>
           </tr>
@@ -118,6 +120,20 @@
               <td class="admin-cell">{o.shipping_city ?? '—'}</td>
               <td class="admin-cell admin-cell--center">{o.item_count ?? 0}</td>
               <td class="admin-cell">₪{Number(o.total_amount || 0).toLocaleString('he-IL')}</td>
+              <td class="admin-cell admin-cell--center">
+                {#if o.gift_enabled || o.has_gift_item}
+                  <span class="extra-badge extra-badge--gift" title="מתנה — מגנט נוסף">🎁</span>
+                {:else}
+                  —
+                {/if}
+              </td>
+              <td class="admin-cell admin-cell--center">
+                {#if o.gift_message}
+                  <span class="extra-badge extra-badge--greeting" title="ברכה — טקסט להדפסה">✉️</span>
+                {:else}
+                  —
+                {/if}
+              </td>
               <td class="admin-cell admin-cell--date">{formatDate(o.placed_at)}</td>
               <td class="admin-cell">
                 <a href="/admin/orders/{o.id}" class="admin-link">פרטים</a>
@@ -265,5 +281,27 @@
     padding: 12px;
     background: #ffeaea;
     border-radius: 6px;
+  }
+
+  .extra-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    margin: 1px 2px;
+    white-space: nowrap;
+  }
+
+  .extra-badge--gift {
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ffcc80;
+  }
+
+  .extra-badge--greeting {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
   }
 </style>

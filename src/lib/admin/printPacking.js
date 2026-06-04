@@ -401,6 +401,38 @@ export function flattenTilesForBatch(orders, itemsByOrder) {
 }
 
 /**
+ * Flatten ONLY magnet (collection) tiles across the supplied orders.
+ * Used by the hybrid print pipeline: mosaics are rendered in their native
+ * grid (preserving puzzle structure), magnets are packed into a flat 3×5
+ * grid for paper efficiency.
+ *
+ * @param {Array<{id: string, order_number: number|string}>} orders
+ * @param {Record<string, Array<any>>} itemsByOrder
+ * @returns {Array<{kind: 'magnet', orderId: string, orderNumber: number|string, storagePath: string, meta: any}>}
+ */
+export function flattenMagnetTilesOnly(orders, itemsByOrder) {
+  const out = [];
+  if (!Array.isArray(orders)) return out;
+  for (const order of orders) {
+    const items = itemsByOrder?.[order.id] || [];
+    for (const item of items) {
+      if (item.item_type === 'mosaic') continue;
+      const magnetTiles = expandMagnetsTiles(item);
+      for (const t of magnetTiles) {
+        out.push({
+          kind: 'magnet',
+          orderId: order.id,
+          orderNumber: order.order_number,
+          storagePath: t.storagePath,
+          meta: t.meta
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Chunk a flat tile array into pages of `perPage` tiles each.
  *
  * @template T
