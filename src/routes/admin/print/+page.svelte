@@ -9,14 +9,6 @@
     ITEMS_PER_PAGE
   } from '$lib/admin/printPacking.js';
 
-  // ── Flat-nesting print pipeline ──────────────────────────────────────────────
-  // Every tile (whether from a mosaic OR a magnet collection) is a hard
-  // 50×50mm square — the operator cuts the printed A4 with a guillotine
-  // into uniform 50mm magnets. We flatten ALL selected-order tiles into a
-  // single array and chunk into fixed 3×5 = 15-tile A4-portrait pages for
-  // maximum paper utilization across orders. Each printed tile carries a
-  // tiny label so the operator can sort the cut pieces back to their source
-  // order, and the customer (for mosaics) can reconstruct the puzzle.
   /** Pages produced by chunkTilesIntoPages — each holds <=15 mixed tiles. */
   let batchPages = [];
 
@@ -28,13 +20,6 @@
   let selected = {};
 
   // Preview state
-  /**
-   * `previewReady`  – print-root has been mounted (so `<img>` tags exist in the
-   *                   DOM and the browser started downloading their pixels).
-   * `imagesReady`   – every `<img>` inside the print-root has fired `load` (or
-   *                   exhausted its single retry). Only then is the printed
-   *                   crop guaranteed to match the editor frame-for-frame.
-   */
   let previewReady = false;
   let imagesReady = false;
   let loadingPreview = false;
@@ -43,11 +28,16 @@
 
   // Data for rendering
   let itemsByOrder = {};
+  /** Per-order production job overrides (gift crop, gift image path). */
+  let jobsByOrder = {};
   let signedUrls = {};
 
   // Stats
   let utilization = 0;
   let pageCount = 0;
+
+  // Debounce handle for auto-loading preview on selection change
+  let previewDebounceTimer = null;
 
   onMount(loadQueue);
 
@@ -63,7 +53,6 @@
     queue = Array.isArray(data) ? data : [];
     loading = false;
 
-    // Auto-suggest
     if (queue.length > 0) {
       applySuggestion();
     }
@@ -76,10 +65,7 @@
       selected[id] = true;
     }
     recalcLayout();
-    // Selection changed → any previously-loaded preview no longer matches the
-    // current selection. Invalidate so the user must reload before printing.
-    previewReady = false;
-    imagesReady = false;
+    schedulePreviewLoad();
   }
 
   function toggleOrder(id) {
@@ -90,31 +76,11 @@
     }
     selected = selected; // trigger reactivity
     recalcLayout();
-    previewReady = false;
-    imagesReady = false;
-  }
-
-  function selectAll() {
-    selected = {};
-    for (const o of queue) selected[o.id] = true;
-    selected = selected;
-    recalcLayout();
-    previewReady = false;
-    imagesReady = false;
-  }
-
-  function selectNone() {
-    selected = {};
-    recalcLayout();
-    previewReady = false;
-    imagesReady = false;
+    schedulePreviewLoad();
   }
 
   function recalcLayout() {
     const selectedOrders = queue.filter(o => selected[o.id]);
-    // Quick page-count estimate before originals are loaded. Final exact
-    // count is computed in recomputeBatchLayout() once we know how many
-    // tiles each mosaic actually expands into.
     const estimatedTiles = selectedOrders.reduce(
       (s, o) => s + (o.visible_tile_count || 0),
       0
@@ -124,17 +90,20 @@
       pageCount > 0
         ? Math.round((estimatedTiles / (pageCount * ITEMS_PER_PAGE)) * 100)
         : 0;
+    // Invalidate stale preview whenever selection changes.
+    previewReady = false;
+    imagesReady = false;
   }
 
-  /**
-   * Build the exact batch pages from the loaded item data. Mosaics expand
-   * into their cols×rows individual tiles (each with its cropRect index so
-   * the customer can reconstruct the puzzle from the labels), magnets stay
-   * as-is. All tiles flow into 3×5 = 15-per-A4 pages.
-   */
+  /** Debounce preview load so rapid toggles don't fire multiple RPCs. */
+  function schedulePreviewLoad() {
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(loadPreview, 300);
+  }
+
   function recomputeBatchLayout() {
     const selectedOrders = queue.filter((o) => selected[o.id]);
-    const tiles = flattenTilesForBatch(selectedOrders, itemsByOrder);
+    const tiles = flattenTilesForBatch(selectedOrders, itemsByOrder, jobsByOrder);
     batchPages = chunkTilesIntoPages(tiles, ITEMS_PER_PAGE);
     pageCount = batchPages.length;
     utilization =
@@ -143,15 +112,6 @@
         : 0;
   }
 
-  /**
-   * Wait until every `<img>` inside `rootEl` has either fired `load` (with a
-   * valid `naturalWidth`) or exhausted a single error-retry. This is what
-   * makes "Load preview" trustworthy: before this gate, the print-root was
-   * mounted but tiles were still in transit from Supabase Storage — the user
-   * saw (and could print) the wrong crop. We also retry once on error with a
-   * cache-buster so a transient network blip doesn't force the operator to
-   * click "Load preview" repeatedly.
-   */
   async function waitForAllImagesToSettle(rootEl) {
     if (!rootEl) return;
     const imgs = Array.from(rootEl.querySelectorAll('img'));
@@ -164,18 +124,13 @@
             img.removeEventListener('load', onLoad);
             img.removeEventListener('error', onError);
           };
-          const onLoad = () => {
-            cleanup();
-            resolve();
-          };
+          const onLoad = () => { cleanup(); resolve(); };
           const onError = () => {
             if (!retried) {
               retried = true;
               const src = img.getAttribute('src') || '';
               if (src) {
                 const sep = src.includes('?') ? '&' : '?';
-                // Re-assign src to force the browser to try the download
-                // again — keeps the same signed token (still valid for 1h).
                 img.setAttribute('src', `${src}${sep}_retry=1`);
               }
               return;
@@ -194,15 +149,11 @@
     const selectedIds = Object.keys(selected).filter(id => selected[id]);
     if (selectedIds.length === 0) return;
 
-    // Reset visibility/print gates up front. Without this, a previous preview
-    // remained on screen with stale signed URLs during the new fetch, and the
-    // "Print" button stayed enabled — operator could print the wrong batch.
     loadingPreview = true;
     previewReady = false;
     imagesReady = false;
     error = '';
 
-    // Get originals data from RPC
     const { data, error: rpcErr } = await supabase.rpc('admin_get_print_originals', {
       p_order_ids: selectedIds
     });
@@ -215,8 +166,8 @@
 
     const items = Array.isArray(data) ? data : [];
 
-    // Group items by order_id
     const grouped = {};
+    const jobs = {};
     const pathsToSign = new Set();
 
     for (const item of items) {
@@ -224,20 +175,29 @@
       if (!grouped[oid]) grouped[oid] = [];
       grouped[oid].push(item);
 
-      // Collect all storage paths that need signing
+      // Collect per-order job overrides (gift crop / image path).
+      if (!jobs[oid]) {
+        jobs[oid] = {
+          gift_image_path: item.gift_image_path || null,
+          overridden_gift_crop: item.overridden_gift_crop || null
+        };
+      }
+
+      // Collect all storage paths that need signing.
       const paths = item.original_storage_paths || {};
       for (const p of Object.values(paths)) {
         if (p) pathsToSign.add(p);
       }
+      // Also sign the admin gift image if present.
+      if (item.gift_image_path) pathsToSign.add(item.gift_image_path);
     }
 
     itemsByOrder = grouped;
+    jobsByOrder = jobs;
 
-    // Create signed URLs for all paths
     const urls = {};
     const pathArr = [...pathsToSign];
 
-    // Batch in groups of 20 to avoid overwhelming the API
     for (let i = 0; i < pathArr.length; i += 20) {
       const batch = pathArr.slice(i, i + 20);
       const promises = batch.map(async (path) => {
@@ -252,15 +212,8 @@
     }
 
     signedUrls = urls;
-
-    // Build exact pages from real item data.
     recomputeBatchLayout();
 
-    // Mount the print-root so <img> tags appear in the DOM and start
-    // downloading. We keep `imagesReady = false` so the root stays visually
-    // hidden (display:none) until every tile has actually loaded — display:none
-    // does NOT suppress image downloads, so this gives us a clean "swap" with
-    // no flash of half-rendered/wrong-crop tiles.
     previewReady = true;
     await tick();
     await waitForAllImagesToSettle(printRootEl);
@@ -269,36 +222,45 @@
     loadingPreview = false;
   }
 
-  function handlePrint() {
-    if (!previewReady) return;
-    window.print();
-  }
+  let printing = false;
 
-  let confirmingPrint = false;
+  /**
+   * Single "send to print" action:
+   * 1. Opens the browser print dialog.
+   * 2. Marks orders as printed only after the user confirms the print
+   *    (via the `afterprint` event — fires even if they cancel, but
+   *    that's acceptable; the admin can always re-print if needed).
+   */
+  async function sendToPrint() {
+    if (!imagesReady || printing) return;
 
-  async function confirmPrinted() {
+    printing = true;
+    error = '';
+
     const selectedIds = Object.keys(selected).filter(id => selected[id]);
-    if (selectedIds.length === 0) return;
 
-    confirmingPrint = true;
-    const { error: rpcErr } = await supabase.rpc('admin_mark_orders_printed', {
-      p_order_ids: selectedIds
-    });
+    // Wire up afterprint *before* calling print() so it fires for this session.
+    const afterPrint = async () => {
+      window.removeEventListener('afterprint', afterPrint);
+      const { error: rpcErr } = await supabase.rpc('admin_mark_orders_printed', {
+        p_order_ids: selectedIds
+      });
+      if (rpcErr) {
+        error = 'שגיאה בסימון ההדפסה.';
+      } else {
+        previewReady = false;
+        imagesReady = false;
+        batchPages = [];
+        signedUrls = {};
+        itemsByOrder = {};
+        jobsByOrder = {};
+        await loadQueue();
+      }
+      printing = false;
+    };
 
-    if (rpcErr) {
-      error = 'שגיאה בסימון ההדפסה.';
-      confirmingPrint = false;
-      return;
-    }
-
-    confirmingPrint = false;
-    // Reload queue to reflect changes
-    previewReady = false;
-    imagesReady = false;
-    batchPages = [];
-    signedUrls = {};
-    itemsByOrder = {};
-    await loadQueue();
+    window.addEventListener('afterprint', afterPrint);
+    window.print();
   }
 
   $: selectedCount = Object.keys(selected).filter(id => selected[id]).length;
@@ -315,14 +277,6 @@
   <!-- Sidebar -->
   <aside class="print-sidebar">
     <h2 class="sidebar-title">תור הדפסה</h2>
-
-    <div class="sidebar-actions">
-      <button class="admin-btn admin-btn--sm" on:click={applySuggestion} disabled={queue.length === 0}>
-        הצעת אריזה אופטימלית
-      </button>
-      <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectAll}>בחר הכל</button>
-      <button class="admin-btn admin-btn--ghost admin-btn--sm" on:click={selectNone}>נקה</button>
-    </div>
 
     {#if selectedCount > 0}
       <div class="sidebar-stats">
@@ -369,24 +323,16 @@
     <div class="toolbar">
       <button
         class="admin-btn admin-btn--primary"
-        on:click={loadPreview}
-        disabled={selectedCount === 0 || loadingPreview}
+        on:click={sendToPrint}
+        disabled={!imagesReady || printing}
       >
-        {loadingPreview ? 'טוען תצוגה…' : 'טען תצוגה מקדימה'}
-      </button>
-      <button
-        class="admin-btn admin-btn--primary"
-        on:click={handlePrint}
-        disabled={!imagesReady}
-      >
-        🖨️ הדפס
-      </button>
-      <button
-        class="admin-btn admin-btn--success"
-        on:click={confirmPrinted}
-        disabled={!imagesReady || confirmingPrint}
-      >
-        {confirmingPrint ? 'מסמן…' : '✓ אשר שההדפסה הושלמה'}
+        {#if loadingPreview}
+          ⏳ טוען תצוגה…
+        {:else if printing}
+          🖨️ מדפיס…
+        {:else}
+          🖨️ שלח להדפסה
+        {/if}
       </button>
     </div>
 
@@ -395,19 +341,8 @@
     {/if}
 
     <div class="print-hint">
-      ✅ ההדפסה מוגדרת אוטומטית ל-A4 לאורך, ללא שוליים וללא scaling — לחץ הדפס.
+      ✅ ההדפסה מוגדרת אוטומטית ל-A4 לאורך, ללא שוליים וללא scaling.
     </div>
-
-    {#if !imagesReady && pageCount > 0}
-      <div class="placeholder-pages">
-        {#each Array(pageCount) as _, pi}
-          <div class="page-placeholder">
-            <span>עמוד {pi + 1}</span>
-            <span class="page-orders">≤ {ITEMS_PER_PAGE} אריחים</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
 
     <!-- Print root — this is what gets printed -->
     <!--
@@ -454,13 +389,6 @@
     font-size: 18px;
     font-weight: 700;
     margin: 0 0 12px;
-  }
-
-  .sidebar-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 12px;
   }
 
   .sidebar-stats {
@@ -559,40 +487,6 @@
     border-radius: 4px;
     margin-bottom: 16px;
   }
-  .print-hint--warn {
-    background: #ffe0b2;
-    color: #6d4c00;
-    font-weight: 600;
-  }
-
-  .placeholder-pages {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-bottom: 20px;
-  }
-
-  .page-placeholder {
-    width: 160px;
-    height: 226px;
-    background: #fafafa;
-    border: 1px dashed #ccc;
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: 13px;
-    color: #888;
-    gap: 6px;
-  }
-
-  .page-orders {
-    font-size: 11px;
-    text-align: center;
-    padding: 0 6px;
-    color: #aaa;
-  }
 
   /* ── Preview pages ─────────────────────────────────────────────────────── */
   .print-root--hidden {
@@ -629,12 +523,8 @@
   }
   .admin-btn:hover:not(:disabled) { background: #f5f5f5; }
   .admin-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .admin-btn--sm { padding: 5px 10px; font-size: 12px; }
-  .admin-btn--ghost { border-color: transparent; color: #1976d2; }
   .admin-btn--primary { background: #1976d2; color: #fff; border-color: #1976d2; }
   .admin-btn--primary:hover:not(:disabled) { background: #1565c0; }
-  .admin-btn--success { background: #388e3c; color: #fff; border-color: #388e3c; }
-  .admin-btn--success:hover:not(:disabled) { background: #2e7d32; }
 
   /* ── Print media ─────────────────────────────────────────────────────────── */
   @media print {
@@ -648,8 +538,7 @@
     .print-sidebar,
     .toolbar,
     .error-msg,
-    .print-hint,
-    .placeholder-pages {
+    .print-hint {
       display: none !important;
     }
 
@@ -677,12 +566,13 @@
       border-radius: 0;
       margin: 0;
       overflow: visible;
-      page-break-after: always;
-      break-after: page;
     }
-    .page-preview-wrapper:last-child {
-      page-break-after: auto;
-      break-after: auto;
+    /* Break before every page except the first — avoids a trailing blank page
+       that `page-break-after:always` + :last-child produces when Svelte
+       inserts text nodes between wrappers (breaking :last-child matching). */
+    .page-preview-wrapper + .page-preview-wrapper {
+      page-break-before: always;
+      break-before: page;
     }
 
     /* Preserve filter colors (effects) on every printed node — without this

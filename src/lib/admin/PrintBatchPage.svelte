@@ -144,6 +144,8 @@
         -->
         {#if tile.kind === 'mosaic' && tile.cropRect}
           <span class="cut-label">#{tile.orderNumber} \u2022 {tile.cropRect.col + 1}/{tile.cropRect.cols},{tile.cropRect.row + 1}/{tile.cropRect.rows}</span>
+        {:else if tile.isGift}
+          <span class="cut-label">#Order-{tile.orderNumber} \ud83c\udf81</span>
         {:else}
           <span class="cut-label">#Order-{tile.orderNumber}</span>
         {/if}
@@ -195,10 +197,13 @@
 <style>
   .batch-page {
     width: 210mm;
-    height: 297mm;
+    /* 286mm content (8×2 padding + 5×50mm tiles + 4×5mm gaps) < 296mm.
+       min-height avoids sub-pixel overflow accumulation that some browsers
+       round up to 297mm, triggering an extra blank page. */
+    min-height: 296mm;
     /* Page geometry (A4 portrait):
          padding 8mm top/bot + 5 rows × 50mm + 4 row-gaps × 5mm
-         = 16 + 250 + 20 = 286mm < 297mm  (11mm slack — safe).
+         = 16 + 250 + 20 = 286mm < 296mm  (10mm slack — safe).
        The top padding is ≥ 4mm so the absolute cut-label (top:-3.5mm)
        on the first row never gets clipped at the paper edge. */
     padding: 8mm 5mm;
@@ -206,14 +211,8 @@
     background: white;
     position: relative;
     overflow: hidden;
-    page-break-after: always;
-    break-after: page;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
-  }
-  .batch-page:last-child {
-    page-break-after: auto;
-    break-after: auto;
   }
 
   /* Rigid 3×5 grid — !important guards against any cascade override that
