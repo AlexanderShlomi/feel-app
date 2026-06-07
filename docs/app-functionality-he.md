@@ -58,9 +58,9 @@
 | `/checkout` | צ'ק-אאוט, משלוח, מדיניות פרטיות, יצירת הזמנה בשרת, תשלום דמו |
 | `/orders` | **ההזמנות שלי** — רשימת הזמנות + שורות + תמונות ממוזערות (משתמש מחובר, Supabase) |
 | `/auth/callback` | השלמת OAuth (PKCE, החלפת `code` לסשן) |
-| `/admin` | **ממשק Admin** — רשימת כל ההזמנות, פילטר סטטוס, pagination |
-| `/admin/orders/[orderId]` | **פרטי הזמנה — Admin** — כתובת, פריטים, thumbnails, עדכון סטטוס, שליחת מייל משלוח |
-| `/admin/print` | **הדפסת מגנטים — Admin** — בחירת הזמנות, הצעת אריזה אופטימלית, תצוגה מקדימה A4, הדפסה פיזית |
+| `/admin` | **ממשק Admin** — רשימת כל ההזמנות, פילטר סטטוס, pagination; שורות לחיצות לניווט |
+| `/admin/orders/[orderId]` | **פרטי הזמנה — Admin** — כתובת, פריטים, production job panel (הודעת מתנה, תמונת מתנה, crop editor, הערות), עדכון סטטוס, שליחת מייל משלוח |
+| `/admin/print` | **הדפסת מגנטים — Admin** — בחירת הזמנות (auto-suggest), תצוגה מקדימה A4 אוטומטית, כפתור הדפסה אחד |
 
 ---
 
@@ -553,7 +553,7 @@
 - טבלאות/פונקציות רלוונטיות מהמיגרציות בפרויקט: **`orders`**, **`order_items`**, **`profiles`**, **`privacy_policies`**, **`admin_users`**, RPC **`create_complete_order`** (v3), **`patch_order_item_thumbnails`** (batch), **`patch_order_item_thumbnail`** (single, legacy), **`patch_order_item_original_paths`**, **`confirm_order_payment`**, **`compute_order_item_unit_price`**, **`my_orders_dashboard`**, **`record_privacy_consent`**, **`is_admin`**, **`admin_get_orders`**, **`admin_get_order_detail`**, **`admin_update_order_status`** (שמות מדויקים לפי קבצי ה־SQL).
 - **`orders.id`:** מפתח ראשי מסוג UUID — לפעולות פנימיות, עדכון סטטוס, וקישורים טכניים. ה־UUID נוצר בקליינט (`crypto.randomUUID()`) ומשמש כ־**idempotency key** לבקשת `create_complete_order` — `unique_violation` ב־retry מסמן שהניסיון הראשון התקבל ומאפשר התאוששות.
 - **`orders.order_number`:** מספר שלם עולה **ייחודי** (`UNIQUE`), נוצר מרצף **`order_number_seq`** ו־`DEFAULT nextval` — להצגה ללקוח, למסכי תשלום/הצלחה ולתמיכה. **מוחזר ישירות מ־RPC v3** (אין `select` נפרד).
-- **`orders.status` ערכים חוקיים:** `pending`, `paid`, `processing`, `shipped`, `delivered`, `cancelled`.
+- **`orders.status` ערכים חוקיים (unified flow):** `pending` → `paid` → `processing` (הזמנות gift) / `ready_for_print` (הזמנות רגילות) → `printed` → `shipped` → `delivered`; כל שלב → `cancelled`. `confirm_order_payment` מנתב אוטומטית אחרי `paid`: gift_enabled → `processing`, אחרת → `ready_for_print`. (מיגרציה: `20260607000100_unified_order_status.sql`).
 - **Server-authoritative pricing (Law D):** `compute_order_item_unit_price` מחשב מחיר לפי `type + configuration.count`. סטיה בין הסכום של הקליינט לתחשיב השרתי = `client_subtotal_mismatch` / `client_total_mismatch`. **אין** `update` ישיר על `orders` מצד הלקוח — מעבר ל־`paid` רק דרך `confirm_order_payment` (security definer).
 - **Configuration guardrail (50KB + ללא `data:image`):** מאוכף הן ב־CHECK constraint (`order_items_configuration_guardrail_chk`, מגרציה `20260411130000`) והן בכל קריאה ל־RPC v3 — defense in depth.
 - **`order_items.thumbnail_url`:** כתובת ציבורית לתמונה ממוזערת אחרי העלאה ל-Storage. backfill ברקע אחרי יצירת ההזמנה — call יחיד דרך `patch_order_item_thumbnails` (batch).
@@ -564,7 +564,7 @@
 - **Admin RPCs (security definer, בודקים `admin_users`):** `admin_get_orders(limit, offset, status)` — כל ההזמנות ללא RLS; `admin_get_order_detail(order_id)` — הזמנה מלאה + פריטים; `admin_update_order_status(order_id, new_status)` — מעברי סטטוס חוקיים בלבד (paid→processing→shipped→delivered, כל שלב→cancelled); **`admin_get_print_queue()`** — הזמנות paid/processing עם ספירת מגנטים גלויים; **`admin_get_print_originals(order_ids[])`** — metadata + storage paths לכל הפריטים של הזמנות נבחרות; **`admin_mark_orders_printed(order_ids[])`** — stamps `printed_at`, transitions paid→processing.
 - **`orders.printed_at`:** `timestamptz`, nullable — חותמת זמן הדפסה פיזית דרך מסך `/admin/print`. NULL = טרם הודפס.
 - **`/orders` perf:** RPC `my_orders_dashboard(limit, offset)` מאחד הזמנות + שורות (בלי `configuration` הכבד) באגרגציה אחת, עם אינדקסים מותאמים על `(user_id, placed_at desc)` ו־`(order_id, created_at)`.
-- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, `20260507000100_create_complete_order_v2_with_order_number.sql`, `20260507000200_patch_order_item_thumbnails_batch.sql`, `20260507000300_create_complete_order_v3_hardened.sql`, `20260508000400_feel_sanitize_text_no_chr0.sql`, `20260515000100_order_item_original_paths.sql`, `20260515000200_admin_users.sql`, `20260518000100_admin_print_pipeline.sql`, **`20260520000100_admin_print_queue_real_mosaic_count.sql`**.
+- **קבצי המגרציות (סדר כרונולוגי):** `20260325000100_checkout_orders.sql`, `20260326000100_create_complete_order_rpc.sql`, `20260404000100_privacy_policy_and_consent.sql`, `20260404120000_privacy_policies_grant_select.sql`, `20260405120000_order_item_thumbnails.sql`, `20260406120000_orders_order_number.sql`, `20260407140000_my_orders_dashboard_rpc.sql`, `20260408120000_my_orders_dashboard_perf.sql`, `20260409130000_my_orders_dashboard_lite_items.sql`, `20260410120000_create_order_return_item_ids_patch_thumbnail.sql`, `20260411120000_pricing_authority_and_payment_confirm_rpc.sql`, `20260411130000_order_items_configuration_guardrail.sql`, `20260411130100_validate_order_items_configuration_guardrail.sql`, `20260507000100_create_complete_order_v2_with_order_number.sql`, `20260507000200_patch_order_item_thumbnails_batch.sql`, `20260507000300_create_complete_order_v3_hardened.sql`, `20260508000400_feel_sanitize_text_no_chr0.sql`, `20260515000100_order_item_original_paths.sql`, `20260515000200_admin_users.sql`, `20260518000100_admin_print_pipeline.sql`, `20260520000100_admin_print_queue_real_mosaic_count.sql`, `20260605000100_order_production_jobs.sql` (טבלת production jobs + RPCs), `20260605000200_production_job_gift_crop.sql` (overridden_gift_crop column), `20260607000100_unified_order_status.sql` (unified status flow), **`20260608000100_print_originals_with_gift_crop.sql`** (תיקון RPC להחזיר overridden_gift_crop).
 
 ---
 
@@ -619,8 +619,8 @@
 | תשלום דמו | `src/lib/components/PaymentMock.svelte` |
 | אימות | `src/lib/components/AuthModal.svelte`, `src/lib/authStore.js`, `src/lib/supabase.js` |
 | **Admin — ניהול הזמנות** | `src/routes/admin/+layout.svelte`, `src/routes/admin/+page.svelte` |
-| **Admin — פרטי הזמנה** | `src/routes/admin/orders/[orderId]/+page.svelte` |
-| **Admin — הדפסת מגנטים** | `src/routes/admin/print/+page.svelte`, `src/lib/admin/printPacking.js`, `src/lib/admin/PrintPage.svelte` |
+| **Admin — פרטי הזמנה + Production Job** | `src/routes/admin/orders/[orderId]/+page.svelte` |
+| **Admin — הדפסת מגנטים** | `src/routes/admin/print/+page.svelte`, `src/lib/admin/printPacking.js`, `src/lib/admin/PrintBatchPage.svelte` |
 | **מייל משלוח (Edge Function)** | `supabase/functions/send-shipping-notification/index.ts` |
 | **בדיקות אוטומטיות** | `tests/core-flow.spec.js`, `tests/photo-collection-sprint.spec.js`, `tests/mosaic-mobile-no-horizontal-scroll.spec.js` |
 
@@ -705,59 +705,65 @@ INSERT INTO admin_users (user_id) VALUES ('<your-auth-uid>');
 **דף הזמנות (`/admin`):**
 - קריאה ל-RPC `admin_get_orders(limit, offset, status)` — מחזיר כל ההזמנות ללא RLS
 - פילטר לפי סטטוס, pagination 50/דף
-- עמודות: מספר הזמנה, סטטוס, שם לקוח, עיר, מספר פריטים, סכום, תאריך
+- עמודות: מספר הזמנה, סטטוס, שם לקוח, עיר, מספר פריטים, סכום, מתנה, ברכה, תאריך
+- שורות לחיצות (click/Enter) — מנווטות ל-`/admin/orders/[orderId]` ישירות
+- סטטוסים + צבעים מעודכנים: `processing`=כתום, `ready_for_print`=ירוק, `printed`=כחול
 
 **דף פרטי הזמנה (`/admin/orders/[orderId]`):**
-- RPC `admin_get_order_detail(order_id)` — הזמנה מלאה + כל order_items
+- RPC `admin_get_order_detail(order_id)` — הזמנה מלאה + כל order_items + production job
 - **כתובת משלוח + מתנה**
 - **Thumbnails** + סיכום מטא-דאטה (כמות, אפקט)
+- **Production Job Panel** — נטען אוטומטית עם ההזמנה:
+  - **הודעת מתנה:** עריכה inline + שמירה דרך `admin_update_production_job`
+  - **תמונת מתנה:** העלאה לבאקט `order-originals` (path: `gift-overrides/{orderId}/gift.jpg`) + שמירת path ב-job
+  - **Crop editor לתמונת מתנה:** עורך pan/zoom/effect זהה לעורך הלקוח (Law A) — נפתח לאחר העלאה; שומר `overridden_gift_crop: {zoom, xPct, yPct, effect}` ב-RPC
+  - **הערות admin:** textarea לשמירת הערות פנימיות
+  - **"שחרר להדפסה"** — מעביר הזמנה מ-`processing` → `ready_for_print`
+  - **"סמן כשולם"** — מעביר `pending` → `paid` (גם מנתב אוטומטית ל-`processing`/`ready_for_print`)
 - **עדכון סטטוס** דרך RPC `admin_update_order_status`:
-  - `paid → processing → shipped → delivered`
-  - כל שלב → `cancelled` (חוץ מ-delivered/cancelled)
-- **כפתור "שלח מייל משלוח"** (זמין בסטטוס `processing` / `shipped`) — קורא ל-Edge Function `send-shipping-notification`
+  - `printed → shipped → delivered`; כל שלב → `cancelled`
+  - `processing` / `ready_for_print` → `cancelled` (לא ניתן לעבור ל-shipped ישירות, חייבים הדפסה)
+- **כפתור "שלח מייל משלוח"** (זמין בסטטוס `shipped`) — קורא ל-Edge Function `send-shipping-notification`
+
+**טבלת `order_production_jobs`** (מיגרציה `20260605000100`):
+- `order_id` (FK), `production_status` (legacy — הוסר ב-`20260607000100`), `overridden_gift_message`, `overridden_gift_image_path`, `overridden_gift_crop` (jsonb: `{zoom,xPct,yPct,effect}`), `admin_notes`, `gift_message_done` (bool), `gift_image_done` (bool), `processed_by` (admin user_id)
+- **RPCs:** `admin_update_production_job(order_id, ...)` — מאמת admin, מסנטז טקסטים, מעדכן שדות; `admin_get_print_queue()` — הזמנות `ready_for_print` עם `visible_tile_count`; `admin_mark_orders_printed(order_ids[])` — מעביר → `printed` + stamps `printed_at`
 
 **דף הדפסת מגנטים (`/admin/print`):**
 
 מסך ייעודי להדפסה פיזית של מגנטים (5×5 ס"מ) על דפי A4 מהזמנות מרובות.
 
-- **תור הדפסה:** RPC `admin_get_print_queue()` — מחזיר הזמנות בסטטוס `paid`/`processing` עם ספירת מגנטים גלויים לכל הזמנה. בפסיפס הספירה משחזרת את הרשת בפועל לפי `configuration.count` → `gridBaseSize` + `splitImageRatio` (landscape: `round(base·ratio) × base`; portrait: `base × round(base/ratio)`) → fallback `base²` להזמנות לגאסי. (מיגרציה: `20260520000100_admin_print_queue_real_mosaic_count.sql`.)
-- **בחירת הזמנות:** Sidebar עם checkboxים; כפתור "הצעת אריזה אופטימלית" מפעיל אלגוריתם שממלא דפים ביעילות (≥90% ניצולת).
-- **מד ניצולת:** מספר עמודים + אחוז מילוי מוצגים בזמן אמת בכל שינוי בחירה.
+- **תור הדפסה:** RPC `admin_get_print_queue()` — מחזיר הזמנות בסטטוס `ready_for_print` עם ספירת מגנטים גלויים לכל הזמנה. בפסיפס הספירה משחזרת את הרשת בפועל לפי `configuration.count` → `gridBaseSize` + `splitImageRatio`. (מיגרציה: `20260520000100_admin_print_queue_real_mosaic_count.sql`.)
+- **בחירת הזמנות אוטומטית:** `suggestOptimalBatch` (greedy, יעד ≥90% ניצולת) מופעל אוטומטית בטעינה; תצוגה מקדימה נטענת אוטומטית (debounced 300ms) בכל שינוי בחירה.
+- **כפתור יחיד "🖨️ שלח להדפסה":** מפעיל `window.print()` ואז listener לאירוע `afterprint` שקורא `admin_mark_orders_printed` — מסמן הזמנות ומרענן תור.
 - **אלגוריתם אריזה (`src/lib/admin/printPacking.js`):**
-  - קבועים: אריח 50mm, רווח 5mm, 3 עמודות × 5 שורות = 15 מגנטים/עמוד, שוליים 10mm.
-  - `packOrdersIntoPages` — first-fit; כל הזמנה מתחילה בשורה חדשה עם header band.
-  - `suggestOptimalBatch` — greedy; בוחר הזמנות מהוותיקה ביותר עד יעד ניצולת ≥90% או maxPages.
-  - `computeMosaicGridDims(base, imageRatio, count)` — מחשב `cols × rows` של פסיפס בדיוק כמו אלגוריתם העורך (`calculateAndRenderSplitGrid` ב-`uploader/+layout.svelte`). Fallback ל-`count` → ריבוע.
-  - `expandMosaicToTiles` — מחלק את התמונה ל-`cols × rows` משבצות (לא בהכרח ריבוע) ומחזיר לכל אריח `{storagePath, cropRect:{col,row,cols,rows}, transform:{zoom,xPct,yPct}, effect, imageRatio}` כדי שצינור ההדפסה ישחזר בדיוק את ה-crop, ה-zoom והאפקט שהמשתמש בחר (Law A).
-  - `expandMagnetsTiles` — מחזיר מגנטים גלויים בלבד (`hidden=true` מדולגים) עם המטא המלא של כל מגנט (`xPct/yPct/zoom/activeEffectId`) מתוך `configuration.magnetsMeta`.
-  - `pageNeedsLandscape(page, itemsByOrder)` — מחזיר `true` אם איזשהו פסיפס בדף הוא `cols > 3` (כלומר רחב מרשת A4-פורטרט). משמש גם את `PrintPage.svelte` (להחלפת אוריינטציית הקלף) וגם את ה-UI ב-`/admin/print` (להצגת התראת "הדפס ב-Landscape").
-- **DPI-Independent Crop Math:**
-  - קבוע `TILE_PX = 591` (= 50mm × 300dpi) — גודל רינדור לכל אריח בדפוס.
-  - אלגוריתם הרינדור משקף בדיוק את החישוב בעורך:
-    1. Cover-fit תמונה על רשת `cols·TILE_PX × rows·TILE_PX` לפי `imageRatio`.
-    2. הכפלה ב-zoom של המשתמש.
-    3. הזזה לפי `xPct·maxX / yPct·maxY` (clamp ל-`[-1..1]`).
-    4. מיקום חלון אריח: `startX - col·TILE_PX`, `startY - row·TILE_PX`.
-    5. CSS filter לפי האפקט שנבחר.
-  - **אין תלות ב-DPI של המסך** — גודל הפלט קבוע בפיקסלים מותאמי הדפסה.
-- **טעינת מקורות:** RPC `admin_get_print_originals(order_ids[])` — מחזיר metadata + `original_storage_paths`; הלקוח יוצר signed URLs (תוקף שעה) לבאקט `order-originals`.
-- **תצוגה מקדימה:** כל עמוד מוצג כקלף A4 בסקייל (~67%); כפתור "טען תצוגה" טוען מקורות ומרנדר.
-- **רכיב עמוד (`src/lib/admin/PrintPage.svelte`):**
-  - מרנדר `section.a4-page` (210×297mm פורטרט כברירת מחדל; 297×210mm כשהדף מכיל פסיפס רחב מ-3 אריחים — ראו "תמיכת Landscape" למטה).
-  - Header band לכל הזמנה: `— הזמנה #N — לקוח: שם — K מגנטים —`.
-  - **רשת לפי-פריט (Per-item grid):** במקום grid 3-עמודות יחיד לכל ההזמנה, כל פריט מרונדר ב-grid עצמאי משלו עם `cols × rows` נכונים — מגנטים תמיד 3 עמודות, פסיפס לפי `cropRect.cols/rows` של האריחים שלו (`grid-template-columns: repeat(cols, 50mm)`). זה התיקון הקריטי ל-Law A: בעבר 12 אריחים של פסיפס 4×3 נדחסו ל-3 עמודות ב-DOM, כל אריח נחת במיקום פיזי שגוי, וההדפסה לא שיחזרה את ה-grid שהמשתמש בחר.
-  - **תמיכת Landscape:** ה-store הריאקטיבי `pageIsLandscape` בודק אם איזשהו block בדף הוא `cols > 3`; אם כן, ה-`section.a4-page` מקבל `.a4-page--landscape` (297×210mm) וה-wrapper בעמוד-האב מסתובב גם הוא. ב-`/admin/print` מוצגת התראה: "↩️ נדרשת הדפסה ב-A4 לרוחב (Landscape)". ה-`pageNeedsLandscape(page, itemsByOrder)` ב-`printPacking.js` הוא ה-source-of-truth לזיהוי דפים כאלה.
-  - **רינדור crop למגנטים — קולקציית תמונות (Photo Collection):** כל מגנט הוא אריח עצמאי. ה-`<img>` ממוקם ב-`position: absolute` עם `width/height/left/top` מחושבים דרך `cropMath.js` (`computeCoverBaseSize` + `computeMaxTranslateFromBase` + `pctToTranslate` + `zoom`) ביחס ל-frame של 591px (=50mm @300dpi). המטא נטענת מ-`configuration.magnetsMeta[i].{xPct,yPct,zoom,activeEffectId}` שנשמרת ב-`buildOrderItemConfiguration` בצ'ק-אאוט מתוך `magnet.transform`. **דיוק מלא מול העורך:** בדיוק אותן הפונקציות המתמטיות פועלות ב-`routes/uploader/edit/[magnetId]/+page.svelte` וב-`lib/components/Magnet.svelte`, ה-baseW/baseH מתכווצים פרופורציונלית עם ה-frame, ולכן ה-pixel-by-pixel של ההדפסה זהה לתצוגה בעורך (Law A). הבאג של ה-3-עמודות-קשיחות **לא** השפיע על קולקציה כי לכל מגנט אין `cropRect` בתוך תמונה אחת מחולקת — כל מגנט הוא יחידה עצמאית שמיקומה הפיזי על הדף לא רגיש לסדר ב-grid.
-  - **אפקטים:** CSS `filter` מוחל לפי `activeEffectId`/`currentEffect` דרך `getCssFilter` — גם למגנטים וגם לפסיפס.
-  - **Mosaic — `getMosaicStyle(cropRect, transform, effect, imageRatio, naturalW, naturalH)`:** משחזר את אלגוריתם העורך (`calculateAndRenderSplitGrid`):
-    - `totalW = cols·TILE_PX`, `totalH = rows·TILE_PX`.
-    - Cover-fit לפי `imageRatio` (ציר אחד תואם בדיוק, השני גולש סימטרית).
-    - הכפלת `width/height` ב-`zoom`, ואז הזחה לפי `xPct·maxX / yPct·maxY` (clamp ל-[-1..1]).
-    - מיקום `left/top` של ה-`<img>` בכל אריח = `start − col/row · TILE_PX` כדי לחתוך את ה"חלון" של אותו תא.
-    - אם `splitImageRatio` חסר (הזמנות לגאסי) — `onload` של ה-`<img>` מחשב מחדש לפי `naturalWidth/Height`.
-- **הדפסה:** כפתור "הדפס" → `window.print()` עם `@page { size: A4; margin: 0 }`. כל ה-UI (sidebar, toolbar) מוסתר ב-`@media print`. כשנדרש landscape, האדמין מקבל התראה ויבחר Landscape בדיאלוג ההדפסה.
-- **אחרי הדפסה:** כפתור "אשר שההדפסה הושלמה" → RPC `admin_mark_orders_printed(order_ids[])` — מעביר `paid→processing` + מסמן `printed_at`.
-- **הוראת הדפסה:** מוצג למשתמש: "ודא שהמדפסת מוגדרת ל-A4 ללא scaling (100%)".
+  - קבועים: אריח 50mm, רווח 5mm, 3 עמודות × 5 שורות = 15 מגנטים/עמוד (`ITEMS_PER_PAGE`), שוליים 10mm, `min-height: 296mm` לעמוד.
+  - `suggestOptimalBatch` — greedy; בוחר הזמנות מהוותיקה ביותר עד יעד ניצולת ≥90% או `maxPages=10`.
+  - `flattenTilesForBatch(orders, itemsByOrder, jobsByOrder)` — מחרוז כל אריחי כל הזמנות הנבחרות למערך אחד; מטפל ב-3 סוגי items:
+    - `mosaic` → `expandMosaicToTiles` — cols×rows אריחים, כל אריח עם `cropRect`, `transform`, `effect`
+    - `gift` → `expandGiftTile(item, jobData)` — אריח בודד `kind:'magnet'`, `isGift:true`; מעדיף `jobData.gift_image_path` (תמונת admin) + `jobData.overridden_gift_crop`; path מ-`original_storage_paths.gift` כ-fallback
+    - אחר (`magnets_pack`) → `expandMagnetsTiles` — מגנטים גלויים בלבד (`hidden=true` מדולגים), ממוינים לפי `m.order` (סדר הלקוח) אם קיים
+  - `chunkTilesIntoPages(tiles, 15)` — מחלק למערך עמודים
+- **DPI-Independent Crop Math (`src/lib/admin/PrintBatchPage.svelte`):**
+  - קבוע `TILE_PX = 591` (= 50mm × 300dpi) — גודל רינדור לוגי
+  - `getMagnetStyle(meta, natW, natH)` — `computeCoverBaseSize` + zoom + pan → left/top באחוזים
+  - `getMosaicStyle(cropRect, transform, effect, imageRatio, natW, natH)` — cover-fit כולל grid, zoom+pan, הזזת חלון אריח לפי `col/row·TILE_PX`
+  - כל גדלים/מיקומים בפרוצנטים מ-TILE_PX — DPI-independent (Law A)
+- **תוויות cut-label:** לכל אריח: `#Order-NN`; לפסיפס: `#Order-NN • col/cols,row/rows`; לתמונת מתנה: `#Order-NN 🎁`
+- **טעינת מקורות:** RPC `admin_get_print_originals(order_ids[])` — מחזיר `overridden_gift_crop` + `gift_image_path` + `original_storage_paths`; הלקוח יוצר signed URLs (תוקף שעה) לכל הpaths כולל תמונת מתנה
+- **תצוגה מקדימה:** כל עמוד מוצג כקלף A4 בסקייל (~67%); `waitForAllImagesToSettle` ממתין לטעינת כל img + retry אחד
+- **page-break:** `@media print`: `.page-preview-wrapper + .page-preview-wrapper { page-break-before: always }` — מונע דף ריק אחרון (Svelte text-nodes שוברים `:last-child`)
+- **הוראת הדפסה:** A4 portrait ללא שוליים ללא scaling — `@page { size: A4 portrait; margin: 0 }`
+
+**תיקון Chrome blob-URL fetch (`src/lib/utils/storage.js`, `src/lib/stores.js`, `src/lib/components/Magnet.svelte`):**
+- **בעיה:** Chrome extensions מיירטים `fetch(blob:...)` ומשהים אותו (ERR_TIMED_OUT) — תמונות לא נשמרות ב-IndexedDB, tile נשאר ריק
+- **תיקון storage.js:**
+  - `fetchBlobSafe(blobUrl)` — XHR במקום fetch, timeout 10s, לא עובר דרך network stack
+  - `dataUrlToBlob(dataUrl)` — atob + Uint8Array במקום `fetch('data:...')` (גם מיורט או נכשל תחת CSP)
+  - `base64ToBlobUrl` משתמש ב-`dataUrlToBlob` (לא fetch)
+  - `saveStateToStorage` — מגנטים: מעדיף `m.originalBlob instanceof Blob` → fallback ל-`fetchBlobSafe`; splitImageSrc/giftImage: משתמש ב-`fetchBlobSafe`
+- **תיקון stores.js:** `addUploadedMagnets` מוסיף `originalBlob: f` (ה-File המקורי) לאובייקט המגנט — לא נשמר ב-IndexedDB (storage.js מסיר `originalBlob` לפני שמירה)
+- **תיקון Magnet.svelte:** `decodeImageUrl` — hard timeout של 8 שניות; בלעדיו fetch מיורט מוביל ל-tile ריק לצמיתות
 
 **Edge Function `send-shipping-notification`:**
 - POST עם `{ order_id }` + `Authorization: Bearer <user_jwt>`
