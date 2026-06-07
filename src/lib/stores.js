@@ -625,6 +625,12 @@ export async function addUploadedMagnets(files) {
                 position: { x: 0, y: 0 },
                 size: getFullMagnetSize(),
                 originalSrc: url,
+                // originalBlob is stored so saveStateToStorage can serialize
+                // directly via FileReader instead of fetch(blob:...) — Chrome
+                // routes blob-URL fetches through the network stack where
+                // extensions can intercept and stall them (ERR_TIMED_OUT).
+                // This field is never persisted to IndexedDB (storage.js strips it).
+                originalBlob: f,
                 // Mobile: leave `src` empty so the tile shows the pulse skeleton
                 // (Magnet.svelte) instead of forcing a heavy original decode while
                 // we generate a preview off the main paint path.

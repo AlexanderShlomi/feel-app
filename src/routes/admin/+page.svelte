@@ -12,21 +12,25 @@
   let hasMore = false;
 
   const STATUS_LABELS = {
-    pending:    'ממתין לתשלום',
-    paid:       'שולם',
-    processing: 'בטיפול',
-    shipped:    'נשלח',
-    delivered:  'נמסר',
-    cancelled:  'בוטל'
+    pending:         'ממתין לתשלום',
+    paid:            'שולם',
+    processing:      'בעיבוד מקדים',
+    ready_for_print: 'מוכן להדפסה',
+    printed:         'הודפס',
+    shipped:         'נשלח',
+    delivered:       'נמסר',
+    cancelled:       'בוטל'
   };
 
   const STATUS_COLORS = {
-    pending:    '#f5a623',
-    paid:       '#4CAF50',
-    processing: '#2196F3',
-    shipped:    '#9C27B0',
-    delivered:  '#3f524f',
-    cancelled:  '#e53935'
+    pending:         '#f5a623',
+    paid:            '#4CAF50',
+    processing:      '#ff9800',
+    ready_for_print: '#4CAF50',
+    printed:         '#2196F3',
+    shipped:         '#9C27B0',
+    delivered:       '#3f524f',
+    cancelled:       '#e53935'
   };
 
   async function loadOrders() {
@@ -104,12 +108,17 @@
             <th>מתנה</th>
             <th>ברכה</th>
             <th>תאריך</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>
           {#each orders as o}
-            <tr class="admin-row">
+            <tr
+              class="admin-row"
+              role="link"
+              tabindex="0"
+              on:click={() => window.location.href = `/admin/orders/${o.id}`}
+              on:keydown={(e) => e.key === 'Enter' && (window.location.href = `/admin/orders/${o.id}`)}
+            >
               <td class="admin-cell admin-cell--num">#{o.order_number ?? '—'}</td>
               <td class="admin-cell">
                 <span class="status-badge" style="background:{STATUS_COLORS[o.status]}22; color:{STATUS_COLORS[o.status]}; border-color:{STATUS_COLORS[o.status]}44;">
@@ -135,9 +144,6 @@
                 {/if}
               </td>
               <td class="admin-cell admin-cell--date">{formatDate(o.placed_at)}</td>
-              <td class="admin-cell">
-                <a href="/admin/orders/{o.id}" class="admin-link">פרטים</a>
-              </td>
             </tr>
           {/each}
         </tbody>
@@ -228,7 +234,9 @@
     white-space: nowrap;
   }
 
-  .admin-row:hover { background: #fafaf8; }
+  .admin-row { cursor: pointer; }
+  .admin-row:hover { background: #f0ede9; }
+  .admin-row:focus { outline: 2px solid #3f524f; outline-offset: -2px; background: #f0ede9; }
 
   .admin-cell {
     padding: 10px 14px;
@@ -250,16 +258,7 @@
     border: 1px solid transparent;
   }
 
-  .admin-link {
-    color: #3f524f;
-    font-weight: 600;
-    text-decoration: none;
-    font-size: 13px;
-  }
-
-  .admin-link:hover { text-decoration: underline; }
-
-  .admin-pagination {
+.admin-pagination {
     display: flex;
     align-items: center;
     gap: 14px;
