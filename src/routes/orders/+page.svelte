@@ -225,10 +225,14 @@
     }
 
     const STATUS_LABEL = {
-        pending: 'ממתין לתשלום',
-        paid: 'שולם',
-        processing: 'בטיפול',
-        cancelled: 'בוטל'
+        pending:         'ממתין לתשלום',
+        paid:            'שולם',
+        processing:      'בהכנה',
+        ready_for_print: 'בהכנה',
+        printed:         'בהכנה',
+        shipped:         'נשלח',
+        delivered:       'נמסר',
+        cancelled:       'בוטל'
     };
 
     const SHIPPING_METHOD_LABEL = {
@@ -1077,9 +1081,21 @@
     }
 
     .order-status[data-status='paid'],
-    .order-status[data-status='processing'] {
+    .order-status[data-status='processing'],
+    .order-status[data-status='ready_for_print'],
+    .order-status[data-status='printed'] {
         background: color-mix(in srgb, #2e7d32 18%, #e8f5e9);
         color: #1b5e20;
+    }
+
+    .order-status[data-status='shipped'] {
+        background: color-mix(in srgb, #6a1b9a 18%, #f3e5f5);
+        color: #4a148c;
+    }
+
+    .order-status[data-status='delivered'] {
+        background: color-mix(in srgb, #3f524f 18%, #e8f5f0);
+        color: #1b3a33;
     }
 
     .order-status[data-status='cancelled'] {

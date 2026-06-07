@@ -28,7 +28,8 @@ function cacheSet(key, value) {
     }
 }
 
-// המרה לקובץ טקסט לשמירה
+// המרה לקובץ טקסט לשמירה — uses FileReader so it never touches the
+// network stack (avoids Chrome extensions intercepting fetch(blob:...)).
 export const fileToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -37,6 +38,50 @@ export const fileToBase64 = (blob) => {
         reader.readAsDataURL(blob);
     });
 };
+
+/**
+ * Read a blob: URL into a Blob using XMLHttpRequest.
+ * XHR bypasses Chrome's Fetch network stack, so extensions that intercept
+ * fetch() cannot stall it. Falls back gracefully on failure.
+ */
+function fetchBlobSafe(blobUrl) {
+    return new Promise((resolve) => {
+        try {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', blobUrl, true);
+            xhr.responseType = 'blob';
+            xhr.onload = () => resolve(xhr.response || null);
+            xhr.onerror = () => resolve(null);
+            xhr.ontimeout = () => resolve(null);
+            xhr.timeout = 10000; // 10s hard cap
+            xhr.send();
+        } catch {
+            resolve(null);
+        }
+    });
+}
+
+/**
+ * Convert a data: URL to a Blob without using fetch().
+ * fetch('data:...') can fail in Chrome (extension interference, strict
+ * CSP, or large payloads). atob + Uint8Array is universal.
+ */
+function dataUrlToBlob(dataUrl) {
+    try {
+        const comma = dataUrl.indexOf(',');
+        if (comma === -1) return null;
+        const meta = dataUrl.slice(0, comma);
+        const b64  = dataUrl.slice(comma + 1);
+        const mime = (meta.match(/:(.*?);/) || [])[1] || 'application/octet-stream';
+        const binary = atob(b64);
+        const len = binary.length;
+        const buf = new Uint8Array(len);
+        for (let i = 0; i < len; i++) buf[i] = binary.charCodeAt(i);
+        return new Blob([buf], { type: mime });
+    } catch {
+        return null;
+    }
+}
 
 // Stable blob: URLs for repeated hydration (IndexedDB → workspace) — same data: URL must not create new object URLs each time.
 // No LRU eviction: revoking a cached URL while a magnet still references it would break thumbnails. Cleared in resetSystem only.
@@ -58,14 +103,17 @@ export function clearDataUrlBlobUrlCache() {
 }
 
 // המרה חזרה לתמונה לתצוגה
+// Uses atob-based conversion instead of fetch() so it never touches the
+// network stack — fetch('data:...') can fail in Chrome (extension
+// interception or CSP), while atob works universally.
 export const base64ToBlobUrl = async (base64Data) => {
     if (!base64Data) return null;
     if (typeof base64Data === 'string' && base64Data.startsWith('blob:')) return base64Data;
     const hit = dataUrlCacheGet(base64Data);
     if (hit) return hit;
     try {
-        const res = await fetch(base64Data);
-        const blob = await res.blob();
+        const blob = dataUrlToBlob(base64Data);
+        if (!blob) throw new Error('dataUrlToBlob returned null');
         const url = URL.createObjectURL(blob);
         dataUrlCacheSet(base64Data, url);
         return url;
@@ -82,7 +130,8 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
         const serializedMagnets = await Promise.all(magnets.map(async (m) => {
             // בפסיפס: לא שומרים את התמונה בתוך המגנט (חוסך מקום)
             if (m.isSplitPart) {
-                return { ...m, originalSrc: null, src: null };
+                const { originalBlob: _b, ...splitRest } = m;
+                return { ...splitRest, originalSrc: null, src: null };
             }
 
             // במגנטים רגילים: שומרים את התמונה
@@ -90,15 +139,25 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
             if (m.originalSrc && m.originalSrc.startsWith('blob:')) {
                 base64Src = cacheGet(m.originalSrc);
                 if (!base64Src) {
-                    const blob = await fetch(m.originalSrc).then(r => r.blob());
-                    base64Src = await fileToBase64(blob);
-                    cacheSet(m.originalSrc, base64Src);
+                    // Prefer the raw Blob/File stored at upload time — avoids
+                    // fetch(blob:...) which Chrome extensions can intercept and
+                    // stall (causing ERR_TIMED_OUT on what looks like a 200 OK).
+                    const blobSource = m.originalBlob instanceof Blob
+                        ? m.originalBlob
+                        : await fetchBlobSafe(m.originalSrc);
+                    if (blobSource) {
+                        base64Src = await fileToBase64(blobSource);
+                        cacheSet(m.originalSrc, base64Src);
+                    }
                 }
             } else {
                 base64Src = m.originalSrc || m.src;
             }
 
-            return { ...m, originalSrc: base64Src, src: base64Src };
+            // Strip the in-memory originalBlob before persisting (Blob objects
+            // aren't serializable across IndexedDB round-trips in all browsers).
+            const { originalBlob: _blob, ...rest } = m;
+            return { ...rest, originalSrc: base64Src, src: base64Src };
         }));
 
         // הכנת ההגדרות (כולל תמונת פסיפס ראשית)
@@ -111,22 +170,26 @@ export const saveStateToStorage = async (magnets, settings, editingId) => {
             if (cached) {
                 serializedSettings.splitImageSrc = cached;
             } else {
-                const blob = await fetch(settings.splitImageSrc).then(r => r.blob());
-                const b64 = await fileToBase64(blob);
-                cacheSet(settings.splitImageSrc, b64);
-                serializedSettings.splitImageSrc = b64;
+                const blob = await fetchBlobSafe(settings.splitImageSrc);
+                if (blob) {
+                    const b64 = await fileToBase64(blob);
+                    cacheSet(settings.splitImageSrc, b64);
+                    serializedSettings.splitImageSrc = b64;
+                }
             }
         }
-        
+
         if (settings.giftImage && settings.giftImage.startsWith('blob:')) {
              const cached = cacheGet(settings.giftImage);
              if (cached) {
                 serializedSettings.giftImage = cached;
              } else {
-                const blob = await fetch(settings.giftImage).then(r => r.blob());
-                const b64 = await fileToBase64(blob);
-                cacheSet(settings.giftImage, b64);
-                serializedSettings.giftImage = b64;
+                const blob = await fetchBlobSafe(settings.giftImage);
+                if (blob) {
+                    const b64 = await fileToBase64(blob);
+                    cacheSet(settings.giftImage, b64);
+                    serializedSettings.giftImage = b64;
+                }
              }
         }
 

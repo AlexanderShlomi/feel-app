@@ -60,18 +60,24 @@
     function decodeImageUrl(url) {
         return new Promise((resolve) => {
             if (!browser || !url) return resolve(false);
+            // Hard 8-second timeout: if Chrome extensions intercept the blob URL
+            // fetch and stall it, neither onload nor onerror fires promptly.
+            // Without this guard the promise hangs forever and the tile stays blank.
+            const timer = setTimeout(() => resolve(false), 8000);
             try {
                 const pre = new Image();
                 pre.decoding = 'async';
                 pre.onload = async () => {
+                    clearTimeout(timer);
                     try {
                         if (typeof pre.decode === 'function') await pre.decode();
                     } catch {}
                     resolve(true);
                 };
-                pre.onerror = () => resolve(false);
+                pre.onerror = () => { clearTimeout(timer); resolve(false); };
                 pre.src = url;
             } catch {
+                clearTimeout(timer);
                 resolve(false);
             }
         });
