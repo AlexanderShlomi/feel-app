@@ -315,4 +315,20 @@
   .crop-mark--br { bottom: -1mm; right: -1mm; }
   .crop-mark--br::before { width: 3mm; height: 0.2mm; bottom: 0; right: 0; }
   .crop-mark--br::after { width: 0.2mm; height: 3mm; bottom: 0; right: 0; }
+
+  @media print {
+    .batch-page {
+      overflow: visible;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      /* In print, drop the screen-side 296mm floor — content is 286mm,
+         and a 10mm forced floor combined with sub-pixel rounding can push
+         the box past 297mm. The trailing-blank-page bug that originally
+         required min-height is now handled by the
+         .page-preview-wrapper + .page-preview-wrapper page-break-before
+         selector in +page.svelte. */
+      min-height: 0;
+      height: auto;
+    }
+  }
 </style>
