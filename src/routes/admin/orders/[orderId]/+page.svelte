@@ -74,6 +74,14 @@
     { id: 'dramatic', label: 'דרמטי' }
   ];
 
+  // ── Gift item derived flags ─────────────────────────────────────────────────
+  $: hasGiftItem = Array.isArray(items)
+    && items.some(i => i.item_type === 'gift');
+
+  $: hasGiftImage = Array.isArray(items)
+    && items.some(i => i.item_type === 'gift'
+      && (i.original_storage_paths?.gift || i.original_storage_paths?.source));
+
   // ── Status / label maps ─────────────────────────────────────────────────────
   const STATUS_LABELS = {
     pending:         'ממתין לתשלום',
@@ -560,23 +568,29 @@
     </div>
 
     <!-- Release Gate (gift orders in processing) -->
-    {#if order.status === 'processing'}
-      {@const msgDone = productionJob?.gift_message_done ?? false}
-      {@const imgDone = productionJob?.gift_image_done   ?? !order.gift_enabled}
-      {@const allDone = msgDone && imgDone}
+    {#if order.status === 'processing' && (hasGiftItem || !!order.gift_message)}
+      {@const needsMsg = !!order.gift_message}
+      {@const needsImg = hasGiftImage}
+      {@const msgDone  = !needsMsg || productionJob?.gift_message_done === true}
+      {@const imgDone  = !needsImg || productionJob?.gift_image_done   === true}
+      {@const allDone  = msgDone && imgDone}
       <div class="section section--release">
         <p class="release-hint">הזמנת מתנה — יש לבצע את כל המשימות לפני שחרור להדפסה:</p>
         <div class="subtask-list">
-          <label class="subtask-item">
-            <input type="checkbox" checked={msgDone} disabled on:change={() => {}} />
-            <span>ברכה מטויבת</span>
-            {#if msgDone}<span class="subtask-done">✓</span>{/if}
-          </label>
-          <label class="subtask-item">
-            <input type="checkbox" checked={imgDone} disabled on:change={() => {}} />
-            <span>תמונת מתנה מטויבת</span>
-            {#if imgDone}<span class="subtask-done">✓</span>{/if}
-          </label>
+          {#if needsMsg}
+            <label class="subtask-item">
+              <input type="checkbox" checked={msgDone} disabled on:change={() => {}} />
+              <span>ברכה מטויבת</span>
+              {#if msgDone}<span class="subtask-done">✓</span>{/if}
+            </label>
+          {/if}
+          {#if needsImg}
+            <label class="subtask-item">
+              <input type="checkbox" checked={imgDone} disabled on:change={() => {}} />
+              <span>תמונת מתנה מטויבת</span>
+              {#if imgDone}<span class="subtask-done">✓</span>{/if}
+            </label>
+          {/if}
         </div>
         <button class="release-btn" disabled={releaseLoading || !allDone} on:click={releaseForPrint}>
           {releaseLoading ? 'מאשר…' : '🚀 שחרר לתור ההדפסה'}
@@ -628,7 +642,7 @@
     </div>
 
     <!-- Gift -->
-    {#if order.gift_enabled}
+    {#if hasGiftItem}
       <div class="section section--gift">
         <h2 class="section-title">🎁 מתנה — נדרש מגנט נוסף</h2>
         <div class="info-grid">
@@ -637,35 +651,37 @@
         </div>
 
         <!-- Gift Image Actions -->
-        <div class="gift-actions">
-          <h3 class="subsection-title">תמונת מתנה</h3>
-          <div class="actions-row">
-            <button class="admin-btn admin-btn--secondary" on:click={downloadOriginalGiftImage}>
-              הורד תמונת מקור
-            </button>
-            <label class="admin-btn admin-btn--secondary upload-label">
-              {uploadingGiftImage ? 'מעלה…' : 'העלה תמונה מטויבת'}
-              <input type="file" accept="image/*" class="sr-only"
-                on:change={uploadEditedGiftImage} disabled={uploadingGiftImage} />
-            </label>
-            <button
-              class="admin-btn"
-              on:click={openCropEditor}
-              disabled={cropLoading || !productionJob?.overridden_gift_image_path}
-              title={!productionJob?.overridden_gift_image_path ? 'יש להעלות תמונה מטויבת תחילה' : ''}
-            >
-              {cropLoading ? 'טוען…' : '✂️ ערוך חיתוך'}
-            </button>
+        {#if hasGiftImage}
+          <div class="gift-actions">
+            <h3 class="subsection-title">תמונת מתנה</h3>
+            <div class="actions-row">
+              <button class="admin-btn admin-btn--secondary" on:click={downloadOriginalGiftImage}>
+                הורד תמונת מקור
+              </button>
+              <label class="admin-btn admin-btn--secondary upload-label">
+                {uploadingGiftImage ? 'מעלה…' : 'העלה תמונה מטויבת'}
+                <input type="file" accept="image/*" class="sr-only"
+                  on:change={uploadEditedGiftImage} disabled={uploadingGiftImage} />
+              </label>
+              <button
+                class="admin-btn"
+                on:click={openCropEditor}
+                disabled={cropLoading || !productionJob?.overridden_gift_image_path}
+                title={!productionJob?.overridden_gift_image_path ? 'יש להעלות תמונה מטויבת תחילה' : ''}
+              >
+                {cropLoading ? 'טוען…' : '✂️ ערוך חיתוך'}
+              </button>
+            </div>
+            {#if productionJob?.overridden_gift_image_path}
+              <p class="override-indicator">✓ תמונה מטויבת: {productionJob.overridden_gift_image_path.split('/').pop()}</p>
+            {/if}
+            {#if productionJob?.overridden_gift_crop}
+              {@const c = productionJob.overridden_gift_crop}
+              <p class="override-indicator">✓ חיתוך: זום {c.zoom?.toFixed(2)}x · אפקט: {c.effect ?? 'מקורי'}</p>
+            {/if}
+            {#if giftImageMsg}<p class="msg {giftImageMsg.startsWith('✓') ? 'msg--ok' : 'msg--err'}">{giftImageMsg}</p>{/if}
           </div>
-          {#if productionJob?.overridden_gift_image_path}
-            <p class="override-indicator">✓ תמונה מטויבת: {productionJob.overridden_gift_image_path.split('/').pop()}</p>
-          {/if}
-          {#if productionJob?.overridden_gift_crop}
-            {@const c = productionJob.overridden_gift_crop}
-            <p class="override-indicator">✓ חיתוך: זום {c.zoom?.toFixed(2)}x · אפקט: {c.effect ?? 'מקורי'}</p>
-          {/if}
-          {#if giftImageMsg}<p class="msg {giftImageMsg.startsWith('✓') ? 'msg--ok' : 'msg--err'}">{giftImageMsg}</p>{/if}
-        </div>
+        {/if}
       </div>
     {/if}
 
