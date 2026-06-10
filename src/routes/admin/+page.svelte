@@ -130,7 +130,7 @@
               <td class="admin-cell admin-cell--center">{o.item_count ?? 0}</td>
               <td class="admin-cell">₪{Number(o.total_amount || 0).toLocaleString('he-IL')}</td>
               <td class="admin-cell admin-cell--center">
-                {#if o.gift_enabled || o.has_gift_item}
+                {#if o.has_gift_item}
                   <span class="extra-badge extra-badge--gift" title="מתנה — מגנט נוסף">🎁</span>
                 {:else}
                   —
