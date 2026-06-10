@@ -223,6 +223,15 @@
   }
 
   let printing = false;
+  let previewModalOpen = false;
+
+  function openPreviewModal() {
+    if (imagesReady) previewModalOpen = true;
+  }
+
+  function closePreviewModal() {
+    previewModalOpen = false;
+  }
 
   /**
    * Single "send to print" action:
@@ -322,6 +331,14 @@
   <main class="print-main">
     <div class="toolbar">
       <button
+        class="admin-btn admin-btn--preview"
+        on:click={openPreviewModal}
+        disabled={!imagesReady}
+        title="הצג תצוגה מקדימה של הדפים לפני ההדפסה"
+      >
+        👁️ תצוגה מקדימה
+      </button>
+      <button
         class="admin-btn admin-btn--primary"
         on:click={sendToPrint}
         disabled={!imagesReady || printing}
@@ -363,6 +380,29 @@
     </div>
   </main>
 </div>
+
+<!-- Preview Modal -->
+{#if previewModalOpen}
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="preview-modal-backdrop" on:click={closePreviewModal}>
+    <div class="preview-modal" on:click|stopPropagation>
+      <div class="preview-modal-header">
+        <span class="preview-modal-title">תצוגה מקדימה — {pageCount} עמודים, {selectedTiles} מגנטים</span>
+        <button class="preview-modal-close" on:click={closePreviewModal}>✕ סגור</button>
+      </div>
+      <div class="preview-modal-body">
+        {#each batchPages as page, i}
+          <div class="preview-modal-page">
+            <div class="preview-modal-page-label">עמוד {i + 1} / {pageCount}</div>
+            <div class="preview-modal-page-inner">
+              <PrintBatchPage pageData={page} {signedUrls} />
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ── Screen layout ───────────────────────────────────────────────────────── */
@@ -542,6 +582,34 @@
       display: none !important;
     }
 
+    .print-root {
+      margin: 0;
+      padding: 0;
+      overflow: visible;
+      display: block;
+    }
+
+    /* Neutralize the admin shell ancestors (root + admin layouts) so they
+       don't eat into the printable page budget. Without this,
+       `.admin-main`'s 24px padding (~6.35mm top+bottom) plus
+       `.admin-shell`'s `min-height: 100vh` pad/inflate the print content;
+       a full 286mm A4 page + ~12.7mm padding = ~298.7mm > 297mm, which
+       spills each full page onto an extra (near-blank) physical sheet.
+       This is independent of the browser's print-margin setting. */
+    :global(.page-container) {
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    :global(.admin-shell) {
+      min-height: 0 !important;
+      display: block !important;
+    }
+    :global(.admin-main) {
+      margin: 0 !important;
+      padding: 0 !important;
+      flex: none !important;
+    }
+
     .print-layout {
       display: block;
       margin: 0;
@@ -566,6 +634,13 @@
       border-radius: 0;
       margin: 0;
       overflow: visible;
+      /* Drop the exact 297mm screen height — @page fixes physical paper size;
+         an inner element at exactly 297mm gets bumped to a second physical
+         sheet by sub-pixel rounding in the print engine. */
+      height: auto;
+      /* Keep one logical page on one physical sheet. */
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
     /* Break before every page except the first — avoids a trailing blank page
        that `page-break-after:always` + :last-child produces when Svelte
@@ -581,6 +656,110 @@
       print-color-adjust: exact !important;
       -webkit-print-color-adjust: exact !important;
     }
+  }
+
+  /* ── Preview Modal ──────────────────────────────────────────────────────── */
+  .admin-btn--preview {
+    background: #fff;
+    border-color: #1976d2;
+    color: #1976d2;
+  }
+  .admin-btn--preview:hover:not(:disabled) { background: #e3f2fd; }
+
+  .preview-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    z-index: 1000;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    overflow-y: auto;
+    padding: 24px 16px;
+  }
+
+  .preview-modal {
+    background: #f5f5f5;
+    border-radius: 8px;
+    width: min(900px, 100%);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 48px);
+  }
+
+  .preview-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid #ddd;
+    background: #fff;
+    border-radius: 8px 8px 0 0;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .preview-modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .preview-modal-close {
+    border: 1px solid #ccc;
+    background: #fff;
+    border-radius: 5px;
+    padding: 5px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #555;
+  }
+  .preview-modal-close:hover { background: #f5f5f5; color: #000; }
+
+  .preview-modal-body {
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    align-items: center;
+  }
+
+  .preview-modal-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .preview-modal-page-label {
+    font-size: 12px;
+    color: #777;
+    font-weight: 500;
+  }
+
+  .preview-modal-page-inner {
+    /* Scale A4 (210mm ≈ 794px) to fit modal width.
+       Modal body is ~860px; 860/794 ≈ 1.08 but we keep ≤1 to avoid upscaling.
+       Use transform-origin so the scaled element doesn't shift left. */
+    transform-origin: top center;
+    transform: scale(var(--modal-page-scale, 0.72));
+    width: 210mm;
+    height: 297mm;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.15);
+    border: 1px solid #e0e0e0;
+    border-radius: 2px;
+    overflow: hidden;
+    background: white;
+    /* collapsed height after scale — keeps the stacking gap accurate */
+    margin-bottom: calc(297mm * (var(--modal-page-scale, 0.72) - 1));
+  }
+
+  @media print {
+    .preview-modal-backdrop { display: none !important; }
   }
 
   /* Force A4 portrait at the @page level so the browser print dialog opens
