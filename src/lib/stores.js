@@ -4,7 +4,7 @@ import { writable, get, derived } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl, clearDataUrlBlobUrlCache } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
-import { createGridPreviewFromBlob } from '$lib/utils/imagePreview.js';
+import { createGridPreviewViaWorker } from '$lib/utils/imagePreview.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -270,12 +270,16 @@ function getAutosaveDelayMs() {
     }
 }
 
-async function runAutosaveOnce() {
+async function runAutosaveOnce(force = false) {
     if (saveInFlight) { saveQueued = true; return; }
-    if (get(isUserInteracting)) { saveQueued = true; return; }
-    // Avoid stacking autosaves too frequently.
-    const now = Date.now();
-    if (now - lastSaveAt < 1200) { saveQueued = true; return; }
+    // `force` (page-hide / post-upload flush) bypasses the interaction + rate
+    // guards: when the tab is going away we must persist now, not "soon".
+    if (!force) {
+        if (get(isUserInteracting)) { saveQueued = true; return; }
+        // Avoid stacking autosaves too frequently.
+        const now = Date.now();
+        if (now - lastSaveAt < 1200) { saveQueued = true; return; }
+    }
 
     saveInFlight = true;
     saveQueued = false;
@@ -302,6 +306,19 @@ function triggerAutoSave() {
         // Prefer running heavy work during idle time to keep touch/scroll responsive.
         scheduleIdle(() => runAutosaveOnce(), 2500);
     }, delay);
+}
+
+/**
+ * Persist the workspace immediately, bypassing the debounce + rate/interaction
+ * guards. Call on `pagehide`/`visibilitychange` and once a batch upload settles,
+ * so the user can never navigate away before the (mobile, 8s-debounced) autosave
+ * has flushed — the root cause of the "bounced back to upload, photos only show
+ * after refresh" race.
+ */
+export function flushAutosaveNow() {
+    if (typeof window === 'undefined') return;
+    clearTimeout(saveTimeout);
+    runAutosaveOnce(true);
 }
 magnets.subscribe(() => triggerAutoSave());
 editorSettings.subscribe(() => triggerAutoSave());
@@ -599,6 +616,22 @@ function preloadImageUrl(url) {
     });
 }
 
+// How many previews to generate at once. The worker is single-threaded, but a
+// small pool keeps it fed without queuing the entire batch's blobs up front.
+const PREVIEW_CONCURRENCY = 4;
+
+/** Run `fn` over `items` with at most `limit` in flight at any time. */
+async function runWithConcurrency(items, limit, fn) {
+    const queue = [...items];
+    const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+        while (queue.length) {
+            const item = queue.shift();
+            await fn(item);
+        }
+    });
+    await Promise.all(workers);
+}
+
 export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
@@ -646,11 +679,12 @@ export async function addUploadedMagnets(files) {
 
     if (!isMobileNow) return;
 
-    // Mobile: generate previews in parallel. Each one resolves independently
-    // and updates only its own magnet, so the grid fills in tile-by-tile
-    // without any all-or-nothing wait.
-    for (const p of pending) {
-        createGridPreviewFromBlob(p.file).then((previewUrl) => {
+    // Mobile: generate previews off the main thread (Web Worker) so the UI
+    // stays at 60fps even for a 14-photo batch. Each one resolves independently
+    // and updates only its own magnet, so the grid fills in tile-by-tile.
+    // Concurrency is capped so we never hand the worker the whole batch at once.
+    const applyPreview = (p) =>
+        createGridPreviewViaWorker(p.file).then((previewUrl) => {
             if (previewUrl && previewUrl !== p.rawUrl) {
                 magnets.update((l) =>
                     l.map((m) => (m.id === p.id ? { ...m, src: previewUrl } : m))
@@ -664,7 +698,14 @@ export async function addUploadedMagnets(files) {
                 l.map((m) => (m.id === p.id ? { ...m, src: p.rawUrl } : m))
             );
         });
-    }
+
+    // Detached: the grid already shows skeletons (magnets are in the store), so
+    // we let the caller return immediately and fill tiles in the background.
+    runWithConcurrency(pending, PREVIEW_CONCURRENCY, applyPreview).then(() => {
+        // All previews settled — persist once now instead of relying on the
+        // autosave debounce, which each preview's store update keeps pushing out.
+        flushAutosaveNow();
+    });
 }
 export function updateMagnetTransform(id, tr) {
     const nextTransform = { ...tr };

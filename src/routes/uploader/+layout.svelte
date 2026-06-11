@@ -11,7 +11,7 @@
     
     import { draggable } from '$lib/actions/draggable.js';
     import { findBestTargetSlot, reflowMagnets, placeNewMagnets, reflowWithDraggedMagnet, isSlotOccupied } from '$lib/utils/grid.js';
-    import { resetSystem } from '$lib/stores.js';
+    import { resetSystem, flushAutosaveNow } from '$lib/stores.js';
     import { goto, afterNavigate } from '$app/navigation';
     import { page } from '$app/stores';
     import { get } from 'svelte/store';
@@ -210,6 +210,11 @@
     // forces transform/CSS sync when `bumpWorkspaceLayoutRefreshSignal()` runs after editor save.
     $: void $lastWorkspaceLayoutRefreshSignal;
 
+    // Flush on tab-hide (covers iOS Safari, where `pagehide` is unreliable).
+    function handleVisibilityFlush() {
+        if (document.visibilityState === 'hidden') flushAutosaveNow();
+    }
+
     onMount(() => {
         // Scope dragstart-prevent to the configurator surface only. Previously this
         // ran on `window`, which broke text selection drag and (in future code) any
@@ -232,6 +237,12 @@
                 vv.addEventListener('scroll', bumpUploaderScrollActive, { passive: true });
             }
         } catch {}
+
+        // Persist immediately when the tab is hidden/closed so a freshly uploaded
+        // batch is never lost if the user navigates away before the (8s-debounced
+        // on mobile) autosave fires — the "bounced back to upload" race.
+        window.addEventListener('pagehide', flushAutosaveNow);
+        document.addEventListener('visibilitychange', handleVisibilityFlush);
         
         // פתיחת מתנה אוטומטית אם צריך
         setTimeout(() => {
@@ -302,6 +313,8 @@
         return () => {
              try { surfaceEl?.removeEventListener('dragstart', preventDragStart); } catch {}
              window.removeEventListener('resize', handleResize);
+             window.removeEventListener('pagehide', flushAutosaveNow);
+             document.removeEventListener('visibilitychange', handleVisibilityFlush);
              try { if (canvasContainerEl) canvasContainerEl.removeEventListener('scroll', bumpUploaderScrollActive); } catch {}
              if (uploaderScrollIdleTimer) clearTimeout(uploaderScrollIdleTimer);
              uploaderScrollIdleTimer = null;

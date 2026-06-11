@@ -31,13 +31,22 @@
     let zoomMultiplier = 1; // 1..3, slider source-of-truth (stable even when minScaleLimit changes)
 
     let isDragging = false;
-    let isInteracting = false; 
+    let isInteracting = false;
     let dragStartX = 0;
     let dragStartY = 0;
     let activePointerId = null;
     let pendingDeltaX = 0;
     let pendingDeltaY = 0;
     let dragRafId = 0;
+
+    // Multi-touch pinch-zoom. We track every active pointer; two down → pinch.
+    /** @type {Map<number, { x: number, y: number }>} */
+    const activePointers = new Map();
+    let isPinching = false;
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+    let pinchPrevMidX = 0;
+    let pinchPrevMidY = 0;
     let zoomRafId = 0;
     let pendingZoomMultiplier = null;
     let hasInitializedImage = false;
@@ -99,6 +108,20 @@
         if (previewSrcToRevoke) {
             try { URL.revokeObjectURL(previewSrcToRevoke); } catch {}
             previewSrcToRevoke = null;
+        }
+        // Mobile: `magnet.src` is the ~900px grid preview built at upload. Paint it
+        // as the editor's FIRST frame so the page appears almost instantly instead
+        // of waiting on a 12MP decode; the decode-then-commit pipeline below then
+        // silently upgrades `renderSrc` to the full-res original. Crop geometry is
+        // ratio-only (computeCoverBaseSize), so the preview yields identical
+        // baseW/baseH — Law A holds. The blob is owned by the store, so we never
+        // revoke it (previewSrcToRevoke stays null). Desktop builds its own preview.
+        if (get(isMobile)) {
+            const gp = magnet?.src;
+            if (gp && gp !== magnet?.originalSrc) {
+                renderSrc = gp;
+                previewSrc = gp; // reuse for light pan/zoom during interaction too
+            }
         }
         // Re-prime base geometry for the new magnet so the next saveAndClose
         // can await accurate natural dimensions instead of the previous one's.
@@ -324,38 +347,88 @@
         isInteracting = false;
     }
 
+    function twoPointers() {
+        const it = activePointers.values();
+        return [it.next().value, it.next().value];
+    }
+    function pointerDistance(a, b) {
+        return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    }
+
     function startDrag(e) {
         // Pointer events unify mouse/touch and avoid global touchmove listeners.
         if (e.cancelable) e.preventDefault();
-        if (activePointerId !== null) return;
 
-        activePointerId = e.pointerId ?? null;
-        isDragging = true;
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         startInteraction();
 
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
+        if (e.currentTarget?.setPointerCapture) {
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+        }
 
-        if (e.currentTarget?.setPointerCapture && activePointerId !== null) {
-            try { e.currentTarget.setPointerCapture(activePointerId); } catch {}
+        if (activePointers.size >= 2) {
+            // Second finger down → enter pinch. Capture the baseline distance/zoom
+            // so the ratio maps cleanly onto the 1..3 zoom range.
+            isPinching = true;
+            isDragging = false;
+            const [a, b] = twoPointers();
+            pinchStartDist = pointerDistance(a, b);
+            pinchStartZoom = zoomMultiplier;
+            pinchPrevMidX = (a.x + b.x) / 2;
+            pinchPrevMidY = (a.y + b.y) / 2;
+        } else {
+            // First finger → single-pointer pan.
+            isPinching = false;
+            isDragging = true;
+            activePointerId = e.pointerId ?? null;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
         }
     }
 
     function flushPendingDrag() {
         dragRafId = 0;
-        if (!isDragging) return;
+        if (!isDragging && !isPinching) return;
 
-        bgTranslateX += pendingDeltaX;
-        bgTranslateY += pendingDeltaY;
-        pendingDeltaX = 0;
-        pendingDeltaY = 0;
+        if (pendingZoomMultiplier !== null) {
+            zoomMultiplier = pendingZoomMultiplier;
+            bgScale = zoomMultiplier;
+            pendingZoomMultiplier = null;
+        }
+        if (pendingDeltaX || pendingDeltaY) {
+            bgTranslateX += pendingDeltaX;
+            bgTranslateY += pendingDeltaY;
+            pendingDeltaX = 0;
+            pendingDeltaY = 0;
+        }
         clampPosition();
     }
 
     function onDrag(e) {
+        if (!activePointers.has(e.pointerId)) return;
+        if (e.cancelable) e.preventDefault();
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        if (isPinching && activePointers.size >= 2) {
+            const [a, b] = twoPointers();
+            const dist = pointerDistance(a, b);
+            const midX = (a.x + b.x) / 2;
+            const midY = (a.y + b.y) / 2;
+
+            // Distance ratio → zoom (clamped to the slider's 1..3 range).
+            pendingZoomMultiplier = Math.max(1, Math.min(3, pinchStartZoom * (dist / pinchStartDist)));
+            // Two-finger drag also pans, following the midpoint.
+            pendingDeltaX += midX - pinchPrevMidX;
+            pendingDeltaY += midY - pinchPrevMidY;
+            pinchPrevMidX = midX;
+            pinchPrevMidY = midY;
+
+            if (!dragRafId) dragRafId = requestAnimationFrame(flushPendingDrag);
+            return;
+        }
+
         if (!isDragging) return;
         if (activePointerId !== null && e.pointerId !== activePointerId) return;
-        if (e.cancelable) e.preventDefault();
 
         const deltaX = e.clientX - dragStartX;
         const deltaY = e.clientY - dragStartY;
@@ -369,14 +442,36 @@
     }
 
     function handleGlobalEnd(e) {
-        if (activePointerId !== null && e?.pointerId !== activePointerId) return;
-        activePointerId = null;
-        pendingDeltaX = 0;
-        pendingDeltaY = 0;
+        const pid = e?.pointerId;
+        if (pid != null) activePointers.delete(pid);
+
+        // Still two+ fingers down — keep pinching.
+        if (activePointers.size >= 2) return;
+
+        if (activePointers.size === 1) {
+            // Dropped from pinch back to one finger: resume panning from the
+            // remaining pointer's current position so the image doesn't jump.
+            isPinching = false;
+            const remainingId = activePointers.keys().next().value;
+            const only = activePointers.get(remainingId);
+            activePointerId = remainingId;
+            isDragging = true;
+            dragStartX = only.x;
+            dragStartY = only.y;
+            return;
+        }
+
+        // No fingers left — apply the final frame, then end the interaction.
         if (dragRafId) {
             cancelAnimationFrame(dragRafId);
             dragRafId = 0;
         }
+        flushPendingDrag();
+        activePointerId = null;
+        isPinching = false;
+        isDragging = false;
+        pendingDeltaX = 0;
+        pendingDeltaY = 0;
         if (isInteracting) endInteraction();
     }
 
