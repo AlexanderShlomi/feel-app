@@ -8,6 +8,7 @@
     import { decodeNaturalSize } from '$lib/utils/imageGeometry.js';
     import FloatingPanel from '$lib/components/FloatingPanel.svelte';
     import EffectsRow from '$lib/components/EffectsRow.svelte';
+    import GestureHintOverlay from '$lib/components/GestureHintOverlay.svelte';
 
     const FRAME_SIZE = 300; 
 
@@ -50,8 +51,9 @@
     let zoomRafId = 0;
     let pendingZoomMultiplier = null;
     let hasInitializedImage = false;
-    
-    let bgImageEl; 
+    let hasInteracted = false;
+
+    let bgImageEl;
     let activePanel = null;
 
     /** לאחר on:load של ה־img בעורך — מפעיל fade-in בלי לשנות את גודל המיכל */
@@ -335,6 +337,25 @@
         if (bgTranslateY < -maxY) bgTranslateY = -maxY;
     }
 
+    function handleZoomInput(e) {
+        pendingZoomMultiplier = parseFloat(e.target.value);
+        startInteraction();
+        if (!zoomRafId) {
+            zoomRafId = requestAnimationFrame(() => {
+                zoomRafId = 0;
+                if (pendingZoomMultiplier === null) return;
+                zoomMultiplier = pendingZoomMultiplier;
+                bgScale = zoomMultiplier;
+                pendingZoomMultiplier = null;
+                clampPosition();
+            });
+        }
+    }
+    function endZoomInteraction() {
+        if (!isInteracting) return;
+        handleGlobalEnd({ pointerId: activePointerId });
+    }
+
     // --- אירועי גרירה ואינטראקציה ---
 
     function startInteraction() {
@@ -359,6 +380,7 @@
         // Pointer events unify mouse/touch and avoid global touchmove listeners.
         if (e.cancelable) e.preventDefault();
 
+        hasInteracted = true;
         activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         startInteraction();
 
@@ -475,26 +497,6 @@
         if (isInteracting) endInteraction();
     }
 
-    function handleZoomInput(e) {
-        // Throttle updates to 60fps to keep slider responsive on mobile.
-        pendingZoomMultiplier = parseFloat(e.target.value);
-        startInteraction();
-        if (!zoomRafId) {
-            zoomRafId = requestAnimationFrame(() => {
-                zoomRafId = 0;
-                if (pendingZoomMultiplier === null) return;
-                zoomMultiplier = pendingZoomMultiplier;
-                bgScale = zoomMultiplier;
-                pendingZoomMultiplier = null;
-                clampPosition();
-            });
-        }
-    }
-    function endZoomInteraction() {
-        if (!isInteracting) return;
-        handleGlobalEnd({ pointerId: activePointerId });
-    }
-
     // --- שמירה ואיפוס ---
 
     function resetTransform() {
@@ -609,6 +611,7 @@
                 on:pointercancel={handleGlobalEnd}
             >
                 <div class="mask-hole" style="width: {FRAME_SIZE}px; height: {FRAME_SIZE}px;"></div>
+                <GestureHintOverlay storageKey="gestureHint:magnet" active={!hasInteracted} />
             </div>
 
             {#if isLoadingEffect}
@@ -616,26 +619,22 @@
             {/if}
         </div>
 
-        <div
-            class="zoom-controls"
-            on:pointerdown={startInteraction}
-        >
-            <div class="slider-wrapper">
-                <span class="icon" aria-hidden="true">-</span>
-                <input
-                    type="range"
-                    min="1"
-                    max="3"
-                    step="0.01"
-                    value={zoomMultiplier}
-                    on:input={handleZoomInput}
-                    on:change={endZoomInteraction}
-                    aria-label="זום"
-                    aria-describedby="zoom-hint"
-                >
-                <span class="icon" aria-hidden="true">+</span>
-            </div>
-            <span id="zoom-hint" class="hint">הזז את התמונה באצבע ובחר זום בסליידר</span>
+    </div>
+
+    <div class="zoom-controls" on:pointerdown={startInteraction}>
+        <div class="slider-wrapper">
+            <span class="icon" aria-hidden="true">-</span>
+            <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.01"
+                value={zoomMultiplier}
+                on:input={handleZoomInput}
+                on:change={endZoomInteraction}
+                aria-label="זום"
+            >
+            <span class="icon" aria-hidden="true">+</span>
         </div>
     </div>
 
@@ -683,6 +682,64 @@
         display: flex;
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .zoom-controls { display: none; }
+    @media (hover: hover) and (pointer: fine) {
+        .zoom-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 360px;
+            margin: 0 auto;
+            padding: 10px 20px 14px;
+            gap: 10px;
+            opacity: 0.85;
+            transition: opacity 0.3s;
+        }
+        .zoom-controls:hover { opacity: 1; }
+        .slider-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            direction: ltr;
+        }
+        .icon {
+            font-weight: 800;
+            color: #666;
+            font-size: 18px;
+            width: 18px;
+            text-align: center;
+            user-select: none;
+        }
+        .zoom-controls input[type='range'] {
+            width: 100%;
+            height: 6px;
+            background: rgba(0,0,0,0.12);
+            border-radius: 999px;
+            -webkit-appearance: none;
+            appearance: none;
+            outline: none;
+        }
+        .zoom-controls input[type='range']::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--color-pink);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        .zoom-controls input[type='range']::-moz-range-thumb {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--color-pink);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
     }
 
     .editor-stage {
@@ -800,85 +857,6 @@
         box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
     }
     
-    /* מתחת לתמונה בזרימה (לא absolute) — ב-iPhone לא נכנס על אזור החיתוך */
-    .zoom-controls {
-        position: relative;
-        flex-shrink: 0;
-        z-index: 25;
-        width: 100%;
-        max-width: 360px;
-        margin: 0 auto;
-        box-sizing: border-box;
-        padding: 10px 20px 14px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-        transition: opacity 0.3s;
-        opacity: 0.85;
-        background: transparent;
-        border-top: none;
-        box-shadow: none;
-        touch-action: manipulation;
-    }
-    .zoom-controls:hover,
-    .editor-page.is-interacting .zoom-controls {
-        opacity: 1;
-    }
-    .slider-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        width: 100%;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: transparent;
-        direction: ltr; /* stable -/+ placement on RTL pages */
-    }
-    .icon {
-        font-weight: 800;
-        color: #666;
-        font-size: 18px;
-        width: 18px;
-        text-align: center;
-        user-select: none;
-    }
-    .zoom-controls input {
-        width: 100%;
-        height: 6px;
-        background: rgba(0, 0, 0, 0.12);
-        border-radius: 999px;
-        -webkit-appearance: none;
-        appearance: none;
-        outline: none;
-        -webkit-tap-highlight-color: transparent;
-        direction: ltr;
-    }
-    .zoom-controls input::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: var(--color-pink);
-        border: 2px solid #fff;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    }
-    .zoom-controls input::-moz-range-thumb {
-        width: 22px;
-        height: 22px;
-        border-radius: 50%;
-        background: var(--color-pink);
-        border: 2px solid #fff;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    }
-    .hint {
-        color: var(--color-medium-blue-gray);
-        font-size: 13px;
-        font-weight: 600;
-        text-align: center;
-        line-height: 1.35;
-        padding: 0 8px;
-    }
     .brand-loader-bar { position: fixed; top: 0; left: 0; width: 100%; height: 6px; z-index: 99999; }
     .loader-progress { width: 100%; height: 100%; background: linear-gradient(90deg, var(--color-pink), var(--color-gold), var(--color-pink)); background-size: 200% 100%; animation: brandLoading 1.5s infinite linear; }
     .center-loader { position: absolute; z-index: 30; }
