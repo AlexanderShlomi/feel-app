@@ -30,10 +30,22 @@
     let startX = 0, startY = 0;
     let startTransX = 0, startTransY = 0;
 
+    // צביטה (Pinch-zoom) – שתי אצבעות
+    let isPinching = false;
+    let pinchStartDist = 0;
+    let pinchStartScale = 1;
+    let pinchPrevMidX = 0, pinchPrevMidY = 0;
+
+    // Skeleton – מוצג עד שהתמונה נטענת (אחיד עם העורך: 1.5s pulse)
+    let imgLoaded = false;
+    let showSkeleton = true;
+
     // אתחול – שימוש ב-ResizeObserver להתאמה למרחב הזמין בפועל
     onMount(() => {
         calculateLayout();
         requestAnimationFrame(() => calculateLayout());
+        // If the blob was already decoded (cache), `on:load` won't fire — reveal now.
+        if (imageEl?.complete && imageEl.naturalWidth) imgLoaded = true;
         if (viewportEl && window.ResizeObserver) {
             resizeObserver = new ResizeObserver(() => calculateLayout());
             resizeObserver.observe(viewportEl);
@@ -133,26 +145,63 @@
         clamp();
     }
 
-    // --- גרירה (Drag) ---
+    // --- גרירה (Drag) + צביטה (Pinch) ---
+    function touchDist(a, b) {
+        return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+    }
+
     function handleMouseDown(e) {
         if (e.cancelable) e.preventDefault();
-        isDragging = true;
         beginUserInteraction();
-        
+
+        // שתי אצבעות → התחלת צביטה (שמירת מרחק/זום בסיסיים)
+        if (e.touches && e.touches.length >= 2) {
+            isPinching = true;
+            isDragging = false;
+            const t1 = e.touches[0], t2 = e.touches[1];
+            pinchStartDist = touchDist(t1, t2);
+            pinchStartScale = scale;
+            pinchPrevMidX = (t1.clientX + t2.clientX) / 2;
+            pinchPrevMidY = (t1.clientY + t2.clientY) / 2;
+            addGlobalListeners();
+            return;
+        }
+
+        isPinching = false;
+        isDragging = true;
+
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        
+
         startX = clientX;
         startY = clientY;
         startTransX = translateX;
         startTransY = translateY;
-        
+
         addGlobalListeners();
     }
 
     function handleMove(e) {
-        if (!isDragging) return;
         if (e.cancelable) e.preventDefault();
+
+        // מצב צביטה: יחס המרחק בין האצבעות → זום (1..3), והמרכז גורר את התמונה
+        if (isPinching && e.touches && e.touches.length >= 2) {
+            const t1 = e.touches[0], t2 = e.touches[1];
+            const dist = touchDist(t1, t2);
+            const midX = (t1.clientX + t2.clientX) / 2;
+            const midY = (t1.clientY + t2.clientY) / 2;
+
+            scale = Math.max(1, Math.min(3, pinchStartScale * (dist / pinchStartDist)));
+            translateX += midX - pinchPrevMidX;
+            translateY += midY - pinchPrevMidY;
+            pinchPrevMidX = midX;
+            pinchPrevMidY = midY;
+
+            clamp();
+            return;
+        }
+
+        if (!isDragging) return;
 
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -166,10 +215,28 @@
         clamp(); // הגבלה בזמן אמת
     }
 
-    function handleUp() {
+    function handleUp(e) {
+        // צביטה שמסתיימת אך אצבע אחת נשארה → חזרה לגרירה רגילה ללא קפיצה
+        if (e && e.touches && e.touches.length === 1) {
+            isPinching = false;
+            isDragging = true;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            startTransX = translateX;
+            startTransY = translateY;
+            return;
+        }
         isDragging = false;
+        isPinching = false;
         removeGlobalListeners();
         endUserInteraction();
+    }
+
+    function onImgLoad() {
+        imgLoaded = true;
+    }
+    function onSkeletonTransitionEnd(e) {
+        if (e.propertyName === 'opacity' && imgLoaded) showSkeleton = false;
     }
 
     function addGlobalListeners() {
@@ -265,11 +332,12 @@
                 on:touchstart={handleMouseDown}
                 on:keydown={handleCropKeyDown}
             >
-                <img 
-                    src={imageSrc} 
+                <img
+                    src={imageSrc}
                     bind:this={imageEl}
+                    on:load={onImgLoad}
                     style="
-                        width: {imgDisplayWidth}px; 
+                        width: {imgDisplayWidth}px;
                         height: {imgDisplayHeight}px;
                         transform: translate({translateX}px, {translateY}px) scale({scale});
                     "
@@ -290,6 +358,17 @@
                         <div class="cell"></div>
                     {/each}
                 </div>
+
+                {#if showSkeleton}
+                    <div
+                        class="mosaic-skeleton-wrap"
+                        class:mosaic-skeleton-wrap--fade-out={imgLoaded}
+                        on:transitionend={onSkeletonTransitionEnd}
+                        aria-hidden="true"
+                    >
+                        <div class="mosaic-skeleton mosaic-skeleton--pulse"></div>
+                    </div>
+                {/if}
             </div>
         </div>
 
@@ -363,11 +442,37 @@
         overflow: hidden; /* חיתוך החלקים שיוצאים */
         box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
         background: #000;
-        
+
         display: flex; justify-content: center; align-items: center;
         cursor: grab;
+        /* קריטי ל-pinch: מונע מהדפדפן לחטוף את מחוות שתי האצבעות כ-page-zoom */
+        touch-action: none;
     }
     .crop-box:active { cursor: grabbing; }
+
+    /* Skeleton – אחיד עם העורך (1.5s pulse), בצבע בהיר כי הרקע כהה */
+    .mosaic-skeleton-wrap {
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        pointer-events: none;
+        background: #1a1a1a;
+        opacity: 1;
+        transition: opacity 0.4s ease-out;
+    }
+    .mosaic-skeleton-wrap--fade-out { opacity: 0; }
+    .mosaic-skeleton {
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .mosaic-skeleton--pulse {
+        animation: mosaicSkeletonPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes mosaicSkeletonPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
 
     .crop-box img {
         display: block;
