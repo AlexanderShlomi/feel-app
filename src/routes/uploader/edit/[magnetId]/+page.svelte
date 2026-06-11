@@ -337,6 +337,25 @@
         if (bgTranslateY < -maxY) bgTranslateY = -maxY;
     }
 
+    function handleZoomInput(e) {
+        pendingZoomMultiplier = parseFloat(e.target.value);
+        startInteraction();
+        if (!zoomRafId) {
+            zoomRafId = requestAnimationFrame(() => {
+                zoomRafId = 0;
+                if (pendingZoomMultiplier === null) return;
+                zoomMultiplier = pendingZoomMultiplier;
+                bgScale = zoomMultiplier;
+                pendingZoomMultiplier = null;
+                clampPosition();
+            });
+        }
+    }
+    function endZoomInteraction() {
+        if (!isInteracting) return;
+        handleGlobalEnd({ pointerId: activePointerId });
+    }
+
     // --- אירועי גרירה ואינטראקציה ---
 
     function startInteraction() {
@@ -602,6 +621,23 @@
 
     </div>
 
+    <div class="zoom-controls" on:pointerdown={startInteraction}>
+        <div class="slider-wrapper">
+            <span class="icon" aria-hidden="true">-</span>
+            <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.01"
+                value={zoomMultiplier}
+                on:input={handleZoomInput}
+                on:change={endZoomInteraction}
+                aria-label="זום"
+            >
+            <span class="icon" aria-hidden="true">+</span>
+        </div>
+    </div>
+
     <footer id="bottom-toolbar-edit" class="glass-dock">
     <button class="dock-btn-text" on:click={resetTransform}>אפס</button>
     <button class="dock-btn-text" on:click={() => activePanel = 'effects'}>אפקטים</button>
@@ -646,6 +682,64 @@
         display: flex;
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .zoom-controls { display: none; }
+    @media (hover: hover) and (pointer: fine) {
+        .zoom-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 360px;
+            margin: 0 auto;
+            padding: 10px 20px 14px;
+            gap: 10px;
+            opacity: 0.85;
+            transition: opacity 0.3s;
+        }
+        .zoom-controls:hover { opacity: 1; }
+        .slider-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            direction: ltr;
+        }
+        .icon {
+            font-weight: 800;
+            color: #666;
+            font-size: 18px;
+            width: 18px;
+            text-align: center;
+            user-select: none;
+        }
+        .zoom-controls input[type='range'] {
+            width: 100%;
+            height: 6px;
+            background: rgba(0,0,0,0.12);
+            border-radius: 999px;
+            -webkit-appearance: none;
+            appearance: none;
+            outline: none;
+        }
+        .zoom-controls input[type='range']::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--color-pink);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        .zoom-controls input[type='range']::-moz-range-thumb {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: var(--color-pink);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
     }
 
     .editor-stage {

@@ -140,6 +140,12 @@
         clamp(); // וידוא שהתמונה לא בורחת
     }
 
+    function handleZoom(e) {
+        beginUserInteraction();
+        scale = parseFloat(e.target.value);
+        clamp();
+    }
+
     function resetPosition() {
         scale = 1;
         translateX = 0;
@@ -373,6 +379,18 @@
 
         <div class="controls">
             <button class="text-btn" on:click={() => dispatch('close')}>ביטול</button>
+            <div class="slider-wrapper">
+                <span class="icon">-</span>
+                <input
+                    type="range"
+                    min="1" max="3" step="0.01"
+                    value={scale}
+                    on:input={handleZoom}
+                    on:change={() => endUserInteraction()}
+                    aria-label="זום"
+                >
+                <span class="icon">+</span>
+            </div>
             <button class="text-btn" on:click={resetPosition}>אפס</button>
             <button class="save-btn" on:click={onSave}>שמור</button>
         </div>
@@ -495,6 +513,42 @@
 
     .text-btn { background: none; border: none; cursor: pointer; font-weight: 600; color: #666; font-size: 14px; }
     .save-btn { background: #1E1E1E; color: white; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 700; cursor: pointer; font-size: 14px; }
+
+    .slider-wrapper { display: none; }
+    @media (hover: hover) and (pointer: fine) {
+        .slider-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+        }
+        .icon { font-weight: bold; color: #666; font-size: 18px; }
+        input[type='range'] {
+            width: 100%;
+            height: 10px;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        input[type='range']::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: var(--color-pink, #3f524f);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        input[type='range']::-moz-range-thumb {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: var(--color-pink, #3f524f);
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+    }
 
     @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
 </style>

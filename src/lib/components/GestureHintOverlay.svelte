@@ -5,7 +5,6 @@
     export let active = true;
 
     let showAnimation = false;
-    let showIcon = true;
     let prefersReduced = false;
 
     onMount(() => {
@@ -27,29 +26,25 @@
 
 <div class="gesture-hint" aria-hidden="true">
     {#if showAnimation}
-        <div class="anim-wrap" class:fade-out={!showAnimation}>
+        <div class="anim-wrap">
             <svg class="pinch-svg" viewBox="0 0 80 60" width="80" height="60" fill="none">
-                <!-- Left finger -->
                 <circle class="finger-l" cx="20" cy="30" r="8" fill="rgba(255,255,255,0.85)" stroke="rgba(63,82,79,0.9)" stroke-width="2"/>
-                <!-- Right finger -->
                 <circle class="finger-r" cx="60" cy="30" r="8" fill="rgba(255,255,255,0.85)" stroke="rgba(63,82,79,0.9)" stroke-width="2"/>
-                <!-- Pan arrow -->
                 <path class="pan-arrow" d="M35 48 L45 48 M41 44 L45 48 L41 52" stroke="rgba(198,178,154,0.95)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            <span class="anim-label">צבוט לזום · גרור להזזה</span>
         </div>
     {/if}
 
-    {#if showIcon}
-        <div class="static-icon" class:hidden={showAnimation}>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-                <circle cx="7" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
-                <circle cx="17" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
-                <path d="M10 12 L14 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M12 16 L12 20 M10 18 L12 20 L14 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-        </div>
-    {/if}
+    <!-- Persistent pill — always visible during mobile session -->
+    <div class="static-pill" class:hidden={showAnimation}>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+            <circle cx="7" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="17" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M10 12 L14 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M12 16 L12 20 M10 18 L12 20 L14 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="pill-label">צבוט לזום · גרור להזזה</span>
+    </div>
 </div>
 
 <style>
@@ -63,7 +58,12 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
+    }
+
+    /* Hide entirely on desktop — slider covers this use case */
+    @media (hover: hover) and (pointer: fine) {
+        .gesture-hint { display: none; }
     }
 
     .anim-wrap {
@@ -100,14 +100,6 @@
         to   { opacity: 1;   transform: translateX(4px); }
     }
 
-    .anim-label {
-        color: rgba(255,255,255,0.9);
-        font-size: 12px;
-        font-weight: 600;
-        white-space: nowrap;
-        direction: rtl;
-    }
-
     @keyframes hintFadeIn {
         from { opacity: 0; transform: scale(0.9); }
         to   { opacity: 1; transform: scale(1); }
@@ -117,20 +109,30 @@
         to   { opacity: 0; }
     }
 
-    .static-icon {
-        color: rgba(63,82,79,0.8);
-        background: rgba(255,255,255,0.75);
-        border-radius: 50%;
-        width: 32px;
-        height: 32px;
+    /* Permanent pill — icon + label always visible */
+    .static-pill {
         display: flex;
         align-items: center;
-        justify-content: center;
-        backdrop-filter: blur(4px);
+        gap: 6px;
+        background: rgba(255,255,255,0.88);
+        border: 1px solid rgba(63,82,79,0.18);
+        border-radius: 999px;
+        padding: 5px 12px 5px 8px;
+        color: rgb(63,82,79);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 1px 6px rgba(0,0,0,0.12);
         transition: opacity 0.3s;
     }
-    .static-icon.hidden {
+    .static-pill.hidden {
         opacity: 0;
+    }
+
+    .pill-label {
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        direction: rtl;
+        text-shadow: 0 1px 2px rgba(255,255,255,0.5);
     }
 
     @media (prefers-reduced-motion: reduce) {
