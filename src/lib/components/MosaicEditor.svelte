@@ -1,6 +1,7 @@
 <script>
     import { createEventDispatcher, onMount } from 'svelte';
     import { beginUserInteraction, endUserInteraction } from '$lib/stores.js';
+    import GestureHintOverlay from '$lib/components/GestureHintOverlay.svelte';
     
     export let imageSrc;
     export let transform = { zoom: 1, x: 0, y: 0 };
@@ -15,9 +16,10 @@
     let resizeObserver;
     
     // משתני עריכה
-    let scale = 1; 
+    let scale = 1;
     let translateX = 0;
     let translateY = 0;
+    let hasInteracted = false;
     
     // משתני חישוב (לשימוש פנימי)
     let containerWidth = 0;
@@ -152,6 +154,7 @@
 
     function handleMouseDown(e) {
         if (e.cancelable) e.preventDefault();
+        hasInteracted = true;
         beginUserInteraction();
 
         // שתי אצבעות → התחלת צביטה (שמירת מרחק/זום בסיסיים)
@@ -251,12 +254,6 @@
         window.removeEventListener('mouseup', handleUp);
         window.removeEventListener('touchmove', handleMove);
         window.removeEventListener('touchend', handleUp);
-    }
-
-    function handleZoom(e) {
-        beginUserInteraction();
-        scale = parseFloat(e.target.value);
-        clamp();
     }
 
     function handleCropKeyDown(e) {
@@ -369,24 +366,13 @@
                         <div class="mosaic-skeleton mosaic-skeleton--pulse"></div>
                     </div>
                 {/if}
+
+                <GestureHintOverlay storageKey="gestureHint:mosaic" active={!hasInteracted} />
             </div>
         </div>
 
         <div class="controls">
             <button class="text-btn" on:click={() => dispatch('close')}>ביטול</button>
-            
-            <div class="slider-wrapper">
-                <span class="icon">-</span>
-                <input 
-                    type="range" 
-                    min="1" max="3" step="0.01" 
-                    value={scale} 
-                    on:input={handleZoom}
-                    on:change={() => endUserInteraction()}
-                >
-                <span class="icon">+</span>
-            </div>
-
             <button class="text-btn" on:click={resetPosition}>אפס</button>
             <button class="save-btn" on:click={onSave}>שמור</button>
         </div>
@@ -505,33 +491,6 @@
         align-items: center;
         gap: 15px;
         flex-shrink: 0;
-    }
-
-    .slider-wrapper {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 0;
-        touch-action: manipulation;
-    }
-    .icon { font-weight: bold; color: #666; font-size: 18px; }
-    
-    input[type='range'] {
-        width: 100%;
-        height: 10px;
-        cursor: pointer;
-        -webkit-appearance: none;
-        appearance: none;
-    }
-    input[type='range']::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        background: var(--color-pink, #3f524f);
-        border: 2px solid #fff;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     }
 
     .text-btn { background: none; border: none; cursor: pointer; font-weight: 600; color: #666; font-size: 14px; }
