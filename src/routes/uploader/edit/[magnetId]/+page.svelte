@@ -868,28 +868,22 @@
         transform: translateX(-50%);
         z-index: 1000;
         display: flex;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        gap: 10px 12px;
+        column-gap: 12px;
+        row-gap: 8px;
         padding: 10px 16px;
-        border-radius: 50px;
-        width: max-content;
+        border-radius: 26px;
+        width: auto;
         max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        overscroll-behavior-x: contain;
-        scrollbar-width: none;
+        overflow: hidden;
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
         transition: opacity 0.3s;
         box-sizing: border-box;
-    }
-    .glass-dock::-webkit-scrollbar {
-        display: none;
     }
     .glass-dock .dock-btn-text { flex-shrink: 0; }
 

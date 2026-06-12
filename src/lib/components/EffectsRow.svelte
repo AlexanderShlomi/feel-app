@@ -4,7 +4,7 @@
   export let onSelect = () => {};
   export let size = 'md'; // 'sm' | 'md'
 
-  $: thumbPx = size === 'sm' ? 46 : 60;
+  $: thumbPx = size === 'sm' ? 46 : 76;
 </script>
 
 <div class="effects-row" role="group" aria-label="אפקטים">
@@ -97,8 +97,8 @@
 
   @media (min-width: 769px) {
     .effects-row {
-      width: min(92vw, 620px);
-      gap: 14px;
+      width: min(92vw, 420px);
+      gap: 16px;
     }
     .label {
       font-size: 13px;
