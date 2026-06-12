@@ -144,6 +144,28 @@
 
     $: if ($user) showAuthModal = false;
 
+    let privacyBridgeAttempted = false;
+
+    async function bridgeGuestPrivacyConsent(userId) {
+        if (privacyBridgeAttempted) return;
+        if (!privacyNeedsReaccept($profile, $currentPrivacyPolicy)) {
+            clearCheckoutPrivacyConsent();
+            return;
+        }
+        privacyBridgeAttempted = true;
+        const err = await recordPrivacyConsent();
+        if (!err) {
+            await refreshProfile(userId);
+            clearCheckoutPrivacyConsent();
+        } else {
+            privacyBridgeAttempted = false;
+        }
+    }
+
+    $: if ($user && !$authLoading && hasCheckoutPrivacyConsent()) {
+        void bridgeGuestPrivacyConsent($user.id);
+    }
+
     $: if (giftEnabled && $profile && !didInitGiftFromProfile) {
         giftSenderName = $profile.full_name || '';
         giftSenderPhone = normalizeDigitsToIsraelMobile($profile.phone || '');
