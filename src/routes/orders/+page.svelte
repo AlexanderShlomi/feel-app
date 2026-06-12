@@ -3,6 +3,7 @@
     import { get } from 'svelte/store';
     import { supabase } from '$lib/supabase';
     import { user, authLoading } from '$lib/authStore';
+    import AuthModal from '$lib/components/AuthModal.svelte';
     import {
         ordersSessionKey,
         clearOrdersSessionCacheForUser,
@@ -59,6 +60,9 @@
 
     let listLoading = true;
     let loadError = '';
+    let showAuthModal = false;
+
+    $: if ($user) showAuthModal = false;
 
     let fetchSeq = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
@@ -692,7 +696,7 @@
             <p class="orders-muted" aria-busy="true">טוען…</p>
         {:else if !$user}
             <p class="orders-lead">התחברו כדי לראות את ההיסטוריה שלכם.</p>
-            <a class="orders-cta" href="/checkout">לתשלום / התחברות</a>
+            <button class="orders-cta" type="button" on:click={() => (showAuthModal = true)}>התחברות</button>
         {:else if listLoading}
             <div class="orders-skeleton-wrap" aria-busy="true" aria-label="טוען הזמנות">
                 <p class="skeleton-hint">טוען הזמנות…</p>
@@ -865,6 +869,8 @@
         {/if}
     </div>
 </div>
+
+<AuthModal isOpen={showAuthModal} close={() => (showAuthModal = false)} />
 
 <style>
     .orders-page {
