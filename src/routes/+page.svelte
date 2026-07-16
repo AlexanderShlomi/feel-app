@@ -28,14 +28,17 @@
     import { onMount, onDestroy, tick } from 'svelte'; 
     import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
     import { goto } from '$app/navigation';
+    import { trackEvent } from '$lib/analytics.js';
 
     // --- יצירת פרויקט חדש ---
     function startNewMagnets() {
+        trackEvent('select_item', { product_type: PRODUCT_TYPES.MAGNETS_PACK, location: 'home' });
         resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
         goto('/uploader');
     }
 
     function startNewMosaic() {
+        trackEvent('select_item', { product_type: PRODUCT_TYPES.MOSAIC, location: 'home' });
         resetSystem(PRODUCT_TYPES.MOSAIC);
         goto('/uploader');
     }

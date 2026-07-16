@@ -647,11 +647,12 @@
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
+    <!-- אותו כלל גודל כמו בפאנל האפקטים של ה-workspace (uploader/+layout) — נראות אחידה -->
     <EffectsRow
         effects={effectsList}
         activeId={currentEffectId}
         onSelect={applyEffect}
-        size="sm"
+        size={$isMobile ? 'sm' : 'md'}
     />
 </FloatingPanel>
 </div>
@@ -868,11 +869,11 @@
         transform: translateX(-50%);
         z-index: 1000;
         display: flex;
+        /* Law B: אסור גלילה אופקית — הכפתורים נשברים לשורה נוספת אם אין מקום */
         flex-wrap: wrap;
         align-items: center;
         justify-content: center;
-        column-gap: 12px;
-        row-gap: 8px;
+        gap: 8px 12px;
         padding: 10px 16px;
         border-radius: 26px;
         width: auto;

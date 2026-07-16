@@ -4,6 +4,8 @@
     import { goto } from '$app/navigation';
     import { supabase } from '$lib/supabase';
     import { profile } from '$lib/authStore';
+    import { trackEcommerceOnce } from '$lib/analytics.js';
+    import { cookieConsent } from '$lib/consentStore.js';
 
     /** @type {{ order_number?: number|null; status?: string|null; shipping_first_name?: string|null; shipping_last_name?: string|null; shipping_city?: string|null; shipping_street?: string|null; shipping_house_number?: number|null; shipping_apartment_number?: number|null; shipping_notes?: string|null; placed_at?: string|null; total_amount?: number|null; currency?: string|null; gift_enabled?: boolean|null; gift_message?: string|null; gift_sender_name?: string|null } | null} */
     let order = null;
@@ -11,6 +13,7 @@
     let orderItems = [];
     let loading = true;
     let loadError = '';
+    let itemsLoadFailed = false;
 
     $: orderId = $page.params.orderId;
     $: siteBase = String($page.data?.siteUrl ?? '')
@@ -164,8 +167,11 @@
                 if (itemsErr) {
                     console.error('Load order_items:', itemsErr);
                     orderItems = [];
+                    // לא מודדים רכישה עם items חסרים — הטעינה המוצלחת הבאה תמדוד
+                    itemsLoadFailed = true;
                 } else {
                     orderItems = items ?? [];
+                    itemsLoadFailed = false;
                 }
             }
         } catch (e) {
@@ -176,6 +182,35 @@
         } finally {
             loading = false;
         }
+    }
+
+    /* מדידת רכישה — ריאקטיבי כדי להמתין גם להכרעת הסכמה (באנר בביקור ראשון) וגם
+       לטעינת ההזמנה. trackEcommerceOnce נועל (localStorage, חוצה סשנים/טאבים) רק
+       אחרי שהאירוע נדחף בפועל, כך שהסכמה מאוחרת לא מאבדת את ה-conversion. ללא PII. */
+    $: if (order && !loading && !itemsLoadFailed && $cookieConsent.decided) {
+        trackPurchaseOnce();
+    }
+
+    function trackPurchaseOnce() {
+        // שער סטטוס: לא מודדים הזמנה שטרם שולמה או שבוטלה (רלוונטי למשפך Tranzila pending→paid)
+        if (order.status === 'pending' || order.status === 'cancelled') return;
+        trackEcommerceOnce(
+            `purchase_${orderId}`,
+            'purchase',
+            {
+                // מזהה קנוני יחיד (UUID של ההזמנה) — עקבי בין טעינות, בסיס לדה-דופ ב-GA
+                transaction_id: orderId,
+                value: Number(order.total_amount) || 0,
+                currency: order.currency || 'ILS',
+                items: (orderItems || []).map((it) => ({
+                    item_id: it.title || 'item',
+                    item_name: it.title || 'item',
+                    price: Number(it.line_total) || 0,
+                    quantity: it.quantity ?? 1
+                }))
+            },
+            { persistent: true }
+        );
     }
 
     function goToOrders() {

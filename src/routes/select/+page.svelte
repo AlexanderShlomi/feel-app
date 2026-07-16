@@ -2,13 +2,16 @@
     import { scrollAnimation } from '$lib/actions/scrollAnimation.js';
     import { resetSystem, PRODUCT_TYPES } from '$lib/stores.js';
     import { goto } from '$app/navigation';
+    import { trackEvent } from '$lib/analytics.js';
 
     function handleSelectMagnets() {
+        trackEvent('select_item', { product_type: PRODUCT_TYPES.MAGNETS_PACK, location: 'select_page' });
         resetSystem(PRODUCT_TYPES.MAGNETS_PACK);
         goto('/uploader');
     }
 
     function handleSelectMosaic() {
+        trackEvent('select_item', { product_type: PRODUCT_TYPES.MOSAIC, location: 'select_page' });
         resetSystem(PRODUCT_TYPES.MOSAIC);
         goto('/uploader');
     }

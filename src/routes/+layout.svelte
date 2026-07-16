@@ -1,16 +1,20 @@
 <script>
     import { page, navigating } from '$app/stores';
-    import '../app.css'; 
+    import { afterNavigate } from '$app/navigation';
+    import '../app.css';
     import Header from '$lib/components/Header.svelte';
     import SideMenu from '$lib/components/SideMenu.svelte';
     import AuthModal from '$lib/components/AuthModal.svelte';
     import PrivacyPolicy from '$lib/components/PrivacyPolicy.svelte';
     import CookiePolicy from '$lib/components/CookiePolicy.svelte';
+    import CookieConsentBanner from '$lib/components/CookieConsentBanner.svelte';
     import { onMount, onDestroy } from 'svelte';
     import { OPEN_PRIVACY_EVENT, OPEN_COOKIE_POLICY_EVENT } from '$lib/privacyCheckoutConsent.js';
     import { initApp, isGlobalLoading } from '$lib/stores.js';
     import { initAuth } from '$lib/authStore';
     import { fetchCurrentPrivacyPolicy } from '$lib/privacyPolicyStore.js';
+    import { initConsent } from '$lib/consentStore.js';
+    import { trackPageView } from '$lib/analytics.js';
 
     /** @type {{ siteUrl: string }} */
     export let data;
@@ -122,6 +126,8 @@
         initApp();
         initAuth();
         fetchCurrentPrivacyPolicy();
+        // הסכמת עוגיות + מדידה (Consent Mode v2). מחיל הסכמה שמורה, או כלום עד אישור.
+        initConsent();
         const unsub = isGlobalLoading.subscribe((loading) => {
             // Clear any pending timers first.
             if (loaderShowTimer) clearTimeout(loaderShowTimer);
@@ -162,6 +168,12 @@
             if (loaderShowTimer) clearTimeout(loaderShowTimer);
             if (loaderHideTimer) clearTimeout(loaderHideTimer);
         };
+    });
+
+    // צפיית עמוד בכל ניווט SPA (הסקריפטים עצמם נטענים רק לאחר הסכמה).
+    afterNavigate(() => {
+        if (typeof window === 'undefined') return;
+        trackPageView($page.url.pathname);
     });
 
     onDestroy(() => {
@@ -237,6 +249,7 @@
     <PrivacyPolicy isOpen={showPrivacy} close={() => showPrivacy = false} />
     <CookiePolicy isOpen={showCookiePolicy} close={() => showCookiePolicy = false} />
     <AuthModal isOpen={showAuth} close={() => showAuth = false} />
+    <CookieConsentBanner />
     
     <slot />
 
