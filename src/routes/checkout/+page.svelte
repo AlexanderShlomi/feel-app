@@ -146,11 +146,14 @@
     $: if ($user) showAuthModal = false;
 
     let privacyBridgeAttempted = false;
+    /** הסתיים ניסיון גישור (הצלחה או כשל) — עד אז מציגים ספינר ולא את כרטיס ההסכמה */
+    let privacyBridgeDone = false;
 
     async function bridgeGuestPrivacyConsent(userId) {
         if (privacyBridgeAttempted) return;
         if (!privacyNeedsReaccept($profile, $currentPrivacyPolicy)) {
             clearCheckoutPrivacyConsent();
+            privacyBridgeDone = true;
             return;
         }
         privacyBridgeAttempted = true;
@@ -161,11 +164,23 @@
         } else {
             privacyBridgeAttempted = false;
         }
+        privacyBridgeDone = true;
     }
 
     $: if ($user && !$authLoading && hasCheckoutPrivacyConsent()) {
         void bridgeGuestPrivacyConsent($user.id);
     }
+
+    /**
+     * חלון הגישור: המשתמש כבר הסכים כאורח וההסכמה נרשמת כעת בשרת — אין להציג
+     * את כרטיס ההסכמה (הוא היה מהבהב לרגע ונעלם), רק חסימה שקטה עם ספינר.
+     */
+    $: privacyBridgePending =
+        !!$user &&
+        !$authLoading &&
+        !privacyBridgeDone &&
+        hasCheckoutPrivacyConsent() &&
+        privacyNeedsReaccept($profile, $currentPrivacyPolicy);
 
     $: if (giftEnabled && $profile && !didInitGiftFromProfile) {
         giftSenderName = $profile.full_name || '';
@@ -960,6 +975,13 @@
             aria-modal="true"
             aria-labelledby="privacy-gate-title"
         >
+            {#if $authLoading || privacyBridgePending}
+                <!-- auth נטען / הסכמת האורח נרשמת בשרת — חסימה שקטה בלי להבהב את כרטיס ההסכמה -->
+                <div class="privacy-checkout-gate-card privacy-gate-card--pending" aria-busy="true">
+                    <div class="privacy-gate-spinner" aria-hidden="true"></div>
+                    <p class="privacy-gate-pending-text">רק רגע…</p>
+                </div>
+            {:else}
             <div class="privacy-checkout-gate-card">
                 <h2 id="privacy-gate-title" class="privacy-gate-heading">לפני התשלום</h2>
                 <p class="privacy-gate-lead">
@@ -987,6 +1009,7 @@
                     <span>קראתי והסכמתי למדיניות הפרטיות</span>
                 </label>
             </div>
+            {/if}
         </div>
     {/if}
 
@@ -1352,6 +1375,34 @@
         border: 1px solid rgba(198, 178, 154, 0.45);
         text-align: right;
         direction: rtl;
+    }
+
+    .privacy-gate-card--pending {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 32px 24px;
+    }
+
+    .privacy-gate-spinner {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid rgba(63, 82, 79, 0.2);
+        border-top-color: #3f524f;
+        animation: privacyGateSpin 0.8s linear infinite;
+    }
+
+    @keyframes privacyGateSpin {
+        to { transform: rotate(360deg); }
+    }
+
+    .privacy-gate-pending-text {
+        margin: 0;
+        font-size: 0.95rem;
+        color: #475160;
+        font-weight: 600;
     }
 
     .privacy-gate-heading {

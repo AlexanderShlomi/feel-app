@@ -53,18 +53,29 @@
     let hasInitializedImage = false;
     let hasInteracted = false;
 
-    let bgImageEl;
     let activePanel = null;
 
     /** לאחר on:load של ה־img בעורך — מפעיל fade-in בלי לשנות את גודל המיכל */
     let editorImagePainted = false;
     /** Skeleton מוצג עד fade-out לאחר on:load; אז מוסר מה-DOM */
     let showEditorSkeleton = true;
-    let renderSrc = null; // never show a blank frame: swap only after decode
+    /**
+     * Double-buffer: שתי שכבות img קבועות, מחליפים רק opacity — ולעולם לא את ה-src
+     * של השכבה המוצגת. ב-iOS החלפת src על אלמנט חי (preview↔original) גורמת
+     * לפריים לבן של שניות בזמן re-decode של תמונת 12MP תחת לחץ זיכרון; כאן
+     * הפריים הקודם נשאר מצויר עד שהשכבה הנכנסת סיימה decode על האלמנט עצמו.
+     * אחרי המחזור הראשון שתי השכבות מחזיקות את שני המקורות — ההחלפות מיידיות.
+     */
+    let srcA = null;
+    let srcB = null;
+    let imgElA;
+    let imgElB;
+    let activeLayer = 'A';
+    /** היעד שממתין לקידום — מבטל קידומים שנדרסו ע"י יעד חדש יותר */
+    let pendingTarget = null;
+    /** האלמנט המוצג כרגע — לחישובי הגיאומטריה הקיימים */
+    $: bgImageEl = activeLayer === 'A' ? imgElA : imgElB;
     let lastResolvedSrc = null;
-    let preloadToken = 0;
-    /** Set in decode done(); avoids reading `renderSrc` in the preload reactive (extra re-runs). */
-    let committedFirstFrame = false;
     /** דחיית preload/decode לריצה אחרי onMount — UI ראשוני עולה לפני עבודת תמונה */
     let editorReady = false;
 
@@ -100,10 +111,11 @@
     let prevMagnetRouteId = null;
     $: if (magnetId !== prevMagnetRouteId) {
         prevMagnetRouteId = magnetId;
-        committedFirstFrame = false;
-        renderSrc = null;
+        srcA = null;
+        srcB = null;
+        activeLayer = 'A';
+        pendingTarget = null;
         lastResolvedSrc = null;
-        preloadToken++;
         editorImagePainted = false;
         showEditorSkeleton = true;
         previewSrc = null;
@@ -113,15 +125,15 @@
         }
         // Mobile: `magnet.src` is the ~900px grid preview built at upload. Paint it
         // as the editor's FIRST frame so the page appears almost instantly instead
-        // of waiting on a 12MP decode; the decode-then-commit pipeline below then
-        // silently upgrades `renderSrc` to the full-res original. Crop geometry is
+        // of waiting on a 12MP decode; the layer pipeline below then silently
+        // upgrades to the full-res original on the hidden layer. Crop geometry is
         // ratio-only (computeCoverBaseSize), so the preview yields identical
         // baseW/baseH — Law A holds. The blob is owned by the store, so we never
         // revoke it (previewSrcToRevoke stays null). Desktop builds its own preview.
         if (get(isMobile)) {
             const gp = magnet?.src;
             if (gp && gp !== magnet?.originalSrc) {
-                renderSrc = gp;
+                srcA = gp;
                 previewSrc = gp; // reuse for light pan/zoom during interaction too
             }
         }
@@ -142,29 +154,44 @@
 
     $: if (editorReady && resolvedEffectSrc && resolvedEffectSrc !== lastResolvedSrc) {
         lastResolvedSrc = resolvedEffectSrc;
-        // Only blank the stage before the first committed decode. When swapping to the desktop
-        // preview blob, keep the current frame visible (no shimmer). Use `committedFirstFrame`,
-        // not `renderSrc`, so this reactive does not re-run on every `renderSrc` update.
-        const token = ++preloadToken;
-        const img = new Image();
-        img.decoding = 'async';
-        img.src = resolvedEffectSrc;
-        const done = () => {
-            if (token !== preloadToken) return;
-            renderSrc = resolvedEffectSrc;
-            committedFirstFrame = true;
-        };
-        // decode() avoids blank frames on iOS when swapping large images.
-        if (img.decode) {
-            img.decode().then(done).catch(() => {
-                // Fallback to onload in browsers where decode fails for some sources.
-                img.onload = done;
-                img.onerror = done;
-            });
-        } else {
-            img.onload = done;
-            img.onerror = done;
+        commitSrc(resolvedEffectSrc);
+    }
+
+    /** טוען את היעד בשכבה הנסתרת; הקידום (החלפת opacity) רק אחרי decode על האלמנט. */
+    function commitSrc(target) {
+        const frontSrc = activeLayer === 'A' ? srcA : srcB;
+        if (frontSrc === target) {
+            // היעד כבר מוצג — בטל קידום ישן שממתין (מונע flip שגוי אחרי החלפות מהירות)
+            pendingTarget = null;
+            return;
         }
+        const backIsA = activeLayer !== 'A';
+        const backEl = backIsA ? imgElA : imgElB;
+        const backSrc = backIsA ? srcA : srcB;
+        pendingTarget = target;
+        if (backSrc === target && backEl?.complete && backEl.naturalWidth) {
+            // השכבה הנסתרת כבר מחזיקה את היעד — קידום מיידי (עדיין דרך decode,
+            // למקרה ש-iOS פינה את ה-bitmap בזמן שהשכבה הייתה מוסתרת)
+            promoteWhenReady(backEl, target);
+        } else if (backIsA) {
+            srcA = target; // הקידום יגיע מ-on:load של השכבה
+        } else {
+            srcB = target;
+        }
+    }
+
+    function promoteWhenReady(el, target) {
+        const finish = () => promoteBack(el, target);
+        if (el?.decode) el.decode().then(finish).catch(finish);
+        else finish();
+    }
+
+    function promoteBack(el, target) {
+        if (pendingTarget !== target) return; // יעד חדש יותר דרס את הבקשה
+        pendingTarget = null;
+        activeLayer = activeLayer === 'A' ? 'B' : 'A';
+        editorImagePainted = true;
+        onBgImageLoad(el);
     }
 
     onMount(() => {
@@ -246,9 +273,18 @@
 
     // --- לוגיקה מרכזית: חישוב גבולות ומיקום ---
 
-    function onEditorImageLoad(e) {
-        editorImagePainted = true;
-        onBgImageLoad(e);
+    /** on:load של שכבה: פעילה → הפריים הראשון צויר; נסתרת עם היעד הממתין → קידום. */
+    function onLayerLoad(layer, e) {
+        const el = e.currentTarget;
+        if (layer === activeLayer) {
+            editorImagePainted = true;
+            onBgImageLoad(el);
+            return;
+        }
+        const layerSrc = layer === 'A' ? srcA : srcB;
+        if (pendingTarget && layerSrc === pendingTarget) {
+            promoteWhenReady(el, pendingTarget);
+        }
     }
 
     /** לאחר סיום fade-out של ה-Skeleton (opacity) — להסרה נקייה מה-DOM */
@@ -258,12 +294,12 @@
         showEditorSkeleton = false;
     }
 
-    function onBgImageLoad() {
-        if (!bgImageEl) return;
+    function onBgImageLoad(el = bgImageEl) {
+        if (!el) return;
 
         // Prefer original dimensions for math so saved crop matches grid rendering.
-        const naturalW = baseNaturalW || bgImageEl.naturalWidth;
-        const naturalH = baseNaturalH || bgImageEl.naturalHeight;
+        const naturalW = baseNaturalW || el.naturalWidth;
+        const naturalH = baseNaturalH || el.naturalHeight;
 
         const { baseW, baseH, minScale: nextMinScale } = computeCoverBaseSize(naturalW, naturalH, FRAME_SIZE);
         coverBaseW = baseW;
@@ -586,19 +622,34 @@
             <div class="image-layer">
                 <div
                     class="movable-content"
+                    class:movable-content--fade={showEditorSkeleton}
                     style="transform: translate(-50%, -50%) translate({bgTranslateX}px, {bgTranslateY}px) scale({zoomMultiplier});"
                 >
+                    <!-- שתי שכבות double-buffer: רק opacity מתחלף, לעולם לא src של שכבה מוצגת -->
                     <img
                         class="editor-source-img"
-                        class:editor-source-img--visible={editorImagePainted}
-                        src={editorReady ? (renderSrc || resolvedEffectSrc) : ''}
-                        bind:this={bgImageEl}
-                        on:load={onEditorImageLoad}
+                        class:editor-source-img--visible={editorImagePainted && activeLayer === 'A'}
+                        src={editorReady && srcA ? srcA : ''}
+                        bind:this={imgElA}
+                        on:load={(e) => onLayerLoad('A', e)}
                         style="{resolvedFilterCss}; width: {coverBaseW ? `${coverBaseW}px` : 'auto'}; height: {coverBaseH ? `${coverBaseH}px` : 'auto'};"
                         loading="eager"
                         decoding="async"
                         fetchpriority="high"
                         alt="editing source"
+                    />
+                    <img
+                        class="editor-source-img editor-source-img--layer-b"
+                        class:editor-source-img--visible={editorImagePainted && activeLayer === 'B'}
+                        src={editorReady && srcB ? srcB : ''}
+                        bind:this={imgElB}
+                        on:load={(e) => onLayerLoad('B', e)}
+                        style="{resolvedFilterCss}; width: {coverBaseW ? `${coverBaseW}px` : 'auto'}; height: {coverBaseH ? `${coverBaseH}px` : 'auto'};"
+                        loading="eager"
+                        decoding="async"
+                        fetchpriority="high"
+                        alt=""
+                        aria-hidden="true"
                     />
                 </div>
             </div>
@@ -826,10 +877,20 @@
 
     .editor-source-img {
         opacity: 0;
+    }
+    /* fade-in רק בפריים הראשון (כל עוד ה-skeleton קיים); החלפות שכבה אחריו מיידיות —
+       התוכן בשתי השכבות זהה, ו-crossfade היה יוצר הבהוב שקיפות בכל החלפה */
+    .movable-content--fade .editor-source-img {
         transition: opacity 0.45s ease-out;
     }
     .editor-source-img.editor-source-img--visible {
         opacity: 1;
+    }
+    /* שכבת ה-buffer השנייה יושבת בדיוק מעל הראשונה */
+    .editor-source-img--layer-b {
+        position: absolute;
+        top: 0;
+        left: 0;
     }
 
     .mask-layer {
@@ -876,7 +937,9 @@
         gap: 8px 12px;
         padding: 10px 16px;
         border-radius: 26px;
-        width: auto;
+        /* max-content ולא auto: אלמנט fixed עם left:50% מקבל shrink-to-fit של חצי
+           viewport בלבד (ה-transform לא משפיע על layout) והכפתורים היו נשברים ל-2 שורות */
+        width: max-content;
         max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
         overflow: hidden;
         background: rgba(255, 255, 255, 0.95);
