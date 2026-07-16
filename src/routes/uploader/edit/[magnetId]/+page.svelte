@@ -647,11 +647,12 @@
 </footer>
 
 <FloatingPanel title="בחר אפקט" isOpen={activePanel === 'effects'} on:close={() => activePanel = null}>
+    <!-- אותו כלל גודל כמו בפאנל האפקטים של ה-workspace (uploader/+layout) — נראות אחידה -->
     <EffectsRow
         effects={effectsList}
         activeId={currentEffectId}
         onSelect={applyEffect}
-        size="sm"
+        size={$isMobile ? 'sm' : 'md'}
     />
 </FloatingPanel>
 </div>
