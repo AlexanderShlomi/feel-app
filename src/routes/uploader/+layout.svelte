@@ -12,6 +12,7 @@
     import { draggable } from '$lib/actions/draggable.js';
     import { findBestTargetSlot, reflowMagnets, placeNewMagnets, reflowWithDraggedMagnet, isSlotOccupied } from '$lib/utils/grid.js';
     import { resetSystem, flushAutosaveNow } from '$lib/stores.js';
+    import { trackEvent } from '$lib/analytics.js';
     import { goto, afterNavigate } from '$app/navigation';
     import { page } from '$app/stores';
     import { get } from 'svelte/store';
@@ -698,6 +699,7 @@
         // and the renderer reads the filter style from `activeEffectId`.
         editorSettings.update(s => ({ ...s, currentEffect: effectId }));
         magnets.update(list => list.map(m => ({ ...m, activeEffectId: effectId })));
+        trackEvent('effect_applied', { effect_id: effectId });
     }
 
     function incrementGrid() { 

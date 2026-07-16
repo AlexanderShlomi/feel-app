@@ -1,6 +1,18 @@
 import { test, expect } from '@playwright/test';
 
 test('mosaic: grid size panel does not introduce horizontal scroll (mobile)', async ({ page }) => {
+  // Seed a cookie-consent decision so the first-visit consent banner (bottom
+  // sheet) doesn't cover the bottom dock and swallow the 'גודל רשת' click.
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'feel_cookie_consent_v1',
+      JSON.stringify({
+        version: 1,
+        ts: Date.now(),
+        categories: { analytics: false, ads: false, social: false }
+      })
+    );
+  });
   await page.goto('/uploader');
 
   // Force MOSAIC mode with a tiny in-memory image so the Mosaic dock renders.

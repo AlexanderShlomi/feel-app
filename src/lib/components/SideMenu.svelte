@@ -4,6 +4,7 @@
     import { goto } from '$app/navigation';
     import { user, profile, authLoading } from '$lib/authStore';
     import { supabase } from '$lib/supabase';
+    import { openConsentManager } from '$lib/consentStore.js';
 
     export let isOpen = false;
     const dispatch = createEventDispatcher();
@@ -61,6 +62,11 @@
 
     function openAuthModal() {
         dispatch('openAuth');
+        closeMenu();
+    }
+
+    function openCookieSettings() {
+        openConsentManager();
         closeMenu();
     }
 </script>
@@ -175,7 +181,7 @@
             <ul>
                 <li><button type="button" on:click={(e) => handleLegalClick(e, 'openPrivacy')}>מדיניות פרטיות</button></li>
                 <li><button type="button" on:click={(e) => handleLegalClick(e, 'openCookies')}>מדיניות קובצי Cookie</button></li>
-                <li><a href="/privacy-choices">בחירות הפרטיות שלך</a></li>
+                <li><button type="button" on:click={openCookieSettings}>הגדרות עוגיות</button></li>
                 <li><a href="/terms">תנאי שימוש</a></li>
                 <li><a href="/accessibility">נגישות</a></li>
             </ul>

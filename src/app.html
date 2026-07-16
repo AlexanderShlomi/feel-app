@@ -13,6 +13,23 @@
 		<link rel="preconnect" href="%sveltekit.env.PUBLIC_SUPABASE_URL%" crossorigin>
 		<link rel="dns-prefetch" href="%sveltekit.env.PUBLIC_SUPABASE_URL%">
 
+		<!-- Google Consent Mode v2 — ברירת מחדל: חסום (Opt-in). סינכרוני, ללא רשת (~0ms). -->
+		<!-- העדכון בפועל ('granted') מתבצע רק לאחר הסכמת המשתמש דרך CookieConsentBanner. -->
+		<script>
+			window.dataLayer = window.dataLayer || [];
+			function gtag() { dataLayer.push(arguments); }
+			gtag('consent', 'default', {
+				ad_storage: 'denied',
+				ad_user_data: 'denied',
+				ad_personalization: 'denied',
+				analytics_storage: 'denied',
+				personalization_storage: 'denied',
+				functionality_storage: 'granted',
+				security_storage: 'granted',
+				wait_for_update: 500
+			});
+		</script>
+
 		%sveltekit.head%
 	</head>
 	

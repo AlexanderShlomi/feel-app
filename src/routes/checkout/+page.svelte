@@ -31,6 +31,7 @@
         clearPaymentSession
     } from '$lib/orderPlacement.js';
     import { invalidateOrdersAfterCheckout } from '$lib/ordersCache.js';
+    import { trackEcommerceOnce, trackEvent } from '$lib/analytics.js';
 
     /**
      * Dev-only debug flag. In production builds (`vite build`) this is `false`
@@ -690,6 +691,12 @@
                 isTimeout: errAny?.isTimeout
             });
             errorMessage = orderCreationErrorMessage(e);
+            // Law E: מדידת כשל במשפך (קוד בלבד, ללא PII/פרטי DB)
+            trackEvent('error_occurred', {
+                step: 'order_creation',
+                error_code: String(errAny?.code ?? errAny?.status ?? 'unknown'),
+                is_timeout: !!errAny?.isTimeout
+            });
             paymentOrderId = null;
             paymentOrderNumber = null;
             await scrollToCheckoutError();
@@ -851,6 +858,12 @@
                 isTimeout: errAny?.isTimeout
             });
             errorMessage = paymentConfirmErrorMessage(e);
+            // Law E: מדידת כשל במשפך (קוד בלבד, ללא PII/פרטי DB)
+            trackEvent('error_occurred', {
+                step: 'payment_confirmation',
+                error_code: String(errAny?.code ?? errAny?.status ?? 'unknown'),
+                is_timeout: !!errAny?.isTimeout
+            });
         } finally {
             placeOrderLoading = false;
             placeOrderSlow = false;
@@ -914,6 +927,29 @@
         // כדי למנוע מצבים של hydration/SSR לא אחיד: כשהמשתמש מחובר, לא מציגים AuthModal.
         if ($user?.id) showAuthModal = false;
     });
+
+    /* מדידה: תחילת תהליך תשלום (ערך הסל בלבד, ללא PII).
+       ריאקטיבי ולא ב-onMount — הסל מהודרז אסינכרונית מ-IndexedDB, כך שברענון/כניסה
+       ישירה $cart עדיין ריק בזמן mount. ה-dedup (פר-סשן, לפי תוכן הסל) מונע ירי חוזר
+       בכל חזרה לעמוד עם אותו סל. */
+    let beginCheckoutAttempted = false;
+    $: if (!beginCheckoutAttempted && $cart.length) {
+        beginCheckoutAttempted = true;
+        trackEcommerceOnce(
+            `begin_checkout_${$cart.length}_${Number($cartTotal) || 0}`,
+            'begin_checkout',
+            {
+                value: Number($cartTotal) || 0,
+                currency: 'ILS',
+                items: $cart.map((it) => ({
+                    item_id: it.type,
+                    item_name: it.title,
+                    price: Number(it.price) || 0,
+                    quantity: it.count ?? 1
+                }))
+            }
+        );
+    }
 </script>
 
 <div class="checkout-page" dir="rtl">

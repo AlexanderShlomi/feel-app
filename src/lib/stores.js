@@ -5,6 +5,8 @@ import { goto } from '$app/navigation';
 import { saveStateToStorage, loadStateFromStorage, clearStorage, fileToBase64, base64ToBlobUrl, clearDataUrlBlobUrlCache } from '$lib/utils/storage.js';
 import { setItem, getItem } from '$lib/utils/idb.js'; 
 import { createGridPreviewViaWorker } from '$lib/utils/imagePreview.js';
+import { scheduleIdle } from '$lib/utils/idle.js';
+import { trackEvent, trackEcommerce } from '$lib/analytics.js';
 
 // 🔥 Store לניהול הטעינה הגלובלית
 export const isGlobalLoading = writable(false);
@@ -250,16 +252,6 @@ let saveInFlight = false;
 let saveQueued = false;
 let lastSaveAt = 0;
 
-function scheduleIdle(fn, timeoutMs = 2000) {
-    if (typeof window === 'undefined') return;
-    const ric = window.requestIdleCallback;
-    if (typeof ric === 'function') {
-        ric(() => fn(), { timeout: timeoutMs });
-    } else {
-        setTimeout(fn, Math.min(250, timeoutMs));
-    }
-}
-
 function getAutosaveDelayMs() {
     // Mobile browsers are much more sensitive to background work.
     // Keep autosave much less aggressive on small viewports.
@@ -293,7 +285,7 @@ async function runAutosaveOnce(force = false) {
         saveInFlight = false;
         if (saveQueued) {
             // If changes happened while saving, schedule another idle save.
-            scheduleIdle(() => runAutosaveOnce(), 2500);
+            scheduleIdle(() => runAutosaveOnce(), { timeout: 2500 });
         }
     }
 }
@@ -304,7 +296,7 @@ function triggerAutoSave() {
     const delay = getAutosaveDelayMs();
     saveTimeout = setTimeout(() => {
         // Prefer running heavy work during idle time to keep touch/scroll responsive.
-        scheduleIdle(() => runAutosaveOnce(), 2500);
+        scheduleIdle(() => runAutosaveOnce(), { timeout: 2500 });
     }, delay);
 }
 
@@ -412,6 +404,16 @@ export async function saveWorkspaceToCart() {
                 if (editId) return items.map(i => i.id === editId ? mainItem : i);
                 return [...items, mainItem];
             });
+
+            // מדידה: רק הוספה חדשה לסל — עריכת פריט קיים אינה add_to_cart (מנפחת מדדים)
+            if (!editId) {
+                trackEcommerce('add_to_cart', {
+                    value: price,
+                    currency: 'ILS',
+                    items: [{ item_id: type, item_name: mainItem.title, price, quantity: count }],
+                    product_type: type
+                });
+            }
         }
 
         // 2. שמירת המתנה (Singleton Logic)
@@ -635,6 +637,12 @@ async function runWithConcurrency(items, limit, fn) {
 export async function addUploadedMagnets(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
+
+    // מדידה: העלאת תמונות (כמות בלבד, ללא PII)
+    trackEvent('photos_uploaded', {
+        count: list.length,
+        product_type: get(editorSettings).currentProductType
+    });
 
     // Two-tier rendering:
     //   • `originalSrc` — full-resolution blob URL, source of truth for the
