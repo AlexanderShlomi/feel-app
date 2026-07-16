@@ -7,9 +7,11 @@
  */
 import { writable } from 'svelte/store';
 import { applyConsent, trackEvent } from '$lib/analytics.js';
+import { storageGetJSON, storageSetJSON } from '$lib/utils/safeStorage.js';
 
 export const CONSENT_VERSION = 1;
-export const CONSENT_STORAGE_KEY = 'feel_cookie_consent_v1';
+/** הגרסה חיה ב-payload בלבד (שדה version) — המפתח קבוע, כך שעדכון גרסה לא מותיר מפתחות יתומים. */
+export const CONSENT_STORAGE_KEY = 'feel_cookie_consent';
 export const OPEN_COOKIE_SETTINGS_EVENT = 'feel-open-cookie-settings';
 
 /** קטגוריות לא-הכרחיות. 'necessary' תמיד פעיל ולכן לא נשמר כאן. */
@@ -19,29 +21,14 @@ const DEFAULT_CATEGORIES = { analytics: false, ads: false, social: false };
 export const cookieConsent = writable({ decided: false, categories: { ...DEFAULT_CATEGORIES } });
 
 function readStored() {
-    if (typeof window === 'undefined') return null;
-    try {
-        const raw = window.localStorage.getItem(CONSENT_STORAGE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        // גרסה ישנה → נחשב כ"לא הוחלט" כדי לבקש הסכמה מחדש לאחר עדכון מדיניות
-        if (!parsed || parsed.version !== CONSENT_VERSION || !parsed.categories) return null;
-        return parsed;
-    } catch {
-        return null;
-    }
+    const parsed = /** @type {any} */ (storageGetJSON(CONSENT_STORAGE_KEY));
+    // גרסה ישנה → נחשב כ"לא הוחלט" כדי לבקש הסכמה מחדש לאחר עדכון מדיניות
+    if (!parsed || parsed.version !== CONSENT_VERSION || !parsed.categories) return null;
+    return parsed;
 }
 
 function persist(categories) {
-    if (typeof window === 'undefined') return;
-    try {
-        window.localStorage.setItem(
-            CONSENT_STORAGE_KEY,
-            JSON.stringify({ version: CONSENT_VERSION, ts: Date.now(), categories })
-        );
-    } catch {
-        /* private mode / quota */
-    }
+    storageSetJSON(CONSENT_STORAGE_KEY, { version: CONSENT_VERSION, ts: Date.now(), categories });
 }
 
 function normalize(categories) {

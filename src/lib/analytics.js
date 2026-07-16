@@ -10,6 +10,7 @@
  */
 import { env } from '$env/dynamic/public';
 import { scheduleIdle } from '$lib/utils/idle.js';
+import { storageGet, storageSet } from '$lib/utils/safeStorage.js';
 
 const GA4_ID = env.PUBLIC_GA4_MEASUREMENT_ID || '';
 const META_PIXEL_ID = env.PUBLIC_META_PIXEL_ID || '';
@@ -354,19 +355,10 @@ export function trackEcommerce(name, ecom = {}) {
 export function trackEcommerceOnce(dedupKey, name, ecom = {}, opts = {}) {
     if (!isBrowser) return false;
     const key = `feel_tracked_${dedupKey}`;
-    let storage;
-    try {
-        storage = opts.persistent ? window.localStorage : window.sessionStorage;
-        if (storage.getItem(key)) return false;
-    } catch {
-        storage = null; /* private mode — נירה בלי נעילה */
-    }
+    const storageOpts = { session: !opts.persistent };
+    if (storageGet(key, storageOpts)) return false;
     if (!trackEcommerce(name, ecom)) return false;
-    try {
-        if (storage) storage.setItem(key, '1');
-    } catch {
-        /* quota/private mode */
-    }
+    storageSet(key, '1', storageOpts); // כשל כתיבה (מצב פרטי) → נירה בלי נעילה
     return true;
 }
 

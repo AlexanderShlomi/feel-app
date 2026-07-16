@@ -5,7 +5,7 @@ test('mosaic: grid size panel does not introduce horizontal scroll (mobile)', as
   // sheet) doesn't cover the bottom dock and swallow the 'גודל רשת' click.
   await page.addInitScript(() => {
     localStorage.setItem(
-      'feel_cookie_consent_v1',
+      'feel_cookie_consent',
       JSON.stringify({
         version: 1,
         ts: Date.now(),
