@@ -326,6 +326,9 @@ export async function initApp() {
             editorSettings.set(state.settings);
             if (state.editingItemId) editingItemId.set(state.editingItemId);
             unsub1(); unsub2();
+            // מובייל: השחזור מ-storage מחזיר src=originalSrc (12MP מלא) — בונים
+            // previews קלים ברקע כדי שהגלילה לא תפענח מקור מלא לכל אריח.
+            regenerateGridPreviews(state.magnets);
         }
     }
 }
@@ -478,11 +481,17 @@ export async function editCartItem(itemId) {
     // global loader is both smoother and reduces perceived flicker.
 
     try {
-        const hydrateMagnetsPack = async (list) => { 
+        const hydrateMagnetsPack = async (list) => {
+            // Two-tier גם בשחזור מהסל (כמו addUploadedMagnets): בהעלאה ראשונה ה-grid
+            // מציג preview קל (~900px), אבל כאן src קיבל את המקור המלא — 12MP לכל
+            // אריח. בגלילה במובייל כל אריח שנכנס למסך פוענח מחדש (80–250ms) →
+            // הבהובים וטעינות חוזרות שהופיעו רק בעריכה חוזרת מהסל. לכן במובייל
+            // מתחילים עם skeleton (src:null) ובונים previews ברקע אחרי magnets.set.
+            const isMobileNow = isMobileViewportNow();
             return Promise.all(list.map(async (m) => {
                 let validSrc = m.originalSrc;
                 if (validSrc && validSrc.startsWith('data:')) validSrc = await base64ToBlobUrl(validSrc);
-                return { ...m, originalSrc: validSrc, src: validSrc };
+                return { ...m, originalSrc: validSrc, src: isMobileNow ? null : validSrc };
             }));
         };
 
@@ -528,6 +537,12 @@ export async function editCartItem(itemId) {
             
             // עדכון המגנטים החדשים
             magnets.set(recoveredMagnets);
+
+            // מובייל: השלמת previews קלים ברקע (two-tier) — האריחים מציגים skeleton
+            // עד שה-preview שלהם מוכן, בדיוק כמו בהעלאה ראשונה.
+            if (item.type === PRODUCT_TYPES.MAGNETS_PACK) {
+                regenerateGridPreviews(recoveredMagnets);
+            }
         }
         
         editingItemId.set(itemId);
@@ -632,6 +647,48 @@ async function runWithConcurrency(items, limit, fn) {
         }
     });
     await Promise.all(workers);
+}
+
+/**
+ * Mobile two-tier restore: rebuild ~900px grid previews for hydrated magnets
+ * whose `src` is null (skeleton) or points at the full-res original.
+ * Mirrors the background fill-in of `addUploadedMagnets` — without this, every
+ * tile restored from cart/storage decodes a 12MP bitmap as it scrolls into view
+ * (80–250ms each) → the flicker/reload feel reported when re-editing a collection.
+ * Detached by design: callers `magnets.set(...)` first, previews land tile-by-tile.
+ */
+export function regenerateGridPreviews(list) {
+    if (!isMobileViewportNow()) return;
+    const targets = (list || []).filter((m) => m && !m.isSplitPart && m.originalSrc);
+    if (!targets.length) return;
+
+    runWithConcurrency(targets, PREVIEW_CONCURRENCY, async (m) => {
+        const rawUrl = m.originalSrc;
+        let previewUrl = null;
+        try {
+            const blob = await fetch(rawUrl).then((r) => r.blob());
+            previewUrl = await createGridPreviewViaWorker(blob);
+        } catch {
+            previewUrl = null;
+        }
+        let used = false;
+        magnets.update((l) =>
+            l.map((x) => {
+                // נדרס/נמחק בינתיים — לא נוגעים
+                if (x.id !== m.id || x.originalSrc !== rawUrl) return x;
+                used = true;
+                // Fallback: אם יצירת ה-preview נכשלה מציגים את המקור — עדיף אריח כבד מאריח ריק.
+                return { ...x, src: previewUrl || rawUrl };
+            })
+        );
+        // Preview שלא שומש (המגנט נמחק/הוחלף בזמן היצירה) — משחררים כדי לא לדלוף.
+        if (!used && previewUrl && previewUrl !== rawUrl) {
+            try { if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl); } catch {}
+        }
+    }).then(() => {
+        // Persist the preview `src`s once the batch settles (same as addUploadedMagnets).
+        flushAutosaveNow();
+    });
 }
 
 export async function addUploadedMagnets(files) {

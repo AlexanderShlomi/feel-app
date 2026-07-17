@@ -1077,8 +1077,13 @@
             border-radius: 12px !important;
             overflow: hidden !important;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
-            content-visibility: auto;
-            contain-intrinsic-size: 50vw 50vw;
+            /* אריחי המובייל מציגים כבר תצוגה מקדימה קלה (~900px, imagePreview.js), לכן
+               content-visibility:auto — שנועד לדחות פענוח 12MP — כמעט לא חוסך כאן, ומזיק:
+               iOS מבטל ומצייר מחדש כל אריח כשהוא חוצה את גבול ה-viewport בגלילת מומנטום
+               → הבהוב, ו-contain-intrinsic-size לא מדויק (50vw כולל מרווחים) גורם לקפיצות
+               עוגן-גלילה = תחושה לא אינטואיטיבית. מבטל את ברירת המחדל של .magnet-wrapper
+               ומשאיר את האריחים מצוירים כדי שגלילת הגלריה תהיה חלקה ורציפה. */
+            content-visibility: visible;
             /* חיוני: בלי זה iOS/Android חוסמים גלילה כשהמגע על התמונה — הגלילה עוברת ל-.canvas-container */
             pointer-events: none !important;
             touch-action: auto !important;
