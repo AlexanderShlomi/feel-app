@@ -1104,6 +1104,11 @@
                     </div>
                 {:else if paymentOrderId}
                     <div id="checkout-payment-panel" class="checkout-payment-panel">
+                    <p class="legal-consent-line">
+                        המעבר לתשלום מהווה אישור כי קראת והסכמת
+                        ל<a href="/terms" target="_blank" rel="noopener">תנאי השימוש</a>
+                        ול<a href="/refund-policy" target="_blank" rel="noopener">תקנון הביטולים וההחזרים</a>.
+                    </p>
                     <PaymentMock
                         orderId={paymentOrderId}
                         orderNumber={paymentOrderNumber}
@@ -1676,6 +1681,21 @@
 
     .checkout-payment-panel {
         scroll-margin-top: 88px;
+    }
+
+    .legal-consent-line {
+        margin: 0 0 14px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: #6b7484;
+        text-align: center;
+    }
+
+    .legal-consent-line a {
+        color: var(--color-dark-blue);
+        font-weight: 700;
+        text-decoration: underline;
+        text-underline-offset: 3px;
     }
 
     .forms-title {

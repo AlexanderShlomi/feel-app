@@ -182,8 +182,9 @@
                 <li><button type="button" on:click={(e) => handleLegalClick(e, 'openPrivacy')}>מדיניות פרטיות</button></li>
                 <li><button type="button" on:click={(e) => handleLegalClick(e, 'openCookies')}>מדיניות קובצי Cookie</button></li>
                 <li><button type="button" on:click={openCookieSettings}>הגדרות עוגיות</button></li>
-                <li><a href="/terms">תנאי שימוש</a></li>
-                <li><a href="/accessibility">נגישות</a></li>
+                <li><a href="/terms" on:click={closeMenu}>תנאי שימוש</a></li>
+                <li><a href="/refund-policy" on:click={closeMenu}>תקנון ביטולים והחזרים</a></li>
+                <li><a href="/accessibility" on:click={closeMenu}>נגישות</a></li>
             </ul>
         </nav>
     </div>
