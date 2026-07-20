@@ -26,17 +26,17 @@
                 <strong>פניות בנושא נגישות:</strong>
                 <a href="mailto:accessibility@feel-ya.com">accessibility@feel-ya.com</a>
             </li>
-            <li><strong>טלפון:</strong> [מספר טלפון]</li>
-            <li><strong>שעות מענה:</strong> ימים א׳–ה׳, [09:00–17:00]</li>
+            <li><strong>טלפון:</strong> <a href="tel:+972506956525">050-695-6525</a></li>
+            <li><strong>שעות מענה:</strong> ימים א׳–ה׳, 09:00–17:00</li>
         </ul>
     </section>
 
     <section>
         <h2>פרטי העסק</h2>
         <ul>
-            <li><strong>שם העסק:</strong> [שם העסק המלא]</li>
-            <li><strong>ח.פ / ע.מ:</strong> [מספר]</li>
-            <li><strong>כתובת:</strong> [כתובת מלאה]</li>
+            <li><strong>שם העסק:</strong> FEEL-YA</li>
+            <li><strong>ע.מ:</strong> 032588014</li>
+            <li><strong>כתובת:</strong> רחוב אצ״ל, בת ים</li>
         </ul>
     </section>
 

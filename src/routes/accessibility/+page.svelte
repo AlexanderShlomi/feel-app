@@ -38,15 +38,18 @@
     </section>
 
     <section class="highlight-section">
-        <h2>4. רכז הנגישות — יצירת קשר</h2>
-        <p>לפניות בנושא נגישות ניתן לפנות לרכז הנגישות מטעמנו:</p>
+        <h2>4. פניות בנושא נגישות</h2>
+        <p>
+            אנו מטפלים בפניות נגישות באופן אישי. לפנייה, שאלה או דיווח על קושי בשימוש
+            באתר:
+        </p>
         <ul>
-            <li><strong>שם:</strong> [שם רכז הנגישות]</li>
             <li>
                 <strong>דוא"ל:</strong>
                 <a href="mailto:accessibility@feel-ya.com">accessibility@feel-ya.com</a>
             </li>
-            <li><strong>טלפון:</strong> [מספר טלפון]</li>
+            <li><strong>טלפון:</strong> <a href="tel:+972506956525">050-695-6525</a></li>
+            <li><strong>כתובת:</strong> FEEL-YA, רחוב אצ״ל, בת ים</li>
         </ul>
         <p>כדי שנוכל לטפל בפנייה ביעילות, מומלץ לצרף תיאור של הבעיה, כתובת העמוד, וסוג הדפדפן והמכשיר.</p>
     </section>
