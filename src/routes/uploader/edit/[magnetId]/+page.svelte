@@ -181,7 +181,12 @@
     }
 
     function promoteWhenReady(el, target) {
-        const finish = () => promoteBack(el, target);
+        // decode() מבטיח ש-bitmap פוענח, אבל ב-iOS Safari ה-rasterization של ה-layer
+        // עצמו (scale + filter + will-change) קורה עצלנית ורק כשהשכבה נהיית גלויה —
+        // לכן flip ל-opacity מלא מיד אחרי decode עדיין מצריך רסטר של 12MP מאפס
+        // (שניות של לבן). שתי השכבות מוחזקות כעת ב-opacity זעיר (ראה .editor-source-img)
+        // כדי להישאר מצוירות; שני rAF נותנים ל-compositor פריים לסיים raster לפני הקידום.
+        const finish = () => requestAnimationFrame(() => requestAnimationFrame(() => promoteBack(el, target)));
         if (el?.decode) el.decode().then(finish).catch(finish);
         else finish();
     }
@@ -876,7 +881,11 @@
     }
 
     .editor-source-img {
-        opacity: 0;
+        /* iOS משחרר את ה-raster של שכבה ב-opacity:0, ואז הקידום בחזרה למקור 12MP
+           מצריך רסטר מאפס (שניות של לבן בשחרור אחרי זום/גרירה). opacity זעיר משאיר
+           את שתי השכבות מצוירות תמיד → הקידום מיידי. התוכן בשתי השכבות זהה
+           (אותה תמונה, אותו פילטר), כך ש~0.6% שקיפות על השכבה הנסתרת בלתי מורגש. */
+        opacity: 0.006;
     }
     /* fade-in רק בפריים הראשון (כל עוד ה-skeleton קיים); החלפות שכבה אחריו מיידיות —
        התוכן בשתי השכבות זהה, ו-crossfade היה יוצר הבהוב שקיפות בכל החלפה */
