@@ -36,7 +36,7 @@
         <ul>
             <li><strong>שם העסק:</strong> FEEL-YA</li>
             <li><strong>ע.מ:</strong> 032588014</li>
-            <li><strong>כתובת:</strong> רחוב אצ״ל, בת ים</li>
+            <li><strong>כתובת:</strong> רחוב אצ״ל 6, דירה 4, בת ים</li>
         </ul>
     </section>
 

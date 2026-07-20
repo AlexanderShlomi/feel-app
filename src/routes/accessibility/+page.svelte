@@ -49,7 +49,7 @@
                 <a href="mailto:accessibility@feel-ya.com">accessibility@feel-ya.com</a>
             </li>
             <li><strong>טלפון:</strong> <a href="tel:+972506956525">050-695-6525</a></li>
-            <li><strong>כתובת:</strong> FEEL-YA, רחוב אצ״ל, בת ים</li>
+            <li><strong>כתובת:</strong> FEEL-YA, רחוב אצ״ל 6, דירה 4, בת ים</li>
         </ul>
         <p>כדי שנוכל לטפל בפנייה ביעילות, מומלץ לצרף תיאור של הבעיה, כתובת העמוד, וסוג הדפדפן והמכשיר.</p>
     </section>
