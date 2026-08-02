@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { supabase } from '$lib/supabase.js';
+  import { STATUS_LABELS, statusLabel, statusColor } from '$lib/admin/orderStatus.js';
 
   /** @type {any[]} */
   let orders = [];
@@ -11,27 +13,6 @@
   const PAGE_SIZE = 50;
   let hasMore = false;
 
-  const STATUS_LABELS = {
-    pending:         'ממתין לתשלום',
-    paid:            'שולם',
-    processing:      'בעיבוד מקדים',
-    ready_for_print: 'מוכן להדפסה',
-    printed:         'הודפס',
-    shipped:         'נשלח',
-    delivered:       'נמסר',
-    cancelled:       'בוטל'
-  };
-
-  const STATUS_COLORS = {
-    pending:         '#f5a623',
-    paid:            '#4CAF50',
-    processing:      '#ff9800',
-    ready_for_print: '#4CAF50',
-    printed:         '#2196F3',
-    shipped:         '#9C27B0',
-    delivered:       '#3f524f',
-    cancelled:       '#e53935'
-  };
 
   async function loadOrders() {
     loading = true;
@@ -116,13 +97,13 @@
               class="admin-row"
               role="link"
               tabindex="0"
-              on:click={() => window.location.href = `/admin/orders/${o.id}`}
-              on:keydown={(e) => e.key === 'Enter' && (window.location.href = `/admin/orders/${o.id}`)}
+              on:click={() => goto(`/admin/orders/${o.id}`)}
+              on:keydown={(e) => e.key === 'Enter' && goto(`/admin/orders/${o.id}`)}
             >
               <td class="admin-cell admin-cell--num">#{o.order_number ?? '—'}</td>
               <td class="admin-cell">
-                <span class="status-badge" style="background:{STATUS_COLORS[o.status]}22; color:{STATUS_COLORS[o.status]}; border-color:{STATUS_COLORS[o.status]}44;">
-                  {STATUS_LABELS[o.status] ?? o.status}
+                <span class="status-badge" style="background:{statusColor(o.status)}22; color:{statusColor(o.status)}; border-color:{statusColor(o.status)}44;">
+                  {statusLabel(o.status)}
                 </span>
               </td>
               <td class="admin-cell">{o.shipping_first_name ?? ''} {o.shipping_last_name ?? ''}</td>

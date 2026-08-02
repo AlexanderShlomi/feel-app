@@ -10,9 +10,39 @@
     clamp
   } from '$lib/utils/cropMath.js';
   import { getCssFilter } from '$lib/stores.js';
+  import {
+    TRANSITIONS,
+    TRANSITION_LABELS,
+    statusLabel,
+    statusColor
+  } from '$lib/admin/orderStatus.js';
 
   const orderId = $page.params.orderId;
-  const FRAME = 340; // crop editor frame size in px
+
+  // ── Crop frame sizing ──────────────────────────────────────────────────────
+  // FRAME was a hard 340px. The modal is min(480, viewport - 32) wide and
+  // `.crop-stage-wrap` is overflow:hidden, so on a 360px phone 16px of the crop
+  // frame was clipped — the admin composed a crop against a frame whose edges
+  // were off-screen. Worse, the stage was ALSO exactly 340px tall, leaving zero
+  // vertical context: the vignette could not show what falls outside the crop,
+  // which is the whole reason it exists.
+  //
+  // The saved crop is unaffected by this number — saveCrop normalises to
+  // xPct/yPct in [-1,1] — so the frame can be sized to the device freely, and
+  // crops saved at one size reproduce correctly at another.
+  const CROP_FRAME_MAX = 340;
+  const CROP_FRAME_MIN = 200;
+  /** Vertical breathing room so the image outside the crop stays visible. */
+  const CROP_STAGE_PAD = 80;
+
+  let FRAME = CROP_FRAME_MAX;
+
+  function computeCropFrameSize() {
+    if (typeof window === 'undefined') return CROP_FRAME_MAX;
+    // Modal width, less room on both sides for the frame border to be seen.
+    const available = Math.min(480, window.innerWidth - 32) - 48;
+    return Math.max(CROP_FRAME_MIN, Math.min(CROP_FRAME_MAX, Math.round(available)));
+  }
 
   /** @type {any} */
   let order = null;
@@ -82,42 +112,6 @@
     && items.some(i => i.item_type === 'gift'
       && (i.original_storage_paths?.gift || i.original_storage_paths?.source));
 
-  // ── Status / label maps ─────────────────────────────────────────────────────
-  const STATUS_LABELS = {
-    pending:         'ממתין לתשלום',
-    paid:            'שולם',
-    processing:      'בעיבוד מקדים',
-    ready_for_print: 'מוכן להדפסה',
-    printed:         'הודפס',
-    shipped:         'נשלח',
-    delivered:       'נמסר',
-    cancelled:       'בוטל'
-  };
-  const STATUS_COLORS = {
-    pending:         '#f5a623',
-    paid:            '#4CAF50',
-    processing:      '#ff9800',
-    ready_for_print: '#4CAF50',
-    printed:         '#2196F3',
-    shipped:         '#9C27B0',
-    delivered:       '#3f524f',
-    cancelled:       '#e53935'
-  };
-  const TRANSITIONS = {
-    pending:         ['cancelled'],
-    processing:      ['cancelled'],
-    ready_for_print: ['cancelled'],
-    printed:         ['shipped', 'cancelled'],
-    shipped:         ['delivered', 'cancelled'],
-    delivered:       [],
-    cancelled:       []
-  };
-  const TRANSITION_LABELS = {
-    ready_for_print: 'שחרר להדפסה',
-    shipped:         'סמן כנשלח',
-    delivered:       'סמן כנמסר',
-    cancelled:       'בטל הזמנה'
-  };
 
   // ── Data loading ────────────────────────────────────────────────────────────
   async function loadDetail() {
@@ -146,7 +140,7 @@
 
   // ── Order status ────────────────────────────────────────────────────────────
   async function updateStatus(newStatus) {
-    if (!confirm(`לשנות סטטוס ל"${STATUS_LABELS[newStatus]}"?`)) return;
+    if (!confirm(`לשנות סטטוס ל"${statusLabel(newStatus)}"?`)) return;
     statusLoading = true;
     statusMsg = '';
     const { data, error: rpcErr } = await supabase.rpc('admin_update_order_status', {
@@ -157,7 +151,7 @@
       statusMsg = `שגיאה: ${rpcErr.message}`;
     } else {
       order = { ...order, status: data?.status ?? newStatus };
-      statusMsg = `✓ סטטוס עודכן ל"${STATUS_LABELS[newStatus]}"`;
+      statusMsg = `✓ סטטוס עודכן ל"${statusLabel(newStatus)}"`;
     }
     statusLoading = false;
   }
@@ -237,7 +231,7 @@
     if (rpcErr) { markPaidMsg = `שגיאה: ${rpcErr.message}`; }
     else {
       order = { ...order, status: data?.status };
-      markPaidMsg = `✓ ההזמנה סומנה כשולמה → ${STATUS_LABELS[data?.status] ?? data?.status}`;
+      markPaidMsg = `✓ ההזמנה סומנה כשולמה → ${statusLabel(data?.status)}`;
     }
     markPaidLoading = false;
   }
@@ -273,13 +267,26 @@
       return;
     }
 
+    // A crop saved for the PREVIOUS image describes a frame on that image's
+    // pixels. Keeping it would silently apply the old zoom/pan/effect to the
+    // new upload — the print pipeline reads overridden_gift_crop regardless of
+    // which image it belongs to, so the error only becomes visible on paper
+    // (Law A). Clear it and make the admin re-crop.
+    const hadCrop = !!productionJob?.overridden_gift_crop;
+
     const { data, error: rpcErr } = await supabase.rpc('admin_update_production_job', {
       p_order_id: orderId,
       p_overridden_gift_image_path: storagePath,
-      p_gift_image_done: true
+      p_gift_image_done: true,
+      p_clear_gift_crop: true
     });
     if (rpcErr) { giftImageMsg = `שגיאה בשמירת הנתיב: ${rpcErr.message}`; }
-    else { productionJob = data; giftImageMsg = '✓ תמונה מטויבת הועלתה בהצלחה'; }
+    else {
+      productionJob = data;
+      giftImageMsg = hadCrop
+        ? '✓ תמונה מטויבת הועלתה. החיתוך הקודם אופס — יש לבצע חיתוך מחדש.'
+        : '✓ תמונה מטויבת הועלתה בהצלחה';
+    }
 
     uploadingGiftImage = false;
     event.target.value = '';
@@ -298,6 +305,9 @@
     cropLoading = false;
 
     if (signErr || !data?.signedUrl) { giftImageMsg = 'שגיאה בטעינת תמונה לעריכה'; return; }
+
+    // Size the frame to THIS device before any geometry is derived from it.
+    FRAME = computeCropFrameSize();
 
     // Restore previously saved crop if any
     const saved = productionJob?.overridden_gift_crop;
@@ -347,6 +357,41 @@
       clampTranslation();
     }
     cropImageReady = true;
+  }
+
+  /**
+   * Re-fit the crop frame when the viewport changes size (rotation, mostly).
+   *
+   * Without this, opening the editor in landscape locks FRAME at 340 and
+   * rotating to portrait re-creates the clipping this sizing exists to avoid.
+   * The composed frame is preserved across the change by round-tripping through
+   * the normalised percentages — the same representation that is persisted —
+   * so the admin does not lose their crop on rotation.
+   */
+  function handleCropViewportResize() {
+    if (!cropOpen) return;
+    const next = computeCropFrameSize();
+    if (next === FRAME) return;
+
+    const { maxX: oldMaxX, maxY: oldMaxY } =
+      computeMaxTranslateFromBase(coverBaseW, coverBaseH, FRAME, zoomMultiplier);
+    const { xPct, yPct } = translateToPct(bgTranslateX, bgTranslateY, oldMaxX, oldMaxY);
+
+    FRAME = next;
+
+    const nW = bgImgEl?.naturalWidth;
+    const nH = bgImgEl?.naturalHeight;
+    if (!nW || !nH) return;
+
+    const { baseW, baseH } = computeCoverBaseSize(nW, nH, FRAME);
+    coverBaseW = baseW;
+    coverBaseH = baseH;
+
+    const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, FRAME, zoomMultiplier);
+    const t = pctToTranslate(xPct, yPct, maxX, maxY);
+    bgTranslateX = t.x;
+    bgTranslateY = t.y;
+    clampTranslation();
   }
 
   function clampTranslation() {
@@ -460,6 +505,8 @@
   $: cropImgStyle = `${cropFilterStyle}width:${coverBaseW ? coverBaseW + 'px' : 'auto'};height:${coverBaseH ? coverBaseH + 'px' : 'auto'};`;
 </script>
 
+<svelte:window on:resize={handleCropViewportResize} on:orientationchange={handleCropViewportResize} />
+
 <svelte:head>
   <title>FEEL Admin — הזמנה {order?.order_number ?? ''}</title>
 </svelte:head>
@@ -473,8 +520,9 @@
         <button class="crop-close-btn" on:click={closeCropEditor} aria-label="סגור">✕</button>
       </div>
 
-      <!-- Stage -->
-      <div class="crop-stage-wrap">
+      <!-- Stage. Height = frame + padding so the vignette can actually show
+           what falls outside the crop; it used to equal the frame exactly. -->
+      <div class="crop-stage-wrap" style="height:{FRAME + CROP_STAGE_PAD}px;">
         <div class="crop-image-layer">
           <div class="crop-movable" style={cropTransformStyle}>
             <img
@@ -560,8 +608,8 @@
       <div>
         <h1 class="order-title">הזמנה #{order.order_number}</h1>
         <span class="status-badge"
-          style="background:{STATUS_COLORS[order.status]}22;color:{STATUS_COLORS[order.status]};border-color:{STATUS_COLORS[order.status]}44;">
-          {STATUS_LABELS[order.status] ?? order.status}
+          style="background:{statusColor(order.status)}22;color:{statusColor(order.status)};border-color:{statusColor(order.status)}44;">
+          {statusLabel(order.status)}
         </span>
       </div>
       <p class="order-date">{formatDate(order.placed_at)}</p>
@@ -856,6 +904,11 @@
     display: flex;
     flex-direction: column;
     box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+    /* A taller stage plus the controls can exceed a short landscape viewport.
+       The stage itself keeps flex-shrink:0, so it scrolls rather than being
+       squashed into a non-square frame that would misrepresent the crop. */
+    max-height: 100%;
+    overflow-y: auto;
   }
 
   .crop-modal-header {
@@ -870,11 +923,11 @@
   .crop-close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: #888; line-height: 1; padding: 4px; }
   .crop-close-btn:hover { color: #333; }
 
-  /* Stage: fixed height so the modal fits the screen */
+  /* Stage height is set inline from FRAME (see the markup) — it must track the
+     device-fitted frame size, not a hardcoded 340px. */
   .crop-stage-wrap {
     position: relative;
     width: 100%;
-    height: 340px;
     background: #1a1a1a;
     overflow: hidden;
     display: flex;
