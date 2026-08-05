@@ -3,20 +3,16 @@
    * Flat-batch print page.
    *
    * Renders one A4 sheet from a flat tile array (mixed orders) chunked by
-   * `chunkTilesIntoPages`. Each tile is a hard 50mm × 50mm physical block
+   * `chunkTilesIntoPages`. Each tile is a hard 50mm x 50mm physical block
    * with a tiny "#Order-NNN" cut-label in the bleed area so the operator
    * can sort the cut magnets back to their source order after the
    * guillotine cut.
    *
-   * Crop math is intentionally identical to `PrintPage.svelte` so the
-   * printed pixels match the editor frame-for-frame (Law A).
+   * All crop geometry lives in $lib/admin/printCropMath.js so the preview,
+   * the printed sheet and the assembled-mosaic reference cannot drift apart
+   * (Law A).
    */
-  import {
-    computeCoverBaseSize,
-    computeMaxTranslateFromBase,
-    pctToTranslate
-  } from '$lib/utils/cropMath.js';
-  import { getCssFilter } from '$lib/stores.js';
+  import { getMagnetTileStyle, getMosaicTileStyle } from '$lib/admin/printCropMath.js';
 
   /**
    * @type {{
@@ -37,87 +33,6 @@
    */
   export let pageData;
   export let signedUrls;
-
-  // 50mm @ 300dpi = 591px — logical frame used by the crop math (kept
-  // identical to PrintPage.svelte so the math stays in lock-step).
-  //
-  // CRITICAL: all returned sizes/offsets are expressed as PERCENTAGES of
-  // this logical frame. Why: the parent .print-tile is sized in mm (50mm).
-  // At screen preview the browser maps 50mm → ~189px @96dpi; at print it
-  // maps 50mm → 591px @300dpi. If we returned raw pixels (e.g. 591px) the
-  // image would overflow the 189px on-screen container by 3× and the user
-  // would see only the top-left corner — reading as a distorted face.
-  // Percentages keep the crop pixel-perfect at every DPI (Law A).
-  const TILE_PX = 591;
-  const pct = (v) => (v / TILE_PX) * 100;
-
-  function getMagnetStyle(meta, imgNatW, imgNatH) {
-    // See PrintPage.svelte — hide the tile until natural dimensions are known
-    // so the admin doesn't see an unscaled image leaking onto the sheet while
-    // the signed URL is still downloading. on:load overrides img.style and
-    // therefore clears `visibility:hidden`.
-    if (!imgNatW || !imgNatH) return 'visibility:hidden;';
-    const { baseW, baseH } = computeCoverBaseSize(imgNatW, imgNatH, TILE_PX);
-    const zoom = meta.zoom || 1;
-    const { maxX, maxY } = computeMaxTranslateFromBase(baseW, baseH, TILE_PX, zoom);
-    const { x, y } = pctToTranslate(meta.xPct, meta.yPct, maxX, maxY);
-    const scaledW = baseW * zoom;
-    const scaledH = baseH * zoom;
-    const left = (TILE_PX - scaledW) / 2 + x;
-    const top = (TILE_PX - scaledH) / 2 + y;
-    const filter = getCssFilter(meta.activeEffectId);
-    return (
-      `width:${pct(scaledW)}%;height:${pct(scaledH)}%;` +
-      `position:absolute;left:${pct(left)}%;top:${pct(top)}%;` +
-      `max-width:none;max-height:none;filter:${filter};`
-    );
-  }
-
-  function getMosaicStyle(cropRect, transform, effect, imageRatioFromMeta, imgNatW, imgNatH) {
-    const { col, row, cols, rows } = cropRect;
-    let imageRatio = null;
-    if (typeof imageRatioFromMeta === 'number' && imageRatioFromMeta > 0) {
-      imageRatio = imageRatioFromMeta;
-    } else if (imgNatW && imgNatH) {
-      imageRatio = imgNatW / imgNatH;
-    } else {
-      // No imageRatio in meta AND image not loaded yet — hide the tile until
-      // on:load fires; otherwise the admin sees an unscaled/uncropped flash.
-      return 'visibility:hidden;';
-    }
-
-    const totalW = cols * TILE_PX;
-    const totalH = rows * TILE_PX;
-    const gridAspect = totalW / totalH;
-    let bgW;
-    let bgH;
-    if (imageRatio > gridAspect) {
-      bgH = totalH;
-      bgW = bgH * imageRatio;
-    } else {
-      bgW = totalW;
-      bgH = bgW / imageRatio;
-    }
-    const zoom = transform?.zoom > 0 ? transform.zoom : 1;
-    const finalW = bgW * zoom;
-    const finalH = bgH * zoom;
-    const maxX = Math.max(0, (finalW - totalW) / 2);
-    const maxY = Math.max(0, (finalH - totalH) / 2);
-    const xPct = Math.max(-1, Math.min(1, transform?.xPct ?? 0));
-    const yPct = Math.max(-1, Math.min(1, transform?.yPct ?? 0));
-    const shiftX = xPct * maxX;
-    const shiftY = yPct * maxY;
-    const startX = (totalW - finalW) / 2 + shiftX;
-    const startY = (totalH - finalH) / 2 + shiftY;
-    const left = startX - col * TILE_PX;
-    const top = startY - row * TILE_PX;
-    const filter = getCssFilter(effect);
-    return (
-      `width:${pct(finalW)}%;height:${pct(finalH)}%;` +
-      `position:absolute;left:${pct(left)}%;top:${pct(top)}%;` +
-      `max-width:none;max-height:none;filter:${filter};`
-    );
-  }
 </script>
 
 <section class="batch-page">
@@ -126,9 +41,9 @@
       {@const url = signedUrls[tile.storagePath] || ''}
       <!--
         Two-layer structure:
-          .batch-cell  — 50×50mm grid item, overflow:visible (hosts the label
+          .batch-cell  -- 50×50mm grid item, overflow:visible (hosts the label
                          that protrudes above the tile at top:-3.5mm).
-          .print-tile  — 50×50mm, overflow:hidden (crops the image to the
+          .print-tile  -- 50×50mm, overflow:hidden (crops the image to the
                          physical square the guillotine will cut to).
         The label MUST live inside .batch-cell (sibling of .print-tile) so
         it isn't clipped by the tile's overflow:hidden. Both are absolutely
@@ -136,16 +51,21 @@
       -->
       <div class="batch-cell">
         <!--
-          Per-tile cut-label. For magnets: "#Order-NN" is enough \u2014 sort order.
+          Per-tile cut-label. For magnets: "#Order-NN" is enough -- sort order.
           For mosaic cells: append the (col,row) coordinates so the customer
           can reassemble the puzzle on their fridge after the magnets are cut
           and shipped (we no longer preserve the mosaic grid on the printed
-          sheet \u2014 tiles are nested for paper efficiency).
+          sheet -- tiles are nested for paper efficiency).
+
+          NOTE: these are real Unicode characters, NOT escape-sequence escapes.
+          Svelte template text is HTML text -- a backslash escape is not
+          interpreted there and would print the literal seven characters
+          onto the paper.
         -->
         {#if tile.kind === 'mosaic' && tile.cropRect}
-          <span class="cut-label">#{tile.orderNumber} \u2022 {tile.cropRect.col + 1}/{tile.cropRect.cols},{tile.cropRect.row + 1}/{tile.cropRect.rows}</span>
+          <span class="cut-label">#Order-{tile.orderNumber} &bull; {tile.cropRect.col + 1}/{tile.cropRect.cols},{tile.cropRect.row + 1}/{tile.cropRect.rows}</span>
         {:else if tile.isGift}
-          <span class="cut-label">#Order-{tile.orderNumber} \ud83c\udf81</span>
+          <span class="cut-label">#Order-{tile.orderNumber} &#127873;</span>
         {:else}
           <span class="cut-label">#Order-{tile.orderNumber}</span>
         {/if}
@@ -155,10 +75,11 @@
             src={url}
             alt=""
             class="tile-img"
-            style={getMagnetStyle(tile.meta, 0, 0)}
+            data-path={tile.storagePath}
+            style={getMagnetTileStyle(tile.meta, 0, 0)}
             on:load={(e) => {
               const img = e.target;
-              img.style = getMagnetStyle(tile.meta, img.naturalWidth, img.naturalHeight);
+              img.style = getMagnetTileStyle(tile.meta, img.naturalWidth, img.naturalHeight);
             }}
           />
         {:else if tile.kind === 'mosaic' && url}
@@ -166,11 +87,12 @@
             src={url}
             alt=""
             class="tile-img"
-            style={getMosaicStyle(tile.cropRect, tile.transform, tile.effect, tile.imageRatio, 0, 0)}
+            data-path={tile.storagePath}
+            style={getMosaicTileStyle(tile.cropRect, tile.transform, tile.effect, tile.imageRatio, 0, 0)}
             on:load={(e) => {
               if (tile.imageRatio == null) {
                 const img = e.target;
-                img.style = getMosaicStyle(
+                img.style = getMosaicTileStyle(
                   tile.cropRect,
                   tile.transform,
                   tile.effect,
@@ -182,7 +104,17 @@
             }}
           />
         {:else}
-          <div class="tile-placeholder"></div>
+          <!--
+            No usable image for this tile. This used to be a silent grey square
+            that the guillotine happily cut into a blank magnet. The batch is
+            now blocked before print (see collectTileIssues in printPacking.js);
+            this marker is the on-screen explanation of WHICH square is broken.
+            Screen only — a blocked batch never reaches paper, and printing a
+            warning onto a magnet would be worse than printing nothing.
+          -->
+          <div class="tile-placeholder">
+            <span class="tile-placeholder-mark">⚠<br />תמונה חסרה</span>
+          </div>
         {/if}
         <span class="crop-mark crop-mark--tl"></span>
         <span class="crop-mark crop-mark--tr"></span>
@@ -203,7 +135,7 @@
     min-height: 296mm;
     /* Page geometry (A4 portrait):
          padding 8mm top/bot + 5 rows × 50mm + 4 row-gaps × 5mm
-         = 16 + 250 + 20 = 286mm < 296mm  (10mm slack — safe).
+         = 16 + 250 + 20 = 286mm < 296mm  (10mm slack -- safe).
        The top padding is ≥ 4mm so the absolute cut-label (top:-3.5mm)
        on the first row never gets clipped at the paper edge. */
     padding: 8mm 5mm;
@@ -215,11 +147,19 @@
     -webkit-print-color-adjust: exact;
   }
 
-  /* Rigid 3×5 grid — !important guards against any cascade override that
+  /* Rigid 3×5 grid -- !important guards against any cascade override that
      could collapse the columns at print time (some browsers reset display
      to inline-block on print roots). */
   .batch-grid {
     display: grid !important;
+    /* CRITICAL (Law A): the admin shell is dir="rtl" (see admin/+layout.svelte),
+       and CSS Grid honours the inherited direction -- items would flow
+       right-to-left, placing mosaic column 0 at the FAR RIGHT and mirroring
+       every mosaic row against what the customer composed in the editor.
+       The tile stream from flattenTilesForBatch is strictly reading-order
+       (row-major, left-to-right), so the sheet must be laid out LTR
+       regardless of the surrounding Hebrew UI direction. */
+    direction: ltr !important;
     grid-template-columns: repeat(3, 50mm) !important;
     grid-auto-rows: 50mm !important;
     gap: 5mm !important;
@@ -227,7 +167,7 @@
     align-content: start !important;
   }
 
-  /* Cell wrapper — same physical size as the tile, but overflow:visible so
+  /* Cell wrapper -- same physical size as the tile, but overflow:visible so
      the cut-label that protrudes above (top:-3.5mm) is not clipped. */
   .batch-cell {
     width: 50mm;
@@ -237,7 +177,7 @@
   }
 
   .print-tile {
-    /* HARD physical size — mm so the printer maps it to 50mm of paper at
+    /* HARD physical size -- mm so the printer maps it to 50mm of paper at
        any DPI. position:relative anchors the absolutely-positioned image,
        label and crop-marks. */
     width: 50mm;
@@ -252,7 +192,7 @@
   .cut-label {
     /* Pulled OUT of the 50mm tile (top:-3.5mm) so it can't push the grid
        row taller. Lives in the 5mm row-gap above this tile. z-index above
-       the image because .print-tile is overflow:hidden — but the label is
+       the image because .print-tile is overflow:hidden -- but the label is
        outside the tile vertically so visibility relies on the parent
        .batch-page not clipping; 8mm top padding ensures it shows on row 1. */
     position: absolute;
@@ -285,10 +225,35 @@
   .tile-placeholder {
     width: 100%;
     height: 100%;
-    background: #eee;
+    background: repeating-linear-gradient(
+      45deg,
+      #fdecea,
+      #fdecea 4mm,
+      #f8d7d3 4mm,
+      #f8d7d3 8mm
+    );
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  /* Corner crop marks — hairlines in the bleed for the guillotine. */
+  .tile-placeholder-mark {
+    font-size: 9pt;
+    font-weight: 700;
+    line-height: 1.3;
+    text-align: center;
+    color: #c62828;
+    direction: rtl;
+  }
+
+  @media print {
+    /* Belt and braces: the batch cannot be printed while a tile is broken, but
+       if that guard is ever bypassed the paper must not carry admin warnings. */
+    .tile-placeholder { background: #f9f9f9; }
+    .tile-placeholder-mark { display: none; }
+  }
+
+  /* Corner crop marks -- hairlines in the bleed for the guillotine. */
   .crop-mark {
     position: absolute;
     display: block;
@@ -321,7 +286,7 @@
       overflow: visible;
       break-inside: avoid;
       page-break-inside: avoid;
-      /* In print, drop the screen-side 296mm floor — content is 286mm,
+      /* In print, drop the screen-side 296mm floor -- content is 286mm,
          and a 10mm forced floor combined with sub-pixel rounding can push
          the box past 297mm. The trailing-blank-page bug that originally
          required min-height is now handled by the
