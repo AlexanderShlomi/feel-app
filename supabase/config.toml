@@ -365,6 +365,15 @@ allow_dynamic_registration = false
 [functions.send-order-confirmation]
 verify_jwt = false
 
+# טרנזילה קוראת server-to-server בלי Authorization. האימות נעשה בתוך הפונקציה:
+# nonce לא-ניחוש בכתובת + שליפה חוזרת של העסקה מ-reports API.
+[functions.tranzila-notify]
+verify_jwt = false
+
+# נקראת מהדפדפן עם ה-JWT של המשתמש — verify_jwt נשאר true (ברירת המחדל).
+[functions.tranzila-create-payment]
+verify_jwt = true
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

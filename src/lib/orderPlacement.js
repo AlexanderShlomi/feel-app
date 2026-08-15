@@ -41,6 +41,39 @@ const PAYMENT_RPC_BACKOFF_MS = [800, 1600];
 const PAYMENT_RPC_MAX_ATTEMPTS = 3;
 
 /**
+ * Statuses that mean "the server has accepted the payment".
+ *
+ * IMPORTANT: the order never sits on the literal `paid` value in normal
+ * checkout — `confirm_order_payment_verified` routes straight to `processing`
+ * (order needs admin prep) or `ready_for_print`. Polling for `paid` alone would
+ * wait forever. `paid` is kept in the set because the admin Bit flow and older
+ * rows can still carry it.
+ */
+export const PAID_STATUSES = Object.freeze([
+    'paid',
+    'processing',
+    'ready_for_print',
+    'printed',
+    'shipped',
+    'delivered'
+]);
+
+/** @param {string | null | undefined} status */
+export function isPaidStatus(status) {
+    return !!status && PAID_STATUSES.includes(status);
+}
+
+/**
+ * How long we wait for Tranzila's notify callback to land before telling the
+ * user to check "ההזמנות שלי". The callback is normally sub-second; the budget
+ * is generous because a timeout here is not a failed payment, just an unproven
+ * one — the money may well have moved.
+ */
+const PAYMENT_POLL_TIMEOUT_MS = 90_000;
+const PAYMENT_POLL_INTERVAL_MS = [700, 700, 1000, 1000, 1500, 2000, 2500, 3000];
+const PAYMENT_POLL_SLOW_MS = 6_000;
+
+/**
  * PostgreSQL rejects U+0000 in text and jsonb payloads (SQLSTATE 54000).
  * Prefer JSON round-trip so every string leaf seen by Postgres is sanitized;
  * fallback to recursive walk when the payload contains non-serializable values.
@@ -366,11 +399,16 @@ export function backfillOrderThumbnailsInBackground(
 
 /**
  * Persists just enough state in sessionStorage to resume the payment screen
- * after an accidental refresh. We only store the order id + amount + number;
- * the actual order belongs to the server. The session is cleared when the
- * user successfully pays or if the order is no longer 'pending'.
+ * after an accidental refresh — or after a full-page redirect to the gateway,
+ * where every in-memory variable is lost.
  *
- * @param {{ orderId: string; orderNumber: number | null; amount: number }} info
+ * `itemIds` matters for Law A: the originals upload (printing-critical) is
+ * keyed by order_item row ids that only exist in memory after the create-order
+ * RPC returns. Without them, an order paid through the redirect flow would
+ * reach production with no full-resolution files. They are opaque UUIDs — no
+ * PII, no image data.
+ *
+ * @param {{ orderId: string; orderNumber: number | null; amount: number; itemIds?: string[] | null }} info
  */
 export function savePaymentSession(info) {
     if (typeof sessionStorage === 'undefined') return;
@@ -381,7 +419,8 @@ export function savePaymentSession(info) {
             JSON.stringify({
                 orderId: info.orderId,
                 orderNumber: info.orderNumber ?? null,
-                amount: Number(info.amount || 0)
+                amount: Number(info.amount || 0),
+                itemIds: Array.isArray(info.itemIds) ? info.itemIds : null
             })
         );
     } catch {
@@ -389,7 +428,7 @@ export function savePaymentSession(info) {
     }
 }
 
-/** @returns {{ orderId: string; orderNumber: number | null; amount: number } | null} */
+/** @returns {{ orderId: string; orderNumber: number | null; amount: number; itemIds: string[] | null } | null} */
 export function loadPaymentSession() {
     if (typeof sessionStorage === 'undefined') return null;
     try {
@@ -402,7 +441,12 @@ export function loadPaymentSession() {
             orderId: parsed.orderId,
             orderNumber:
                 typeof parsed.orderNumber === 'number' ? parsed.orderNumber : null,
-            amount: Number(parsed.amount || 0)
+            amount: Number(parsed.amount || 0),
+            itemIds:
+                Array.isArray(parsed.itemIds) &&
+                parsed.itemIds.every((/** @type {unknown} */ v) => typeof v === 'string')
+                    ? parsed.itemIds
+                    : null
         };
     } catch {
         return null;
@@ -520,6 +564,173 @@ export async function confirmOrderPaymentResilient(supabase, orderId, opts) {
     } finally {
         if (slowTimer) clearTimeout(slowTimer);
     }
+}
+
+/**
+ * Ask the server to mint a Tranzila payment page for a pending order.
+ *
+ * Everything that matters is decided server-side: the Edge Function reads the
+ * amount from `orders.total_amount`, locks it with a Tranzila handshake token,
+ * and embeds a secret notify nonce that never reaches this code. All we get
+ * back is a URL to render (Law D).
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @param {string} orderId
+ * @param {{ analytics: boolean, ads: boolean, ga_client_id: string | null } | null} [consent]
+ *        Law E — snapshot stored on the order so the server-side `purchase`
+ *        event honours the customer's choice at send time.
+ * @returns {Promise<{ paymentUrl: string; orderNumber: number | null; amount: number; tranmode: string }>}
+ */
+export async function createTranzilaPaymentSession(supabase, orderId, consent) {
+    if (!orderId) throw new Error('invalid_order_id');
+
+    const { data, error } = await withTimeout(
+        supabase.functions.invoke('tranzila-create-payment', {
+            body: { orderId, consent: consent ?? null }
+        }),
+        PAYMENT_RPC_TIMEOUT_MS,
+        'payment_init_timeout'
+    );
+
+    if (error) {
+        /* functions.invoke wraps non-2xx in a FunctionsHttpError whose body holds
+           our safe error code. Surface the code, never the raw response. */
+        let code = 'payment_init_failed';
+        try {
+            const body = await /** @type {any} */ (error)?.context?.json?.();
+            if (body?.error) code = String(body.error);
+        } catch {
+            /* keep the generic code */
+        }
+        throw new Error(code);
+    }
+
+    const paymentUrl = typeof data?.paymentUrl === 'string' ? data.paymentUrl : '';
+    if (!paymentUrl) throw new Error('payment_init_failed');
+
+    return {
+        paymentUrl,
+        orderNumber: typeof data?.orderNumber === 'number' ? data.orderNumber : null,
+        amount: Number(data?.amount ?? 0),
+        tranmode: String(data?.tranmode ?? 'A')
+    };
+}
+
+/**
+ * Wait for the server to confirm the payment.
+ *
+ * The browser is never told "you are paid" by Tranzila in a way we trust — the
+ * iframe/redirect result is a navigation hint only. The authority is
+ * `tranzila-notify`, which verifies the transaction against Tranzila's reports
+ * API and then moves the order. So we poll our own row until it leaves
+ * `pending`.
+ *
+ * Resolves with the final status, or rejects with:
+ *   * `payment_declined`      — the server recorded a failure reason
+ *   * `payment_poll_timeout`  — still pending after the budget; the payment may
+ *                               yet succeed, so the UI must not claim failure
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} supabase
+ * @param {string} orderId
+ * @param {{ userId?: string | null; onSlow?: () => void; signal?: AbortSignal } | undefined} [opts]
+ * @returns {Promise<{ order_id: string; order_number: number | null; status: string }>}
+ */
+export async function pollOrderPaymentStatus(supabase, orderId, opts) {
+    if (!orderId) throw new Error('invalid_order_id');
+
+    const deadline = Date.now() + PAYMENT_POLL_TIMEOUT_MS;
+    const startedAt = Date.now();
+    let slowFired = false;
+    let attempt = 0;
+    /* The failure reason recorded by a PREVIOUS attempt must not abort this one:
+       the customer may be retrying with another card. Only a reason that appears
+       after we started polling counts. */
+    let baselineFailure = /** @type {string | null | undefined} */ (undefined);
+
+    while (Date.now() < deadline) {
+        if (opts?.signal?.aborted) throw new Error('payment_poll_aborted');
+
+        if (!slowFired && Date.now() - startedAt > PAYMENT_POLL_SLOW_MS) {
+            slowFired = true;
+            try {
+                opts?.onSlow?.();
+            } catch {
+                /* noop */
+            }
+        }
+
+        try {
+            const { data, error } = await supabase
+                .from('orders')
+                .select('id, status, order_number, payment_failed_reason')
+                .eq('id', orderId)
+                .maybeSingle();
+
+            if (!error && data) {
+                if (isPaidStatus(data.status)) {
+                    return {
+                        order_id: orderId,
+                        order_number:
+                            typeof data.order_number === 'number' ? data.order_number : null,
+                        status: String(data.status)
+                    };
+                }
+                if (data.status === 'cancelled') {
+                    throw new Error('payment_declined');
+                }
+
+                const reason = data.payment_failed_reason ?? null;
+                if (baselineFailure === undefined) {
+                    baselineFailure = reason;
+                } else if (reason && reason !== baselineFailure) {
+                    const err = new Error('payment_declined');
+                    /** @type {any} */ (err).reasonCode = reason;
+                    throw err;
+                }
+            }
+        } catch (err) {
+            if (String(/** @type {any} */ (err)?.message) === 'payment_declined') throw err;
+            /* Transient read failure — keep polling until the deadline. */
+        }
+
+        const wait =
+            PAYMENT_POLL_INTERVAL_MS[Math.min(attempt, PAYMENT_POLL_INTERVAL_MS.length - 1)];
+        attempt += 1;
+        await new Promise((r) => setTimeout(r, wait));
+    }
+
+    throw new Error('payment_poll_timeout');
+}
+
+/**
+ * Hebrew copy for the Tranzila payment path. Same rule as
+ * `paymentConfirmErrorMessage`: safe codes only, nothing raw from the server.
+ * @param {unknown} e
+ * @returns {string}
+ */
+export function tranzilaPaymentErrorMessage(e) {
+    const err = /** @type {any} */ (e);
+    const msg = String(err?.message || '').toLowerCase();
+
+    if (msg.includes('payment_poll_timeout')) {
+        return 'התשלום נשלח ואנחנו עדיין מאמתים אותו מול חברת הסליקה. אל תשלמו שוב — בדקו בעוד רגע ב"ההזמנות שלי", ואם ההזמנה לא מופיעה שם פנו אלינו.';
+    }
+    if (msg.includes('payment_declined')) {
+        return 'חברת הסליקה דחתה את החיוב. נסו כרטיס אחר — ההזמנה נשמרה ולא חויבתם.';
+    }
+    if (msg.includes('order_not_payable')) {
+        return 'ההזמנה כבר טופלה. בדקו ב"ההזמנות שלי" לפני תשלום נוסף.';
+    }
+    if (msg.includes('payment_init_timeout') || msg.includes('failed to fetch') || msg.includes('network')) {
+        return 'תקלת רשת זמנית. בדקו את החיבור ונסו שוב — לא בוצע חיוב.';
+    }
+    if (msg.includes('not_authenticated')) {
+        return 'יש להתחבר כדי להשלים את התשלום.';
+    }
+    if (msg.includes('missing_tranzila_secrets') || msg.includes('handshake_rejected')) {
+        return 'שירות התשלומים אינו זמין כרגע. נסו שוב בעוד מספר דקות.';
+    }
+    return 'לא הצלחנו לפתוח את דף התשלום. נסו שוב בעוד רגע — לא בוצע חיוב.';
 }
 
 /**

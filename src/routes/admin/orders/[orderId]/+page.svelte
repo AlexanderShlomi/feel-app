@@ -799,6 +799,60 @@
         <div class="info-row"><span class="info-label">משלוח</span><span>₪{Number(order.shipping_amount||0).toLocaleString('he-IL')}</span></div>
         <div class="info-row info-row--total"><span class="info-label">סה"כ</span><span class="total-amount">₪{Number(order.total_amount||0).toLocaleString('he-IL')}</span></div>
       </div>
+
+      <!-- פרטי הסליקה. מוצג רק אחרי שהתשלום אושר בשרת; בהזמנה שממתינה
+           לתשלום אין עדיין עסקה ואין מה להראות.
+           4 הספרות והמותג הם נתוני תצוגה בלבד — מספר הכרטיס, התוקף וה-CVV
+           לעולם לא מגיעים לשרתים שלנו (PCI SAQ-A). -->
+      {#if order.payment_confirmed_at || order.payment_reference}
+        <h3 class="subsection-title">פרטי סליקה</h3>
+        <div class="info-grid">
+          {#if order.payment_card_last4}
+            <div class="info-row">
+              <span class="info-label">כרטיס</span>
+              <span class="card-value" dir="ltr">
+                {order.payment_card_brand ?? 'כרטיס'} •••• {order.payment_card_last4}
+              </span>
+            </div>
+          {:else if order.payment_card_brand}
+            <div class="info-row">
+              <span class="info-label">כרטיס</span>
+              <span class="card-value" dir="ltr">{order.payment_card_brand}</span>
+            </div>
+          {/if}
+
+          {#if order.payment_reference}
+            <div class="info-row">
+              <span class="info-label">אסמכתה</span>
+              <span class="mono" dir="ltr">{order.payment_reference}</span>
+            </div>
+          {/if}
+
+          {#if order.payment_index != null}
+            <!-- מספר העסקה אצל טרנזילה — לפיו מאתרים אותה בפאנל לצורך זיכוי -->
+            <div class="info-row">
+              <span class="info-label">מס' עסקה בטרנזילה</span>
+              <span class="mono" dir="ltr">{order.payment_index}</span>
+            </div>
+          {/if}
+
+          {#if order.payment_confirmed_at}
+            <div class="info-row">
+              <span class="info-label">אושר בתאריך</span>
+              <span>{new Date(order.payment_confirmed_at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- ניסיון תשלום שנכשל: ההזמנה נשארת pending והלקוח יכול לנסות שוב.
+           הקוד הוא מחרוזת מכונה קצרה (declined_004 וכו') — לא הודעת ספק גולמית. -->
+      {#if order.payment_failed_reason && order.status === 'pending'}
+        <div class="payment-failed" role="status">
+          <strong>ניסיון תשלום אחרון נכשל:</strong>
+          <code dir="ltr">{order.payment_failed_reason}</code>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -836,6 +890,32 @@
   .info-label { font-weight:700; color:#3f524f; min-width:80px; flex-shrink:0; }
   .info-row--total { margin-top:8px; border-top:1px solid #f0ede9; padding-top:10px; }
   .total-amount { font-size:18px; font-weight:800; color:#1e1e1e; }
+
+  /* ── פרטי סליקה ─────────────────────────────────────────────────────────── */
+  .card-value { font-weight:700; letter-spacing:0.04em; }
+  /* אסמכתאות ומספרי עסקה מועתקים ידנית לפאנל של טרנזילה — פונט אחיד מונע
+     בלבול בין 0/O ובין 1/l. */
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .payment-failed {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(229, 57, 53, 0.07);
+    border: 1px solid rgba(229, 57, 53, 0.28);
+    color: #8c1d1a;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .payment-failed code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgba(229, 57, 53, 0.1);
+    padding: 1px 6px;
+    border-radius: 5px;
+  }
 
   .items-list { display:flex; flex-direction:column; gap:16px; }
   .item-card { display:flex; gap:16px; align-items:flex-start; border-bottom:1px solid #f0ede9; padding-bottom:16px; }
