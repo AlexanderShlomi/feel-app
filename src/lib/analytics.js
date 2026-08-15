@@ -204,6 +204,32 @@ function loadTikTok(c) {
     /* eslint-enable */
 }
 
+/**
+ * מצב ההסכמה הנוכחי + מזהה הלקוח של GA4, לצורך אירוע רכישה בצד השרת (Law E).
+ *
+ * ה-client_id נחוץ כדי ש-GA4 יצמיד את הרכישה לאותו סשן שהתחיל בדפדפן. הוא יושב
+ * בעוגיית `_ga` בפורמט `GA1.1.<a>.<b>`, וה-client_id הוא `<a>.<b>`. מחזירים null
+ * כשאין הסכמת אנליטיקה — אין עוגייה, ואין מה לשלוח.
+ *
+ * @returns {{ analytics: boolean, ads: boolean, ga_client_id: string | null }}
+ */
+export function getConsentSnapshot() {
+    const snapshot = {
+        analytics: !!consentState.analytics,
+        ads: !!consentState.ads,
+        ga_client_id: /** @type {string | null} */ (null)
+    };
+    if (!isBrowser || !snapshot.analytics) return snapshot;
+
+    try {
+        const match = document.cookie.match(/(?:^|;\s*)_ga=GA\d+\.\d+\.(\d+\.\d+)/);
+        if (match) snapshot.ga_client_id = match[1];
+    } catch {
+        /* עוגיות חסומות — נשלח בלי client_id, והשרת ידלג */
+    }
+    return snapshot;
+}
+
 /* ──────────────────────── Public consent entry ──────────────────────── */
 
 /**

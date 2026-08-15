@@ -1,7 +1,7 @@
 <script>
     import { onMount, tick } from 'svelte';
     import AuthModal from '$lib/components/AuthModal.svelte';
-    import PaymentMock from '$lib/components/PaymentMock.svelte';
+    import TranzilaPayment from '$lib/components/TranzilaPayment.svelte';
     import { supabase } from '$lib/supabase';
     import { cart, cartTotal } from '$lib/stores.js';
     import { goto } from '$app/navigation';
@@ -22,8 +22,8 @@
     } from '$lib/privacyPolicyStore.js';
     import {
         createCompleteOrderResilient,
-        confirmOrderPaymentResilient,
-        paymentConfirmErrorMessage,
+        pollOrderPaymentStatus,
+        tranzilaPaymentErrorMessage,
         backfillOrderThumbnailsInBackground,
         uploadOrderOriginalsInBackground,
         savePaymentSession,
@@ -32,6 +32,8 @@
     } from '$lib/orderPlacement.js';
     import { invalidateOrdersAfterCheckout } from '$lib/ordersCache.js';
     import { trackEcommerceOnce, trackEvent } from '$lib/analytics.js';
+    import { env as publicEnv } from '$env/dynamic/public';
+    import { browser } from '$app/environment';
 
     /**
      * Dev-only debug flag. In production builds (`vite build`) this is `false`
@@ -40,6 +42,15 @@
      * round-trip on every checkout.
      */
     const __DEV__ = import.meta.env.DEV;
+
+    /**
+     * מצב ההטמעה של דף הסליקה. ברירת המחדל היא iframe — המשתמש נשאר בעמוד,
+     * שום משתנה בזיכרון לא אובד, וההעלאות ממשיכות ברקע. אם יתברר שטרנזילה
+     * חוסמת הטמעה (X-Frame-Options), מגדירים PUBLIC_PAYMENT_EMBED_MODE=redirect
+     * ב-Vercel בלי שינוי קוד.
+     */
+    const PAYMENT_EMBED_MODE =
+        publicEnv.PUBLIC_PAYMENT_EMBED_MODE === 'redirect' ? 'redirect' : 'iframe';
 
     // ----- UI state -----
     let showAuthModal = false;
@@ -54,6 +65,15 @@
     let errorMessage = '';
     /** Restore the payment session at most once (auth races with hydration). */
     let paymentSessionRestoreAttempted = false;
+    /**
+     * חזרה מדף הסליקה בניווט מלא (mode='redirect').
+     *
+     * נקרא כאן ולא ב-onMount בכוונה: בלוקים ריאקטיביים ב-Svelte רצים לפני
+     * onMount, כך ש-tryRestorePaymentSession עלול לרוץ ראשון ולנקות את הסשן
+     * לפני שהדגל הוגדר. גוף ה-<script> רץ לפני שניהם.
+     */
+    let returningFromGateway =
+        browser && new URLSearchParams(window.location.search).has('resume');
 
     /**
      * Image upload tracking. The thumbnails upload is started during order
@@ -535,6 +555,14 @@
             return;
         }
 
+        /* Law E: שלב המשלוח הושלם בהצלחה. שיטת המשלוח בלבד — בלי כתובת,
+           שם או טלפון. */
+        trackEvent('add_shipping_info', {
+            shipping_tier: 'home_delivery_free',
+            value: Number($cartTotal) || 0,
+            currency: 'ILS'
+        });
+
         placeOrderLoading = true;
         try {
             const subtotalAmount = Number($cartTotal || 0);
@@ -665,7 +693,8 @@
             savePaymentSession({
                 orderId: paymentOrderId,
                 orderNumber: paymentOrderNumber,
-                amount: paymentAmount
+                amount: paymentAmount,
+                itemIds: Array.isArray(order.item_ids) ? order.item_ids : null
             });
 
             await scrollToCheckoutPayment();
@@ -776,14 +805,17 @@
     }
 
     /**
-     * Confirm the payment on the server (currently mock; will be called AFTER a
-     * real PSP authorization succeeds — the resilient wrapper is provider-
-     * agnostic so the call site won't change). Uses the resilient helper:
-     *   * 20s timeout per attempt.
-     *   * 3 attempts with backoff (0.8s, 1.6s) on retriable errors only.
-     *   * Idempotent recovery: if a retry races a succeeded original, we
-     *     verify the order is `paid` and proceed as success.
-     *   * Generic Hebrew error messages — no raw Postgres/RPC details leak.
+     * Runs after Tranzila reports success in the browser.
+     *
+     * That report is a HINT, not proof: the same field array Tranzila posts to
+     * our return URL is forgeable, so nothing here treats it as authorization.
+     * The authority is the `tranzila-notify` Edge Function, which re-fetches the
+     * transaction from Tranzila's reports API, cross-checks the amount against
+     * `orders.total_amount`, and only then moves the order (Law D).
+     *
+     * So we poll our own row until the server says it left `pending`, and only
+     * then run the post-payment pipeline (originals upload, cart clear,
+     * navigation) — which is unchanged from the mock era.
      */
     async function handlePaymentApproved() {
         errorMessage = '';
@@ -796,16 +828,28 @@
         placeOrderLoading = true;
         placeOrderSlow = false;
         try {
-            await confirmOrderPaymentResilient(supabase, paymentOrderId, {
+            const confirmed = await pollOrderPaymentStatus(supabase, paymentOrderId, {
                 userId: $user.id,
                 onSlow: () => (placeOrderSlow = true)
             });
 
-            // Ensure /orders doesn't serve stale session cache after a successful payment confirmation.
+            if (confirmed.order_number != null) paymentOrderNumber = confirmed.order_number;
+
+            /* Law E: add_payment_info fires when the gateway loads; the funnel is
+               closed by `purchase` on the success page, which only renders for an
+               order the server already confirmed. */
+            trackEvent('payment_confirmed', {
+                order_status: confirmed.status,
+                provider: 'tranzila'
+            });
+
+            /* Ensure /orders doesn't serve a stale session cache. The status is
+               whatever the server routed to — `processing` or `ready_for_print`,
+               never the literal `paid` — so pass it through rather than assuming. */
             invalidateOrdersAfterCheckout({
                 userId: $user.id,
                 orderId: paymentOrderId,
-                expectedStatus: 'paid'
+                expectedStatus: confirmed.status
             });
 
             /* Originals upload (printing-critical — Law A) is started here,
@@ -872,17 +916,52 @@
                 status: errAny?.status,
                 isTimeout: errAny?.isTimeout
             });
-            errorMessage = paymentConfirmErrorMessage(e);
+            errorMessage = tranzilaPaymentErrorMessage(e);
             // Law E: מדידת כשל במשפך (קוד בלבד, ללא PII/פרטי DB)
+            const failureCode = String(
+                errAny?.reasonCode ?? errAny?.message ?? errAny?.code ?? 'unknown'
+            );
+            trackEvent('payment_error', {
+                step: 'payment_confirmation',
+                error_code: failureCode,
+                provider: 'tranzila'
+            });
             trackEvent('error_occurred', {
                 step: 'payment_confirmation',
-                error_code: String(errAny?.code ?? errAny?.status ?? 'unknown'),
+                error_code: failureCode,
                 is_timeout: !!errAny?.isTimeout
             });
         } finally {
             placeOrderLoading = false;
             placeOrderSlow = false;
         }
+    }
+
+    /**
+     * דף הסליקה נטען. Law E — זו הנקודה המוקדמת ביותר שבה אפשר למדוד כוונת
+     * תשלום: מה שקורה בתוך ה-iframe שייך לטרנזילה ואינו גלוי לנו.
+     */
+    function handlePaymentReady() {
+        trackEvent('add_payment_info', {
+            payment_type: 'credit_card',
+            provider: 'tranzila',
+            value: Number(paymentAmount) || 0,
+            currency: 'ILS'
+        });
+    }
+
+    /**
+     * טרנזילה דחתה, או שהאתחול נכשל. ההזמנה נשארת pending — המשתמש יכול לנסות
+     * שוב עם כרטיס אחר בלי ליצור הזמנה חדשה.
+     * @param {CustomEvent<{ stage?: string }>} event
+     */
+    function handlePaymentFailed(event) {
+        const stage = event?.detail?.stage ?? 'gateway';
+        trackEvent('payment_error', {
+            step: stage === 'init' ? 'payment_init' : 'payment_gateway',
+            error_code: stage,
+            provider: 'tranzila'
+        });
     }
 
     /**
@@ -915,7 +994,8 @@
                 clearPaymentSession();
                 return;
             }
-            if (data.status !== 'pending') {
+            const alreadySettled = data.status !== 'pending';
+            if (alreadySettled && !returningFromGateway) {
                 /* כבר שולמה / בוטלה — לא רלוונטי לחזור לפאנל התשלום. */
                 clearPaymentSession();
                 return;
@@ -925,7 +1005,23 @@
             paymentOrderNumber =
                 typeof data.order_number === 'number' ? data.order_number : null;
             paymentAmount = Number(data.total_amount || sess.amount || 0);
+
+            /* שחזור ההעלאות אחרי redirect מלא: המשתנים בזיכרון נמחקו כשהדפדפן
+               עזב את העמוד. הסל עצמו עדיין ב-IndexedDB (מתנקה רק אחרי הצלחה),
+               ומזהי השורות נשמרו ב-sessionStorage — Law A. */
+            if (Array.isArray(sess.itemIds) && sess.itemIds.length > 0) {
+                cartSnapshotForUploads = $cart.map((it) => ({ ...it }));
+                itemRowIdsForUploads = sess.itemIds;
+            }
+
             await scrollToCheckoutPayment();
+
+            /* חזרנו מדף הסליקה בניווט מלא — ממשיכים בדיוק כמו במצב iframe:
+               polling מול השרת, ורק אחריו הפייפליין שאחרי התשלום. */
+            if (returningFromGateway) {
+                returningFromGateway = false;
+                void handlePaymentApproved();
+            }
         } catch (e) {
             console.warn('Payment session restore:', e);
             clearPaymentSession();
@@ -941,6 +1037,28 @@
     onMount(() => {
         // כדי למנוע מצבים של hydration/SSR לא אחיד: כשהמשתמש מחובר, לא מציגים AuthModal.
         if ($user?.id) showAuthModal = false;
+
+        /* נחיתה חזרה מדף הסליקה במצב redirect. הפרמטרים הם רמז ניווטי בלבד —
+           הם לא מוכיחים תשלום ולא משנים סטטוס; ההכרעה נשארת אצל tranzila-notify. */
+        const params = new URLSearchParams(window.location.search);
+        const resumeId = params.get('resume');
+        const gatewayFailed = params.get('payment') === 'failed';
+
+        if (resumeId || gatewayFailed) {
+            /* ניקוי ה-URL כדי שרענון לא יפעיל את הזרימה שוב. */
+            history.replaceState(history.state, '', '/checkout');
+        }
+
+        if (gatewayFailed) {
+            errorMessage =
+                'החיוב לא אושר. ההזמנה נשמרה ולא חויבתם — אפשר לנסות שוב עם כרטיס אחר.';
+            trackEvent('payment_error', {
+                step: 'payment_gateway',
+                error_code: 'redirect_fail',
+                provider: 'tranzila'
+            });
+        }
+
     });
 
     /* מדידה: תחילת תהליך תשלום (ערך הסל בלבד, ללא PII).
@@ -1109,19 +1227,24 @@
                         ל<a href="/terms" target="_blank" rel="noopener">תנאי השימוש</a>
                         ול<a href="/refund-policy" target="_blank" rel="noopener">תקנון הביטולים וההחזרים</a>.
                     </p>
-                    <PaymentMock
+                    <TranzilaPayment
                         orderId={paymentOrderId}
                         orderNumber={paymentOrderNumber}
                         amount={paymentAmount}
+                        mode={PAYMENT_EMBED_MODE}
                         on:approved={handlePaymentApproved}
+                        on:failed={handlePaymentFailed}
+                        on:ready={handlePaymentReady}
                     />
 
                     {#if placeOrderLoading}
                         <div class="inline-loading" aria-live="polite">
                             {#if savingImages}
                                 שומרים את התמונות שלך לפני שנמשיך…
+                            {:else if placeOrderSlow}
+                                עדיין מאמתים מול חברת הסליקה — אל תסגרו את הדף…
                             {:else}
-                                מעדכנים הזמנה...
+                                מאמתים את התשלום…
                             {/if}
                             <div class="inline-loader"></div>
                         </div>

@@ -54,6 +54,26 @@ const COLOR_GOLD_BORDER = '#d4c4b0';
 const COLOR_CANVAS = '#F2F0EC';
 const COLOR_CARD_BG = '#ffffff';
 
+/**
+ * Statuses that mean "the customer has paid".
+ *
+ * An order never rests on the literal `paid` value: both
+ * `confirm_order_payment_verified` and `admin_update_order_status` route
+ * `pending` straight to `processing` (gift orders needing prep) or
+ * `ready_for_print`. Any check written as `status === 'paid'` is therefore dead
+ * code — which is exactly what silently disabled this email.
+ *
+ * `paid` stays in the set for older rows and for manual Bit orders.
+ */
+const PAID_STATUSES = [
+  'paid',
+  'processing',
+  'ready_for_print',
+  'printed',
+  'shipped',
+  'delivered'
+];
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -103,7 +123,9 @@ function validateOrderForEmail(order: OrderRow, expected: { id: string; user_id:
   if (!isNonEmptyString(order?.user_id) || order.user_id !== expected.user_id) {
     return { ok: false as const, code: 'order_user_mismatch' };
   }
-  if (!isNonEmptyString(order?.status) || order.status !== 'paid') {
+  /* Second dead gate: this re-checked `=== 'paid'` after the webhook gate, so
+     fixing only the caller would still have blocked every email. */
+  if (!isNonEmptyString(order?.status) || !PAID_STATUSES.includes(order.status)) {
     return { ok: false as const, code: 'order_status_not_paid' };
   }
   // Money sanity: totals should be finite and non-negative (we allow 0 for edge cases).
@@ -147,10 +169,16 @@ function formatDateHe(iso: string | null | undefined): string {
   }
 }
 
+/* Must cover every value in PAID_STATUSES, otherwise the badge renders the raw
+   enum string ("ready_for_print") to the customer. */
 const STATUS_LABEL: Record<string, string> = {
   pending: 'ממתין לתשלום',
   paid: 'שולם',
   processing: 'בטיפול',
+  ready_for_print: 'שולם — נכנס לייצור',
+  printed: 'הודפס',
+  shipped: 'נשלח',
+  delivered: 'נמסר',
   cancelled: 'בוטל'
 };
 
@@ -176,7 +204,7 @@ function statusBadgeHtml(status: string): string {
   const label = STATUS_LABEL[status] ?? status;
   let bg = '#f5f0e8';
   let color = COLOR_HEADER_BLUE;
-  if (status === 'paid' || status === 'processing') {
+  if (PAID_STATUSES.includes(status)) {
     bg = '#e8f5e9';
     color = '#1b5e20';
   } else if (status === 'cancelled') {
@@ -410,7 +438,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const becamePaid = record.status === 'paid' && oldRecord?.status !== 'paid';
+    /* The signal is the transition OUT of `pending` into any settled status —
+       see PAID_STATUSES at the top of this file for why `=== 'paid'` was wrong. */
+    const wasUnpaid = !oldRecord?.status || oldRecord.status === 'pending';
+    const becamePaid = PAID_STATUSES.includes(record.status) && wasUnpaid;
     if (!becamePaid) {
       return new Response(JSON.stringify({ ok: true, skipped: 'status_not_paid_transition' }), {
         headers: { 'Content-Type': 'application/json' }
