@@ -81,32 +81,49 @@ export async function tranzilaAuthHeaders(cfg: TranzilaConfig): Promise<Record<s
  *
  * The returned token is valid for 20 minutes.
  */
-export async function createHandshakeToken(
-  cfg: TranzilaConfig,
-  sum: number,
-  requestParams: Record<string, string> = {}
-): Promise<string> {
+export async function createHandshakeToken(cfg: TranzilaConfig, sum: number): Promise<string> {
   const headers = await tranzilaAuthHeaders(cfg);
+
+  /* Only the two documented required fields.
+     `sum` must be a JSON NUMBER — sending the formatted string "119.00" is
+     rejected with error 20004 ("Json does not match validation schema"), which
+     is a body-shape error, not an auth error.
+     `request_params` is optional and omitted deliberately: we already correlate
+     the transaction through our own order id in the notify URL, so passing
+     extra keys only adds schema surface that can fail. */
+  const payload = {
+    terminal_name: cfg.terminal,
+    sum: Number(sum.toFixed(2))
+  };
+
   const res = await fetch(HANDSHAKE_URL, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      terminal_name: cfg.terminal,
-      sum: sum.toFixed(2),
-      request_params: requestParams
-    })
+    body: JSON.stringify(payload)
   });
 
+  const raw = await res.text();
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = null;
+  }
+
   if (!res.ok) {
+    console.error('[tranzila] handshake http error', { status: res.status, body: raw.slice(0, 400) });
     throw new Error(`handshake_http_${res.status}`);
   }
 
-  const body = await res.json().catch(() => null);
   if (!body || Number(body.error_code) !== 0 || !body.thtk) {
-    // body.message can echo terminal config details — keep it out of the client.
+    /* Log the whole response: field-level validation detail lives here and it
+       is the only way to tell a schema problem from a terminal-config one.
+       The response carries no secrets — the request did, and that is not
+       logged. Nothing from here reaches the client (Law D). */
     console.error('[tranzila] handshake rejected', {
-      error_code: body?.error_code,
-      message: body?.message
+      sent_sum: payload.sum,
+      sent_terminal: payload.terminal_name,
+      response: raw.slice(0, 600)
     });
     throw new Error('handshake_rejected');
   }

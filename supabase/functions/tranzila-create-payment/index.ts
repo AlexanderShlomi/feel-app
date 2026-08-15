@@ -168,10 +168,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Lock the amount with Tranzila before the page is rendered ────────────
-    const thtk = await createHandshakeToken(cfg, amount, {
-      order_number: String(orderNumber ?? ''),
-      order_id: orderId
-    });
+    const thtk = await createHandshakeToken(cfg, amount);
 
     // ── Build the payment page URL ───────────────────────────────────────────
     // `tranmode`: 'A' = standard charge, 'V' = verification only (auth hold, no
