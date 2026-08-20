@@ -698,7 +698,20 @@
           {#if order.gift_sender_phone}<div class="info-row"><span class="info-label">טלפון</span><span>{order.gift_sender_phone}</span></div>{/if}
         </div>
 
-        <!-- Gift Image Actions -->
+        <!-- Gift Image Actions.
+             When the gift item has no original, this block used to disappear
+             with no explanation, which reads as "the feature is broken" rather
+             than "the file never arrived". Say so instead — see the KNOWN GAP
+             note in checkout/+page.svelte for how an order reaches this state. -->
+        {#if hasGiftItem && !hasGiftImage}
+          <div class="missing-originals" role="status">
+            <strong>אין תמונת מקור להזמנה זו.</strong>
+            הקבצים ברזולוציה מלאה מועלים מדפדפן הלקוח אחרי התשלום; אם הטאב נסגר
+            או שהחיבור נפל באמצע, ההזמנה מגיעה לכאן בלי קובץ להדפסה. לא ניתן
+            לשחזר מהשרת — יש לפנות ללקוח ולבקש להעלות מחדש.
+          </div>
+        {/if}
+
         {#if hasGiftImage}
           <div class="gift-actions">
             <h3 class="subsection-title">תמונת מתנה</h3>
@@ -892,6 +905,17 @@
   .total-amount { font-size:18px; font-weight:800; color:#1e1e1e; }
 
   /* ── פרטי סליקה ─────────────────────────────────────────────────────────── */
+  .missing-originals {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: rgba(245, 166, 35, 0.1);
+    border: 1px solid rgba(245, 166, 35, 0.4);
+    color: #7a4b00;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
   .card-value { font-weight:700; letter-spacing:0.04em; }
   /* אסמכתאות ומספרי עסקה מועתקים ידנית לפאנל של טרנזילה — פונט אחיד מונע
      בלבול בין 0/O ובין 1/l. */

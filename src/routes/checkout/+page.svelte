@@ -853,12 +853,31 @@
             });
 
             /* Originals upload (printing-critical — Law A) is started here,
-               AFTER the payment RPC has returned, so it never competes with
-               confirm_order_payment for the user's uplink bandwidth on mobile.
+               AFTER the server has confirmed payment, so it never competes with
+               the payment round-trip for the user's uplink bandwidth on mobile.
                If thumbnails are still in flight, they keep going in parallel.
                Both promises are awaited below (with a cap) before we clear the
-               cart and navigate — so closing the tab on /checkout/success can
-               no longer abort a partial originals upload. */
+               cart and navigate, so a tab closed on /checkout/success cannot
+               abort a partial upload.
+
+               KNOWN GAP — do not read the above as "originals are guaranteed".
+               Payment is confirmed by `tranzila-notify` on the server, entirely
+               independently of this browser. Everything from here down runs only
+               if the tab survives the polling window. Close it, lose the network,
+               or break the return page, and the order settles with
+               `order_items.original_storage_paths = null` — money taken, nothing
+               to print — and it is unrecoverable server-side, because the
+               originals exist only in this browser's IndexedDB.
+
+               This is not theoretical: order #12 (2026-08-20) landed exactly
+               there when the Tranzila return page was blocked by SvelteKit's
+               CSRF guard. The trigger is fixed; the gap is not.
+
+               Today the only net is the /admin/print integrity gate, which
+               blocks printing but only surfaces the problem at print time.
+               Before changing anything here, note that the deferral above is
+               deliberate — moving the upload earlier must not put it back in
+               contention with the payment request on a mobile uplink. */
             if (
                 $user.id &&
                 Array.isArray(cartSnapshotForUploads) &&
