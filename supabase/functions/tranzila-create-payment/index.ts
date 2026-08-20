@@ -180,14 +180,18 @@ Deno.serve(async (req) => {
     notifyUrl.searchParams.set('order', orderId);
     notifyUrl.searchParams.set('n', nonce);
 
-    /* Return the customer to the origin they actually came from. Using the
-       configured site unconditionally would bounce a local dev session to
-       production, where its sessionStorage and cart do not exist — and the
-       iframe's postMessage would be cross-origin and get dropped.
-       `origin` is already allowlist-checked by resolveOrigin, so this cannot
-       become an open redirect. */
-    const returnBase = new URL('/checkout/return', origin || siteUrl);
+    /* The return page is an Edge Function, not a SvelteKit route: Tranzila
+       sends the customer back with a cross-site POST whose Origin is `null` or
+       absent, and SvelteKit's CSRF guard rejects that before any route handler
+       runs. See tranzila-return for the full reasoning.
+
+       `site` carries the origin the customer started from, so a local session
+       returns to localhost instead of being bounced to production where its
+       cart and sessionStorage do not exist. It is allowlist-checked on both
+       ends, so it cannot become an open redirect. */
+    const returnBase = new URL(`${supabaseUrl}/functions/v1/tranzila-return`);
     returnBase.searchParams.set('order', orderId);
+    returnBase.searchParams.set('site', origin || siteUrl);
 
     const successUrl = new URL(returnBase.toString());
     successUrl.searchParams.set('result', 'success');

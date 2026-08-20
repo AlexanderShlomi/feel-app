@@ -19,6 +19,7 @@
         tranzilaPaymentErrorMessage
     } from '$lib/orderPlacement.js';
     import { getConsentSnapshot } from '$lib/analytics.js';
+    import { env as publicEnv } from '$env/dynamic/public';
 
     export let orderId = /** @type {string | null} */ (null);
     /** מספר הזמנה ציבורי (order_number); UUID נשאר ב-orderId לפעולות פנימיות */
@@ -73,13 +74,27 @@
     }
 
     /**
-     * ההודעה מגיעה מ-/checkout/return, שמוגש מהדומיין שלנו — לכן בודקים origin
-     * וגם שהשולח הוא בדיוק ה-iframe שהצבנו. בלי זה כל טאב או iframe אחר יכול
-     * לשלוח "success" מזויף ולהתחיל polling מיותר.
-     * @param {MessageEvent} event
+     * דף החזרה מוגש מ-Edge Function, כלומר מהדומיין של Supabase ולא משלנו
+     * (טרנזילה מחזירה ב-POST חוצה-מקורות ש-SvelteKit חוסם — ראו tranzila-return).
+     * לכן ה-origin המותר הוא של הפונקציות, ולא window.location.origin.
+     *
+     * הבדיקה החזקה כאן היא השנייה: ההודעה חייבת להגיע בדיוק מה-iframe שאנחנו
+     * הצבנו. בלי זה כל טאב או iframe אחר יכול לשלוח "success" מזויף ולהתחיל
+     * polling מיותר. גם אם מישהו יעקוף את שתיהן הוא לא ירוויח דבר — ה-polling
+     * רק קורא את הסטטוס מהשרת, שנקבע אך ורק ב-tranzila-notify (Law D).
      */
+    const FUNCTIONS_ORIGIN = (() => {
+        try {
+            return new URL(publicEnv.PUBLIC_SUPABASE_URL ?? '').origin;
+        } catch {
+            return '';
+        }
+    })();
+
+    /** @param {MessageEvent} event */
     function handleMessage(event) {
-        if (event.origin !== window.location.origin) return;
+        const allowed = [FUNCTIONS_ORIGIN, window.location.origin].filter(Boolean);
+        if (!allowed.includes(event.origin)) return;
         if (frameEl && event.source !== frameEl.contentWindow) return;
 
         const data = /** @type {any} */ (event.data);
