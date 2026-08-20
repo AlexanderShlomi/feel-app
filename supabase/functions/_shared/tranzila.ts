@@ -137,6 +137,8 @@ export type VerifiedTransaction = {
   currency: string | number | null;
   responseCode: string;
   approved: boolean;
+  /** 'debit' for a real charge, 'verify' for a J5 authorisation with no capture. */
+  txnType: string;
   /** Last 4 digits only — display data, never the PAN. */
   cardLast4: string | null;
   cardBrand: string | null;
@@ -210,17 +212,51 @@ export async function fetchTransaction(
       ? body.data[0]
       : (body?.transaction ?? null);
 
-  if (!row) return null;
+  if (!row) {
+    console.error('[tranzila] reports returned no row', {
+      transaction_index: transactionIndex,
+      top_level_keys: body && typeof body === 'object' ? Object.keys(body) : null
+    });
+    return null;
+  }
+
+  /* The reports API field names are not pinned down by the public docs, and
+     reading the wrong one silently produces an amount mismatch that blocks a
+     genuine payment. Log the shape (keys, plus every money-ish field) so a
+     mismatch can be diagnosed without burning another real transaction.
+     Keys and numeric amounts only — no card data, no PII. */
+  const moneyFields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+    if (/amount|sum|price|total/i.test(k)) moneyFields[k] = v;
+  }
+  console.log('[tranzila] reports row shape', {
+    transaction_index: transactionIndex,
+    keys: Object.keys(row as Record<string, unknown>),
+    money_fields: moneyFields
+  });
 
   const responseCode = String(
     row.processor_response_code ?? row.Response ?? row.response ?? ''
   ).trim();
 
+  /* The reports API reports money in MINOR units. Observed directly: a ₪119.00
+     transaction comes back as `amount: 11900`, while the notify POST carries
+     `sum: "119"` in major units. Comparing the raw value against
+     orders.total_amount rejected every genuine payment with amount_mismatch.
+
+     Do NOT "accept either the raw value or value/100" as a hedge: that would let
+     a real ₪1.19 charge (119 minor units) confirm a ₪119 order. One unit,
+     committed to. If Tranzila ever changes it, the comparison fails closed —
+     the order stays pending rather than being confirmed on a wrong amount. */
+  const amountMinorUnits = Number(row.amount ?? row.sum ?? NaN);
+  const amount = Number.isFinite(amountMinorUnits) ? amountMinorUnits / 100 : NaN;
+
   return {
     index: Number(row.index ?? row.transaction_index ?? transactionIndex),
-    amount: Number(row.amount ?? row.sum ?? NaN),
+    amount,
     currency: row.currency ?? null,
     responseCode,
+    txnType: String(row.txn_type ?? '').trim().toLowerCase(),
     // Tranzila approves with '000'; the field is sometimes zero-padded, sometimes not.
     approved: responseCode === '000' || responseCode === '0',
     cardLast4: resolveCardLast4(

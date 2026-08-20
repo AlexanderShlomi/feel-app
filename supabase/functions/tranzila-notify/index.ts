@@ -201,6 +201,22 @@ Deno.serve(async (req) => {
       return await recordFailure('verified_amount_unreadable');
     }
 
+    /* A verification (J5) authorises the card without capturing anything, so it
+       must never mark an order paid once we are charging for real. Without this
+       check, leaving TRANZILA_TRANMODE on 'V' after go-live would route orders
+       to production with no money collected — silent and expensive.
+       In 'V' mode the check is deliberately skipped: that is the testing mode. */
+    const expectedMode = (Deno.env.get('TRANZILA_TRANMODE') ?? 'A').toUpperCase();
+    if (expectedMode !== 'V' && verified.txnType === 'verify') {
+      console.error('[notify] verification transaction rejected in charge mode', {
+        order_id: orderId,
+        txn_index: verified.index,
+        txn_type: verified.txnType,
+        expected_mode: expectedMode
+      });
+      return await recordFailure('verify_txn_in_charge_mode');
+    }
+
     /* Card descriptors for support and refund matching. Prefer the values from
        the transaction we just re-verified; fall back to the notify body only if
        the reports API did not carry them. Both are display-only — last 4 digits
